@@ -33,9 +33,9 @@ VS Code auto-selecting `.venv`, and a `CLAUDE.md` for Claude Code. No runtime pa
    ```powershell
    uv run pre-commit install
    ```
-9. **Make and push the first commit.** Create an empty repository on GitHub (no README, .gitignore, or license), then
-   run the following, replacing the URL with your repo's. The pre-commit hooks run on this commit; if they change files
-   or fail, re-run `git add .` and `git commit` until it passes.
+9. **Make the first commit and push it to a new GitHub repo.** Create an empty repository at github.com/new (owner `jfaa-josh`, name = project name;
+   leave README, .gitignore, and license unchecked), then run the following, replacing the URL with your repo's.
+   The pre-commit hooks run on this commit; if they change files or fail, re-run `git add .` and `git commit` until it passes.
    ```powershell
    git add .
    git commit -m "Initial commit"
