@@ -1,0 +1,77 @@
+[project]
+name = "condobuyUQ2026"
+version = "0.1.0"
+description = "Basic forward pass only analytical UQ for rough trades on buying Keystone CO Colorado vs renting in 2026"
+readme = "README.md"
+authors = [
+    {name = "Josh Fody", email = "josh@jfadvancedanalytics.com"}
+]
+requires-python = "~=3.14.7" # means "3.13.x"; keep in sync with .python-version
+# Runtime packages: add with `uv add <package>`
+dependencies = [
+    "matplotlib",
+]
+
+[dependency-groups]
+# Dev-only tooling: add with `uv add --dev <package>`
+dev = [
+    "pre-commit",
+    "ruff",
+    "mypy",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+respect-gitignore = true
+
+[tool.ruff.lint]
+# Focus on actual bugs and obvious issues, not micro-style:
+select = [
+    "F",    # pyflakes: undefined names, etc. (real bugs)
+    "B",    # flake8-bugbear: likely bugs, not style
+    "UP",   # pyupgrade: safe modernisation
+]
+# No global style-enforcement codes like E, I, C4.
+ignore = []
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# If you ever want import-sorting back, re-enable:
+# [tool.ruff.lint.isort]
+# known-first-party = ["src"]
+
+[tool.ruff.format]
+# Be much less opinionated about formatting:
+quote-style = "preserve"              # don't auto-convert single ↔ double quotes
+indent-style = "space"
+skip-magic-trailing-comma = true      # avoid aggressively reflowing argument lists
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+# Relax a bit of the noise:
+warn_unused_ignores = false
+strict_equality = false
+show_error_codes = true
+pretty = true
+files = ["src"]
+mypy_path = ["src"]
+# Optionally tighten later:
+# disallow_untyped_defs = true
+# check_untyped_defs = true
+# strict = true
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# tell setuptools “all our packages live under src/”
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+# look for any packages under src/
+where = ["src"]
