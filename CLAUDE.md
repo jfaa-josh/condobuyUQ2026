@@ -5,6 +5,9 @@
 - Python version is pinned in `.python-version` and `pyproject.toml` (`requires-python`); keep them in sync.
 - Dependencies are managed with `uv` (`uv add <pkg>`, `uv add --dev <pkg>`, `uv sync`). Do not use `pip install`.
 - Source code lives in `src/`. Run tools through the project venv (`uv run ...`).
+- The implementation plan for `src/` lives in `.claude/implementation-plan.md` (gitignored, local-only). Read it at
+  the start of any session touching implementation work, and keep it current: update it whenever the plan changes
+  (new decisions, scope changes, completed steps, open questions) rather than letting it go stale.
 
 ## Memory & Context Preservation
 

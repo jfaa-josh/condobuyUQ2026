@@ -96,6 +96,11 @@ junit-*.xml
 *.swo
 
 # ====================
+# Claude Code (local-only planning notes)
+# ====================
+.claude/
+
+# ====================
 # IDEs and Editors
 # ====================
 .vscode/

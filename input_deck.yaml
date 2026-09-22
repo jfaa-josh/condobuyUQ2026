@@ -1,0 +1,537 @@
+# =============================================================================
+# condobuyUQ2026 — Input Deck
+# =============================================================================
+# This is the single user-editable file describing the buy-vs-rent decision.
+# Everything the model needs — decisions to sweep, known constants, and
+# uncertain quantities — is entered here. Nothing else should need editing to
+# run a new scenario.
+#
+# STATUS: draft structure only. All numeric values below are placeholders
+# (null, marked "# TODO") — see .claude/implementation-plan.md, stage 1.
+# Real numbers and any structural changes come in stage 2.
+#
+# -----------------------------------------------------------------------------
+# Schema reference
+# -----------------------------------------------------------------------------
+# Every variable has exactly one `kind`:
+#
+#   constant  -- single known value.            fields: value, units
+#   sweep     -- decision variable, grid axis.   fields: values (or range), units
+#   prior     -- uncertain, closed-form dist.    fields: dist, <dist params>,
+#                                                         latent, units, source
+#
+# `constant` and `sweep` may hold categorical (string) values too — no
+# separate "switch" kind.
+#
+# Prior distribution families (`dist`):
+#   lognormal  { median, cv }              -- positive quantities (costs,
+#                                              prices, ADR, growth factors)
+#   normal     { mean, sd }                -- quantities that can go negative
+#   mixture    { p, severity: {dist: lognormal, median, cv} }
+#                                           -- rare-event costs (annual
+#                                              probability p, severity given
+#                                              by a lognormal)
+#
+# `source` on a prior is one of: fitted | elicited | quoted
+#
+# Bounded fractions (e.g. occupancy) are entered as `lognormal`, not `beta`
+# (beta isn't closed under products). The loader must warn if probability
+# mass above 1.0 is non-negligible.
+#
+# `growth` is an optional sub-block on any variable (constant or prior form)
+# giving its annual escalation for the year-over-year roll-forward.
+#
+# `latent` names a standard-normal source defined once in `latents:` below.
+# Some entries below reference more than one latent (e.g. purchase_price
+# growth on both z_macro and z_local_housing) — the deck currently only
+# defines a single `latent:` field per prior, so this is an OPEN QUESTION
+# for stage 2 (does the schema need to support a list of latents per prior,
+# each with its own loading/weight?). Flagged inline with "# MULTI-LATENT".
+#
+# Variables marked `derived` (e.g. lease_days_equivalent, exit_year) are
+# computed by the script and intentionally do NOT appear in this deck.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. run
+# -----------------------------------------------------------------------------
+run:
+  horizon_years:
+    kind: sweep
+    values: [3, 5, 7, 10]                  # example default; adjust as desired
+    units: years
+
+  growth_model:
+    kind: constant
+    value: persistent                       # iid | persistent | ar1
+    units: categorical
+
+  ar1_phi:
+    kind: constant
+    value: null                              # TODO: only used if growth_model = ar1
+    units: dimensionless
+
+  report_quantiles:
+    kind: constant
+    value: [0.1, 0.5, 0.9]                  # example default; adjust as desired
+    units: probability
+
+  oracle_draws:
+    kind: constant
+    value: null                              # TODO: only if an MC oracle/test is built
+    units: count
+
+  oracle_seed:
+    kind: constant
+    value: null                              # TODO: only if an MC oracle/test is built
+    units: dimensionless
+
+# -----------------------------------------------------------------------------
+# 2. latents
+# -----------------------------------------------------------------------------
+latents:
+  names:
+    - z_macro                # drives market return and appreciation together
+    - z_local_housing        # Summit County-specific housing shock
+    - z_ski_demand            # drives ADR and occupancy together
+    - z_construction_cost     # drives HOA, maintenance, special assessment severity
+    - z_insurance              # mountain-region insurance-specific shock
+
+  # Correlation matrix over the names above, in the same order.
+  # Must be positive semidefinite; the loader validates this.
+  # TODO: fill in real correlations. Identity (independent) shown as placeholder.
+  correlation:
+    - [1.0, 0.0, 0.0, 0.0, 0.0]   # z_macro
+    - [0.0, 1.0, 0.0, 0.0, 0.0]   # z_local_housing
+    - [0.0, 0.0, 1.0, 0.0, 0.0]   # z_ski_demand
+    - [0.0, 0.0, 0.0, 1.0, 0.0]   # z_construction_cost
+    - [0.0, 0.0, 0.0, 0.0, 1.0]   # z_insurance
+
+# -----------------------------------------------------------------------------
+# 3. branches
+# -----------------------------------------------------------------------------
+branches:
+  reference:
+    kind: constant
+    value: rent
+    units: categorical
+
+  alternatives:
+    kind: sweep
+    values: [buy_fl_resident, buy_co_resident]
+    units: categorical
+
+# -----------------------------------------------------------------------------
+# 4. acquisition
+# -----------------------------------------------------------------------------
+acquisition:
+  purchase_price:
+    kind: sweep
+    values: null                             # TODO
+    units: USD
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: [z_macro, z_local_housing]     # MULTI-LATENT — see open question above
+      source: null                           # TODO: fitted | elicited | quoted
+
+  down_payment:
+    kind: sweep
+    values: null                             # TODO
+    units: null                              # TODO: USD or fraction — pick one, stick to it
+    # NOTE: decide once, globally, whether down_payment (and similar) are
+    # absolute dollars or a fraction of purchase_price.
+
+  closing_cost_fraction:
+    kind: constant
+    value: null                              # TODO
+    units: fraction
+
+  land_fraction:
+    kind: constant
+    value: null                              # TODO: from county assessor's split
+    units: fraction
+
+  initial_furnishing:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO: does this need a latent, or is it idiosyncratic?
+    units: USD
+    source: null                             # TODO
+
+# -----------------------------------------------------------------------------
+# 5. financing
+# -----------------------------------------------------------------------------
+financing:
+  mortgage_rate:
+    kind: sweep
+    values: null                             # TODO (promote to prior later if correlated w/ z_macro wanted)
+    units: fraction
+
+  loan_term_years:
+    kind: constant
+    value: null                              # TODO
+    units: years
+
+  points:
+    kind: constant
+    value: null                              # TODO
+    units: fraction
+
+  occupancy_class:
+    kind: sweep
+    values: [second_home, investment]
+    units: categorical
+    # NOTE: confirm classification rule with an actual lender — a half-year
+    # STR schedule may push this into "investment" regardless of intent.
+
+# -----------------------------------------------------------------------------
+# 6. carrying_costs
+# -----------------------------------------------------------------------------
+carrying_costs:
+  assessment_rate:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO: which latent, if any?
+    units: fraction
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: null                           # TODO
+      source: null                           # TODO
+
+  mill_levy:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO
+    units: fraction
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: null                           # TODO
+      source: null                           # TODO
+
+  hoa_dues_annual:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: z_construction_cost
+    units: USD
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: z_construction_cost
+      source: null                           # TODO
+
+  special_assessment:
+    kind: prior
+    dist: mixture
+    p: null                                  # TODO: annual probability of a special assessment
+    severity:
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+    latent: z_construction_cost              # drives severity
+    units: USD
+    source: null                             # TODO
+
+  insurance_annual:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: z_insurance
+    units: USD
+    source: null                             # TODO
+    # NOTE: must reflect an STR-rated policy, not a standard homeowner's policy.
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: z_insurance
+      source: null                           # TODO
+
+  utilities_annual:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO
+    units: USD
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: null                           # TODO
+      source: null                           # TODO
+
+  maintenance_fraction:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO
+    units: fraction_of_market_value_per_year
+    source: null                             # TODO
+
+# -----------------------------------------------------------------------------
+# 7. rental_operations
+# -----------------------------------------------------------------------------
+rental_operations:
+  available_nights:
+    kind: sweep
+    values: null                             # TODO — the half-year plan lives here
+    units: nights
+
+  occupancy:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: z_ski_demand
+    units: fraction
+    source: null                             # TODO
+    # NOTE: bounded-fraction check applies (loader must warn if P(occupancy>1) non-negligible).
+
+  adr:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: z_ski_demand
+    units: USD_per_night
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: null                           # TODO: same latent (z_ski_demand) or a separate growth driver?
+      source: null                           # TODO
+
+  avg_stay_nights:
+    kind: constant
+    value: null                              # TODO
+    units: nights
+    # NOTE: sets turns per year. Also a tax trigger — an average stay of
+    # 7 days or less changes passive-loss-rule classification (see taxes.passive_loss_treatment).
+
+  mgmt_fee_fraction:
+    kind: sweep
+    values: null                             # TODO — by PM company tier
+    units: fraction
+
+  cleaning_per_turn:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO
+    units: USD
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: null                           # TODO
+      source: null                           # TODO
+
+  platform_fee_fraction:
+    kind: constant
+    value: null                              # TODO
+    units: fraction
+
+  lodging_tax_rate:
+    kind: constant
+    value: null                              # TODO — combined state, county, town rate
+    units: fraction
+
+  supplies_annual:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO
+    units: USD
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: null                           # TODO
+      source: null                           # TODO
+
+  str_restriction:
+    kind: prior
+    dist: mixture
+    p: null                                  # TODO: probability licensing caps/rules cut rentable nights
+    severity:
+      dist: lognormal
+      median: null                           # TODO: size of the cut, as a fraction of nights
+      cv: null                               # TODO
+    latent: null                             # TODO: policy-driven — tie to a latent, or leave idiosyncratic?
+    units: fraction
+    source: null                             # TODO
+
+# -----------------------------------------------------------------------------
+# 8. personal_use
+# -----------------------------------------------------------------------------
+personal_use:
+  personal_use_days:
+    kind: sweep
+    values: null                             # TODO
+    units: days
+    # NOTE: drives rental/personal allocation of every deduction. The
+    # greater-of-14-days-or-10%-of-rental-days rule makes this a real decision
+    # variable, not just a lifestyle input.
+
+# -----------------------------------------------------------------------------
+# 9. taxes
+# -----------------------------------------------------------------------------
+taxes:
+  filing_status:
+    kind: constant
+    value: mfj
+    units: categorical
+
+  federal_marginal_rate:
+    kind: constant
+    value: null                              # TODO — fixed per sweep node; keeps brackets out of propagation
+    units: fraction
+
+  co_income_tax_rate:
+    kind: constant
+    value: null                              # TODO — flat rate ~4.4%, but TABOR refunds have lowered it in some years
+    units: fraction
+    # NOTE: applied only in the buy_co_resident branch.
+
+  salt_cap:
+    kind: constant
+    value: null                              # TODO — year-indexed schedule under current law, not a single number
+    units: USD_schedule_by_year
+    # Represent as a list of {year, value} once populated, e.g.:
+    #   value:
+    #     - {year: 2026, value: 10000}
+    #     - {year: 2027, value: 10000}
+
+  depreciation_years_building:
+    kind: constant
+    value: 27.5                              # residential rental, per current law
+    units: years
+
+  depreciation_years_furnishing:
+    kind: constant
+    value: null                              # TODO
+    units: years
+
+  recapture_rate:
+    kind: constant
+    value: null                              # TODO — max 25% on unrecaptured Section 1250 gain
+    units: fraction
+
+  ltcg_rate:
+    kind: constant
+    value: null                              # TODO — applies to both the condo sale and portfolio liquidation
+    units: fraction
+
+  passive_loss_treatment:
+    kind: constant
+    value: null                              # TODO — categorical; depends on avg_stay_nights and participation facts
+    units: categorical
+
+# -----------------------------------------------------------------------------
+# 10. rent_reference
+# -----------------------------------------------------------------------------
+rent_reference:
+  seasonal_lease_cost:
+    kind: prior                              # or constant — TODO: decide (actual lease is a decent anchor)
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO
+    units: USD
+    source: null                             # TODO
+    growth:
+      kind: prior
+      dist: lognormal
+      median: null                           # TODO
+      cv: null                               # TODO
+      latent: null                           # TODO
+      source: null                           # TODO
+
+  # lease_days_equivalent is DERIVED (computed by the script to match
+  # personal_use.personal_use_days) — intentionally not entered here.
+
+  renters_insurance:
+    kind: constant
+    value: null                              # TODO
+    units: USD
+
+# -----------------------------------------------------------------------------
+# 11. capital_markets
+# -----------------------------------------------------------------------------
+capital_markets:
+  market_return:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: z_macro
+    units: fraction
+    source: null                             # TODO
+    # NOTE: this is the opportunity-cost engine for the rent branch.
+
+  inflation:
+    kind: prior
+    dist: lognormal
+    median: null                             # TODO
+    cv: null                                 # TODO
+    latent: null                             # TODO
+    units: fraction
+    source: null                             # TODO
+    # NOTE: used for real-dollar reporting.
+
+  cash_yield:
+    kind: constant
+    value: null                              # TODO — for reserves and idle cash
+    units: fraction
+
+  portfolio_tax_drag:
+    kind: constant
+    value: null                              # TODO — annual tax on dividends and distributions
+    units: fraction
+
+# -----------------------------------------------------------------------------
+# 12. exit
+# -----------------------------------------------------------------------------
+exit:
+  selling_cost_fraction:
+    kind: constant
+    value: null                              # TODO — commission plus closing, typically 6-8%
+    units: fraction
+
+  # exit_year is DERIVED (equals run.horizon_years) — intentionally not
+  # entered here; one source of truth.
