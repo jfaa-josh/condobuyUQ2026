@@ -2,7 +2,8 @@
 
 Not part of the analysis package's own logic (that's the rest of condobuyuq2026) — these are
 helpers for data-pulling/model-building scripts specifically: talking to external APIs (BLS,
-FRED, ...), and saving what comes back into data/raw/. Keep this modular by data source (one
+FRED, Yahoo Finance, ...), and saving what comes back into data/raw/. Keep this modular by data
+source (one
 fetch_<source>_* function per API) so future manual scripts pulling from the same source reuse
 it, rather than each script re-implementing its own request/pagination/saving logic. Every
 fetch_<source>_* function returns the same row shape regardless of source -- a list of
@@ -19,6 +20,7 @@ from typing import Any
 
 import pandas as pd
 import requests
+import yfinance as yf
 
 from condobuyuq2026.paths import DATA_RAW_DIR, MODELS_DIR
 from condobuyuq2026.paths import model_fit_path as _model_fit_path
@@ -110,12 +112,46 @@ def fetch_fred_series(series_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def fetch_yfinance_series(ticker: str, start: str) -> list[dict[str, Any]]:
+    """Pulls one ticker's monthly closing price history via yfinance, from `start` (an ISO
+    "YYYY-MM-DD" date) through today -- no API key, no rate limit, one request regardless of span.
+    Returns the same year/period/periodName/value row shape fetch_bls_series/fetch_fred_series do
+    (see module docstring), so the rest of a manual script's pipeline doesn't need to know or care
+    which source a series came from.
+
+    Normalizes yfinance's own bar-date index (a monthly bar's date is whatever day yfinance
+    happened to stamp it, not necessarily the 1st) to month-start Timestamps before reindexing to
+    a complete monthly calendar via asfreq("MS") -- same reasoning as to_monthly_series's own
+    reindex: keeps a later .shift(12) meaning "12 months," not "12 rows."
+
+    Uses raw (auto_adjust=False) Close, not dividend/split-adjusted -- for an index ticker like
+    "^GSPC" this is just the index's own price level, not a total-return series (no dividend
+    stream is associated with the index itself for yfinance to adjust). If you need a dividends-
+    reinvested return, pull a total-return ticker (e.g. "^SP500TR") instead -- that's a modeling
+    choice for the caller, not something this function decides.
+    """
+    close = yf.download(ticker, start=start, interval="1mo", auto_adjust=False, progress=False)["Close"].squeeze()
+    close.index = close.index.to_period("M").to_timestamp()
+    close = close.asfreq("MS")
+    if close.empty:
+        raise RuntimeError(f"yfinance returned no data for ticker {ticker!r}")
+    return [
+        {
+            "year": str(date.year),
+            "period": f"M{date.month:02d}",
+            "periodName": date.strftime("%B"),
+            "value": str(value),
+        }
+        for date, value in close.items()
+    ]
+
+
 def filter_monthly(data_points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keeps only monthly observations (period M01-M12), dropping annual averages (M13) and any
     other non-monthly periodicity a source might include for a given series. A no-op for sources
-    that only ever report monthly periods to begin with (e.g. fetch_fred_series) -- kept in the
-    pipeline anyway so every manual script follows the same fetch -> filter_monthly -> save_raw_csv
-    shape regardless of source."""
+    that only ever report monthly periods to begin with (e.g. fetch_fred_series, fetch_yfinance_
+    series with interval="1mo") -- kept in the pipeline anyway so every manual script follows the
+    same fetch -> filter_monthly -> save_raw_csv shape regardless of source."""
     return [p for p in data_points if p["period"].startswith("M") and p["period"] != "M13"]
 
 

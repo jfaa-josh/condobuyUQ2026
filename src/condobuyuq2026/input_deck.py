@@ -4,11 +4,11 @@ package to consume.
 Only barely started — the deck's structure is still being iterated on with the user (see
 .claude/implementation-plan.md). So far this loads the raw YAML, can unwrap a `kind: constant`
 entry to its plain value (see get_report_quantiles), and can resolve a fitted forecast_models
-entry (general, home_price -- neither has a `kind`, since they're fitted rather than
-hand-elicited, so they just name a model) to the fit it names, with some basic sanity checks (see
-get_fitted_forecast_model). Once the deck stabilizes, this module should be its single validation
-"catch-all": everything else in this package should be able to assume a deck that's come through
-here is well-formed, without re-checking it itself. That means:
+entry (general, home_price, market -- none of these have a `kind`, since they're fitted rather
+than hand-elicited, so they just name a model) to the fit it names, with some basic sanity checks
+(see get_fitted_forecast_model). Once the deck stabilizes, this module should be its single
+validation "catch-all": everything else in this package should be able to assume a deck that's
+come through here is well-formed, without re-checking it itself. That means:
 
 - Parsing the YAML into typed Python objects, one shape per `kind` (constant, sweep, prior,
   process), rather than leaving callers to work with raw dicts.
@@ -73,8 +73,8 @@ def _load_checked_fit(model_name: str) -> dict[str, float]:
     if not path.exists():
         raise FileNotFoundError(
             f"forecast_models references model {model_name!r}, but {path} doesn't exist -- run its "
-            "build script (e.g. run/manual/build_general_price_model.py or "
-            "run/manual/build_co_home_price_model.py) first."
+            "build script (e.g. run/manual/build_general_price_model.py, "
+            "run/manual/build_co_home_price_model.py, or run/manual/build_market_model.py) first."
         )
     if path.stat().st_size == 0:
         raise ValueError(f"Fit file for model {model_name!r} at {path} is empty.")
@@ -112,3 +112,9 @@ def get_forecast_model_home_price(deck: dict[str, Any] | None = None) -> dict[st
     """Resolves forecast_models.home_price -- see get_fitted_forecast_model. Fit built by
     run/manual/build_co_home_price_model.py."""
     return get_fitted_forecast_model("home_price", deck)
+
+
+def get_forecast_model_market(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Resolves forecast_models.market -- see get_fitted_forecast_model. Fit built by
+    run/manual/build_market_model.py."""
+    return get_fitted_forecast_model("market", deck)

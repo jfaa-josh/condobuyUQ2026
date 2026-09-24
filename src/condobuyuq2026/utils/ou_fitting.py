@@ -37,11 +37,16 @@ def fit_annual_ou(index_series: pd.Series) -> dict[str, float]:
       correlation over a 12-month step, so beta = exp(-12/tau)).
     - phi_monthly = beta ** (1/12) = exp(-1/tau): the equivalent monthly AR(1) persistence -- this
       is what forecast_models' phi means elsewhere in this project.
-    - sig = resid.std() / sqrt(12): the annual regression residual's volatility, scaled down to an
-      implied monthly rate by simple linear variance scaling. NOTE: this is an approximation, not
-      the exact OU discretization variance for a 12-month step (which would also depend on tau and
-      beta) -- consistent with this project's preference for named, closed-form approximations
-      over exact-but-unwieldy formulas.
+    - sig: the process's own continuous-time diffusion coefficient (time measured in months), read
+      EXACTLY off the regression rather than approximated. For an OU process observed T months
+      apart, Var(step) = sig^2 * tau/2 * (1 - exp(-2T/tau)); with T=12 that's exactly
+      resid.var() = sig^2 * tau/2 * (1 - beta^2), so sig = sqrt(2 * resid.var() / (tau * (1 -
+      beta^2))). This replaces an earlier `resid.std() / sqrt(12)` approximation that implicitly
+      assumed variance keeps accumulating at a fixed rate regardless of how fast the process
+      mean-reverts -- fine when tau is large relative to the horizons of interest (true for CPI),
+      badly wrong when tau is small (a weakly-autocorrelated series like stock returns fits to a
+      SHORT tau, and the old formula overstated the resulting price-level band by multiples --
+      see project_term_structure).
     - i0: the most recently observed a_t, i.e. where the process starts from for projection.
 
     Returns a dict with i_inf, tau, sig, i0, phi_monthly, alpha, beta.
@@ -50,13 +55,14 @@ def fit_annual_ou(index_series: pd.Series) -> dict[str, float]:
     paired = pd.concat([a, a.shift(-12)], axis=1).dropna()
     beta, alpha = np.polyfit(paired.iloc[:, 0], paired.iloc[:, 1], 1)
     resid = paired.iloc[:, 1] - (alpha + beta * paired.iloc[:, 0])
+    tau = -12 / np.log(beta)
 
     return {
         "alpha": alpha,
         "beta": beta,
         "i_inf": alpha / (1 - beta),
-        "tau": -12 / np.log(beta),
-        "sig": resid.std() / np.sqrt(12),
+        "tau": tau,
+        "sig": np.sqrt(2 * resid.var() / (tau * (1 - beta**2))),
         "i0": a.dropna().iloc[-1],
         "phi_monthly": beta ** (1 / 12),
     }
@@ -75,16 +81,30 @@ def project_term_structure(
 
         D(h) = (i_inf * h + (i0 - i_inf) * tau * (1 - exp(-h/tau))) / 12
 
-    median = p0 * exp(D(h)); the band multiplies in +/- z * sig * sqrt(h) on the log scale (sig*
-    sqrt(h) treats each month's shock as i.i.d., which is the same "grows like a random walk"
-    approximation used for sig itself -- see fit_annual_ou's docstring).
+    median = p0 * exp(D(h)); the band is +/- z * sd(h) around D(h) on the log scale, where sd(h) is
+    the EXACT std of that same integral (cumulative log-price growth is literally the integral of
+    the OU-modeled rate, so its variance is the integral's variance, not something separately
+    approximated). This is the same "integrated interest rate" variance used to price zero-coupon
+    bonds under the Vasicek model (same SDE): with x = h/tau,
+
+        Var(h) = sig^2 * tau^3 * (x - 1.5 + 2*exp(-x) - 0.5*exp(-2x)) / 144
+
+    (the /144 converts the integral's own months^2-and-rate^2 units down to the annualized-rate-per-
+    year units i_inf/sig are already in, matching the /12 already used for the drift D(h) above).
+    For h >> tau this grows ~linearly (unboundedly, as expected for a cumulative price level);
+    for h << tau it's small, correctly reflecting that a fast-mean-reverting rate (small tau)
+    barely has time to move the cumulative total before reverting back.
     """
     h = np.arange(horizon_months + 1)
-    drift = (fit["i_inf"] * h + (fit["i0"] - fit["i_inf"]) * fit["tau"] * (1 - np.exp(-h / fit["tau"]))) / 12
+    tau = fit["tau"]
+    drift = (fit["i_inf"] * h + (fit["i0"] - fit["i_inf"]) * tau * (1 - np.exp(-h / tau))) / 12
     median = p0 * np.exp(drift)
+    x = h / tau
+    variance = fit["sig"] ** 2 * tau**3 * (x - 1.5 + 2 * np.exp(-x) - 0.5 * np.exp(-2 * x)) / 144
+    sd = np.sqrt(np.clip(variance, 0, None))  # clip: only ever-so-slightly negative from float error near h=0
     z_lo, z_hi = norm.ppf(ci)
-    lo = p0 * np.exp(drift + z_lo * fit["sig"] * np.sqrt(h))
-    hi = p0 * np.exp(drift + z_hi * fit["sig"] * np.sqrt(h))
+    lo = p0 * np.exp(drift + z_lo * sd)
+    hi = p0 * np.exp(drift + z_hi * sd)
     return pd.DataFrame({"median": median, "lo": lo, "hi": hi}, index=pd.Index(h, name="h_months"))
 
 
@@ -103,18 +123,20 @@ def project_monthly_rate(
     integrates the rate's cone over time rather than looking at the rate's own level:
 
         mean(h) = i_inf + (i0 - i_inf) * phi_monthly**h        -- expected annualized rate at h
-        var(h)  = sig**2 * (1 - phi_monthly**(2*h)) / (1 - phi_monthly**2)   -- its variance at h
+        var(h)  = sig**2 * (tau/2) * (1 - phi_monthly**(2*h))  -- its variance at h (exact, given
+                  the OU model -- this is the standard OU/Vasicek "variance of the level at time h,
+                  started from a known point" formula: sig^2*tau/2 is the stationary/marginal
+                  variance the process approaches as h grows, per fit_annual_ou's docstring)
 
-    (fit["sig"] is treated here as the monthly AR(1) innovation's std -- the same approximation
-    project_term_structure's band already relies on.) Converts the resulting annualized-rate
-    distribution to an actual monthly fractional change via exp(rate / 12) - 1.
+    Converts the resulting annualized-rate distribution to an actual monthly fractional change via
+    exp(rate / 12) - 1.
 
     Returns a DataFrame indexed by month offset h = 0..horizon_months with columns "median", "lo",
     "hi", each a fraction (e.g. 0.0025 = 0.25% that month).
     """
     h = np.arange(horizon_months + 1)
     mean = fit["i_inf"] + (fit["i0"] - fit["i_inf"]) * fit["phi_monthly"] ** h
-    var = fit["sig"] ** 2 * (1 - fit["phi_monthly"] ** (2 * h)) / (1 - fit["phi_monthly"] ** 2)
+    var = fit["sig"] ** 2 * (fit["tau"] / 2) * (1 - fit["phi_monthly"] ** (2 * h))
     sd = np.sqrt(var)
     z_lo, z_hi = norm.ppf(ci)
     median = np.exp(mean / 12) - 1

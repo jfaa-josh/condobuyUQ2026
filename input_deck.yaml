@@ -19,12 +19,12 @@
 #   sweep      decision variable, grid axis.       fields: values
 #   prior      ONE uncertain value, static.        fields: dist, <dist params>, latent
 #   process    an entire time-evolving path, hand-elicited (dist/marginal params + monthly_change
-#              inline) — used for market/enso.
+#              inline) — used for enso only now.
 #
-# `general` and `home_price` (also two of the four founding processes, see below) have no `kind` at
-# all: they're FITTED from real data instead of hand-elicited, so they carry none of the above
-# fields — just `model_name`, naming an already-built model fit (see input_deck.py's
-# get_forecast_model_general/get_forecast_model_home_price).
+# `general`, `home_price`, and `market` (three of the four founding processes, see below) have no
+# `kind` at all: they're FITTED from real data instead of hand-elicited, so they carry none of the
+# above fields — just `model_name`, naming an already-built model fit (see input_deck.py's
+# get_forecast_model_general/get_forecast_model_home_price/get_forecast_model_market).
 #
 # DIST families: lognormal {median, cv} (positive quantities), normal {mean, sd} (can go
 # negative — used for monthly_change blocks and for ENSO's own marginal, since ENSO is signed
@@ -46,10 +46,10 @@
 # makes ΔW an apples-to-apples comparison. See scenario.horizon_years and the exit section.
 #
 # FOUR FOUNDING PROCESSES (`forecast_models`: general, home_price, market, enso) — the plan is
-# to fit all four from real historical data eventually. `general`/`home_price` already are (see
-# KIND above); market/enso still hold hand-elicited placeholder values (a marginal distribution +
-# a monthly_change distribution, which together derive the process's own ar1_phi; see
-# .claude/implementation-plan.md for the derivation) pending the same treatment. Treated as
+# to fit all four from real historical data eventually. `general`/`home_price`/`market` already
+# are (see KIND above); `enso` still holds hand-elicited placeholder values (a marginal
+# distribution + a monthly_change distribution, which together derive the process's own ar1_phi;
+# see .claude/implementation-plan.md for the derivation) pending the same treatment. Treated as
 # ground truth either way; nothing else in this deck feeds back and influences them.
 #
 # REFERENCING A PROCESS/DERIVED LATENT BY NAME: everywhere a `latent:` or `derived_latents.*.
@@ -125,23 +125,23 @@ scenario:
 # -----------------------------------------------------------------------------
 # 2. forecast_models
 # -----------------------------------------------------------------------------
-# The four founding processes. general/home_price are fitted from real data (BLS CPI, a Denver-
-# metro Case-Shiller home price index); market/enso still hold illustrative placeholder numbers,
-# real fitting for those (a broad market index, NOAA's ONI) is earmarked, not done yet.
+# The four founding processes. general/home_price/market are fitted from real data (BLS CPI, a
+# Denver-metro Case-Shiller home price index, S&P 500 price); enso still holds illustrative
+# placeholder numbers, real fitting for it (NOAA's ONI) is earmarked, not done yet.
 #
 # IMPORTANT — annualized rate, but a MONTHLY-stepped process: for all four, the growth rate's own
 # distribution is on an ANNUALIZED basis (e.g. median 0.03 = "running about 3%/year") — that's the
-# natural, human-elicited way to state it (or, for general/home_price, what their fits are
+# natural, human-elicited way to state it (or, for general/home_price/market, what their fits are
 # expressed in — see their own comments below). But each process's path is a MONTHLY AR(1) walk
-# (see "Temporal model" in .claude/implementation-plan.md): `monthly_change` (on market/enso; for
-# general/home_price the equivalent comes from the fit) is how much that ANNUALIZED-RATE ESTIMATE
-# itself typically drifts from one month's reading to the next's — that's what phi gets fit from —
-# it is NOT the amount actually applied to grow a variable's IC in a single month. When this growth
-# compounds an IC forward, each of the 12 monthly steps in a year must apply the MONTHLY-EQUIVALENT
-# of the annual rate (the twelve steps compound TO the annual rate), never the full annual figure
-# at every one of the 12 steps — that would compound to twelve years of growth in one. The exact
-# monthly-step formula given phi is still open — see "Calibration procedure" under Open questions
-# in the implementation plan.
+# (see "Temporal model" in .claude/implementation-plan.md): `monthly_change` (on enso; for
+# general/home_price/market the equivalent comes from the fit) is how much that ANNUALIZED-RATE
+# ESTIMATE itself typically drifts from one month's reading to the next's — that's what phi gets
+# fit from — it is NOT the amount actually applied to grow a variable's IC in a single month. When
+# this growth compounds an IC forward, each of the 12 monthly steps in a year must apply the
+# MONTHLY-EQUIVALENT of the annual rate (the twelve steps compound TO the annual rate), never the
+# full annual figure at every one of the 12 steps — that would compound to twelve years of growth
+# in one. The exact monthly-step formula given phi is still open — see "Calibration procedure"
+# under Open questions in the implementation plan.
 forecast_models:
   general:
     # General (broad US urban consumer) CPI inflation, expressed as an ANNUALIZED rate — see the
@@ -170,16 +170,12 @@ forecast_models:
   market:
     # Broad portfolio return (fraction/year) — the rent branch's opportunity-cost engine. This
     # IS capital_markets' "market_return"; not re-declared there, to avoid two copies of the
-    # same numbers.
-    kind: process
-    dist: lognormal
-    median: 0.07
-    cv: 0.50
-    initial_value: null
-    monthly_change:
-      dist: normal
-      mean: 0.0
-      sd: 0.003
+    # same numbers. PRICE return only (no dividends) -- see build_market_model.py's own docstring
+    # for why that's a known, deliberate understatement of real portfolio growth, not an oversight.
+    #
+    # FITTED from real Yahoo Finance data (S&P 500, ^GSPC) -- see general's comment above for what
+    # that means; fit built and saved by run/manual/build_market_model.py.
+    model_name: yfinance_spx_1984_1_2026_9
 
   enso:
     # NOAA ONI-style index (unitless, signed, roughly -2..+2.5 historically) — El Niño/La Niña
