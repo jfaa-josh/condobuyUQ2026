@@ -60,6 +60,11 @@ pip-selfcheck.json
 secrets.*
 credentials.*
 
+# =======================
+# Local data (scraped/external only — data/manual/ IS tracked, see that folder)
+# =======================
+data/raw/
+
 # ======================
 # Jupyter & IPython
 # ======================

@@ -1,537 +1,706 @@
 # =============================================================================
 # condobuyUQ2026 — Input Deck
 # =============================================================================
-# This is the single user-editable file describing the buy-vs-rent decision.
-# Everything the model needs — decisions to sweep, known constants, and
-# uncertain quantities — is entered here. Nothing else should need editing to
-# run a new scenario.
+# The single user-editable file describing the buy-vs-rent decision.
 #
-# STATUS: draft structure only. All numeric values below are placeholders
-# (null, marked "# TODO") — see .claude/implementation-plan.md, stage 1.
-# Real numbers and any structural changes come in stage 2.
+# STATUS: mostly illustrative example values now (not real elicited data — see each
+# comment), so the deck can be run end to end. `# REQUIRED` still marks a real gap.
+# See .claude/implementation-plan.md for stage, earmarks, and open questions.
 #
 # -----------------------------------------------------------------------------
 # Schema reference
 # -----------------------------------------------------------------------------
-# Every variable has exactly one `kind`:
+# WHAT THIS DECK COMPUTES: uncertainty propagation (forward UQ), not Bayesian inference —
+# no posterior anywhere. Every input here feeds a deterministic formula whose OUTPUT is the
+# actual quantity of interest: ΔW = W_buy − W_rent at the horizon.
 #
-#   constant  -- single known value.            fields: value, units
-#   sweep     -- decision variable, grid axis.   fields: values (or range), units
-#   prior     -- uncertain, closed-form dist.    fields: dist, <dist params>,
-#                                                         latent, units, source
+# KIND:
+#   constant   single known value.                fields: value
+#   sweep      decision variable, grid axis.       fields: values
+#   prior      ONE uncertain value, static.        fields: dist, <dist params>, latent
+#   process    an entire time-evolving path, hand-elicited (dist/marginal params + monthly_change
+#              inline) — used for home_price/market/enso.
 #
-# `constant` and `sweep` may hold categorical (string) values too — no
-# separate "switch" kind.
+# `general` (also one of the four founding processes, see below) has no `kind` at all: it's FITTED
+# from real data instead of hand-elicited, so it carries none of the above fields — just
+# `model_name`, naming an already-built model fit (see input_deck.py's get_forecast_model_general).
 #
-# Prior distribution families (`dist`):
-#   lognormal  { median, cv }              -- positive quantities (costs,
-#                                              prices, ADR, growth factors)
-#   normal     { mean, sd }                -- quantities that can go negative
-#   mixture    { p, severity: {dist: lognormal, median, cv} }
-#                                           -- rare-event costs (annual
-#                                              probability p, severity given
-#                                              by a lognormal)
+# DIST families: lognormal {median, cv} (positive quantities), normal {mean, sd} (can go
+# negative — used for monthly_change blocks and for ENSO's own marginal, since ENSO is signed
+# and centered near zero), mixture {p, severity: {dist: lognormal, median, cv}} (rare events).
 #
-# `source` on a prior is one of: fitted | elicited | quoted
+# SWEEPS ARE DELIBERATELY MINIMAL: only `scenario.alternatives`, `scenario.horizon_years`,
+# `scenario.residency_state`, and `scenario.purchase_price` are swept. Everything else is a
+# single manually-set value per run.
 #
-# Bounded fractions (e.g. occupancy) are entered as `lognormal`, not `beta`
-# (beta isn't closed under products). The loader must warn if probability
-# mass above 1.0 is non-negligible.
+# "SEE scenario.X" STUB PATTERN: `purchase_price` is actually swept in `scenario` (kept
+# together with the other sweeps for visibility), but conceptually belongs to `acquisition`.
+# That section keeps a named placeholder entry (`values: null # see scenario.purchase_price`)
+# purely so the variable is discoverable when reading that section — the real input lives in
+# `scenario`, don't set it in both places.
 #
-# `growth` is an optional sub-block on any variable (constant or prior form)
-# giving its annual escalation for the year-over-year roll-forward.
+# ALWAYS SELLS AT THE HORIZON: not a toggle. Both branches are liquidated at exit_year — the
+# buy branch sells the condo, the rent branch's invested portfolio is also sold — because
+# taxing both liquidations (capital gains on the portfolio too, not just the condo) is what
+# makes ΔW an apples-to-apples comparison. See scenario.horizon_years and the exit section.
 #
-# `latent` names a standard-normal source defined once in `latents:` below.
-# Some entries below reference more than one latent (e.g. purchase_price
-# growth on both z_macro and z_local_housing) — the deck currently only
-# defines a single `latent:` field per prior, so this is an OPEN QUESTION
-# for stage 2 (does the schema need to support a list of latents per prior,
-# each with its own loading/weight?). Flagged inline with "# MULTI-LATENT".
+# FOUR FOUNDING PROCESSES (`forecast_models`: general, home_price, market, enso) — the plan is
+# to fit all four from real historical data eventually. `general` already is (see KIND above);
+# home_price/market/enso still hold hand-elicited placeholder values (a marginal distribution +
+# a monthly_change distribution, which together derive the process's own ar1_phi; see
+# .claude/implementation-plan.md for the derivation) pending the same treatment. Treated as
+# ground truth either way; nothing else in this deck feeds back and influences them.
 #
-# Variables marked `derived` (e.g. lease_days_equivalent, exit_year) are
-# computed by the script and intentionally do NOT appear in this deck.
+# REFERENCING A PROCESS/DERIVED LATENT BY NAME: everywhere a `latent:` or `derived_latents.*.
+# weights` key names a process (e.g. `enso`, `construction_cost`, `market`), it's always that
+# entry's own key under forecast_models/derived_latents — never a separate identifier declared on
+# the entry itself. (An earlier draft had each forecast_models entry also declare its own
+# `latent: z_*` name for this purpose; dropped as unused dead weight once every actual reference
+# elsewhere turned out to just use the entry's key directly instead.)
+#
+# DERIVED LATENTS (`derived_latents`): for anything that needs a growth or level driver but
+# isn't itself one of the four founding processes — a weighted combination of all four
+# (`market`, `home_price`, `general`, `enso`) plus its own idiosyncratic (unmodeled) share,
+# `a²+b²+c²+d² ≤ 1`. Deliberately kept as manually-reasoned weights for now — see the earmark
+# in the implementation plan to fit these properly from real data with a utility script.
+#
+# `growth` sub-blocks are elicited as an ANNUAL median/cv, realized monthly internally, and
+# COMPOUND over the horizon. A variable's plain top-level `latent:` (no `growth`) instead
+# modulates its *seasonal/year-to-year level* — bounded, not compounding. These are different
+# roles even when they reference the same named process (e.g. `hoa_dues_annual.latent` and
+# `hoa_dues_annual.growth.latent` are both `construction_cost`, doing two different jobs — see
+# the implementation plan for a worked numeric example).
+#
+# COMPOSITE COST FORMULAS (`acquisition.closing_costs`, `exit.selling_costs`): both follow
+# `total = fixed_fees + (percent_of_price * price)` — a scalar dollar amount that doesn't scale
+# with price, plus a fraction that does. Written out explicitly in each section's comment.
+#
+# `derived` variables (loan_amount, exit_year, lease_days_equivalent, monthly rentable-nights)
+# are computed by the script and deliberately do NOT appear in this deck.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# 1. run
+# 1. scenario
 # -----------------------------------------------------------------------------
-run:
-  horizon_years:
-    kind: sweep
-    values: [3, 5, 7, 10]                  # example default; adjust as desired
-    units: years
-
-  growth_model:
-    kind: constant
-    value: persistent                       # iid | persistent | ar1
-    units: categorical
-
-  ar1_phi:
-    kind: constant
-    value: null                              # TODO: only used if growth_model = ar1
-    units: dimensionless
-
-  report_quantiles:
-    kind: constant
-    value: [0.1, 0.5, 0.9]                  # example default; adjust as desired
-    units: probability
-
-  oracle_draws:
-    kind: constant
-    value: null                              # TODO: only if an MC oracle/test is built
-    units: count
-
-  oracle_seed:
-    kind: constant
-    value: null                              # TODO: only if an MC oracle/test is built
-    units: dimensionless
-
-# -----------------------------------------------------------------------------
-# 2. latents
-# -----------------------------------------------------------------------------
-latents:
-  names:
-    - z_macro                # drives market return and appreciation together
-    - z_local_housing        # Summit County-specific housing shock
-    - z_ski_demand            # drives ADR and occupancy together
-    - z_construction_cost     # drives HOA, maintenance, special assessment severity
-    - z_insurance              # mountain-region insurance-specific shock
-
-  # Correlation matrix over the names above, in the same order.
-  # Must be positive semidefinite; the loader validates this.
-  # TODO: fill in real correlations. Identity (independent) shown as placeholder.
-  correlation:
-    - [1.0, 0.0, 0.0, 0.0, 0.0]   # z_macro
-    - [0.0, 1.0, 0.0, 0.0, 0.0]   # z_local_housing
-    - [0.0, 0.0, 1.0, 0.0, 0.0]   # z_ski_demand
-    - [0.0, 0.0, 0.0, 1.0, 0.0]   # z_construction_cost
-    - [0.0, 0.0, 0.0, 0.0, 1.0]   # z_insurance
-
-# -----------------------------------------------------------------------------
-# 3. branches
-# -----------------------------------------------------------------------------
-branches:
+# Every sweep in this deck lives here: alternatives x horizon_years x residency_state x
+# purchase_price is the full run — watch the combined count as you add values to any of these.
+scenario:
   reference:
+    # Baseline being compared against. OPTIONS: rent (fixed).
     kind: constant
     value: rent
-    units: categorical
 
   alternatives:
+    # OPTIONS: buy.
     kind: sweep
-    values: [buy_fl_resident, buy_co_resident]
-    units: categorical
+    values: [buy]
+
+  horizon_years:
+    # Years held before both branches cash out. ALWAYS ends in a sale/liquidation at exit_year —
+    # not a toggle (see the "ALWAYS SELLS AT THE HORIZON" note in the schema reference above):
+    # the buy branch sells the condo AND the rent branch's portfolio is liquidated, both taxed,
+    # so the comparison is apples-to-apples rather than favoring whichever side doesn't realize
+    # its gains.
+    kind: sweep
+    values: [3, 5, 10]
+
+  residency_state:
+    # Tax domicile (categorical). OPTIONS: FL | CO. Applies to both branches symmetrically —
+    # see taxes.state_tax_profiles.
+    kind: sweep
+    values: [FL, CO]
+
+  property_state:
+    # Where the condo (or the rent branch's comparable place) sits. Fixed for this scenario.
+    kind: constant
+    value: CO
+
+  purchase_price:
+    # Purchase price (USD) — the deck's actual input for this; see the "SEE scenario.X" note
+    # above. acquisition.purchase_price is a discoverability stub only.
+    kind: sweep
+    values: [450000, 500000, 550000]
+
+# -----------------------------------------------------------------------------
+# 2. forecast_models
+# -----------------------------------------------------------------------------
+# The four founding processes. All illustrative placeholder numbers below — real fitting from
+# historical data (BLS CPI, a Summit County home price index, a broad market index, NOAA's ONI)
+# is earmarked, not done yet.
+#
+# IMPORTANT — annualized rate, but a MONTHLY-stepped process: for general/home_price/market,
+# the growth rate's own distribution is on an ANNUALIZED basis (e.g. median 0.03 = "running about
+# 3%/year") — that's the natural, human-elicited way to state it (or, for `general`, what its fit
+# is expressed in — see its own comment below). But each process's path is a MONTHLY AR(1) walk
+# (see "Temporal model" in .claude/implementation-plan.md): `monthly_change` (on home_price/market/
+# enso) is how much that ANNUALIZED-RATE ESTIMATE itself typically drifts from one month's reading
+# to the next's — that's what phi gets fit from — it is NOT the amount actually applied to grow a
+# variable's IC in a single month. When this growth compounds an IC forward, each of the 12
+# monthly steps in a year must apply the MONTHLY-EQUIVALENT of the annual rate (the twelve steps
+# compound TO the annual rate), never the full annual figure at every one of the 12 steps — that
+# would compound to twelve years of growth in one. The exact monthly-step formula given phi is
+# still open — see "Calibration procedure" under Open questions in the implementation plan.
+forecast_models:
+  general:
+    # General (broad US urban consumer) CPI inflation, expressed as an ANNUALIZED rate — see the
+    # forecast_models header note above for what that means for how this actually steps monthly.
+    # Covers CPI-U, all items, not seasonally adjusted. Does NOT cover Summit-County-specific costs
+    # (see home_price) or this property's own utility/HOA cost drivers (those are their own
+    # derived_latents entries, e.g. construction_cost/insurance/maintenance).
+    #
+    # Unlike the other three forecast_models entries, this one is FITTED from real BLS data rather
+    # than hand-elicited: model_name just names a fit already built and saved by
+    # run/manual/build_general_price_model.py to models/<model_name>/fit.json (see
+    # input_deck.py's get_forecast_model_general and .claude/implementation-plan.md's Earmarks for
+    # how the fit's OU parameters map onto this model). No kind/dist/mean/sd/monthly_change here --
+    # they come from the fit, not the deck.
+    model_name: bls_cpi_all_nsa_1984_1_2026_8
+
+  home_price:
+    # Local (Summit County / mountain-resort) home price appreciation (fraction/year), NOT
+    # national CPI. Used directly (unweighted) to appreciate acquisition.purchase_price to its
+    # sale value at exit — see exit section.
+    kind: process
+    dist: lognormal
+    median: 0.04
+    cv: 0.40
+    initial_value: null
+    monthly_change:
+      dist: normal
+      mean: 0.0
+      sd: 0.0015
+
+  market:
+    # Broad portfolio return (fraction/year) — the rent branch's opportunity-cost engine. This
+    # IS capital_markets' "market_return"; not re-declared there, to avoid two copies of the
+    # same numbers.
+    kind: process
+    dist: lognormal
+    median: 0.07
+    cv: 0.50
+    initial_value: null
+    monthly_change:
+      dist: normal
+      mean: 0.0
+      sd: 0.003
+
+  enso:
+    # NOAA ONI-style index (unitless, signed, roughly -2..+2.5 historically) — El Niño/La Niña
+    # phase, used as a real proxy for snowpack/ski-demand quality. NORMAL, not lognormal: ENSO
+    # can be negative and is centered near zero, so cv doesn't apply the way it does for a
+    # positive growth rate.
+    kind: process
+    dist: normal
+    mean: 0.0                        # example — neutral long-run average
+    sd: 0.9                          # example — historical spread of the index
+    initial_value: null               # optional — today's actual ONI reading
+    monthly_change:
+      dist: normal
+      mean: 0.0
+      sd: 0.3                        # example — typical month-to-month ONI move
+
+# -----------------------------------------------------------------------------
+# 3. derived_latents
+# -----------------------------------------------------------------------------
+# For anything that needs a growth or level driver but isn't itself a founding process:
+# construction_cost and insurance drive both a LEVEL and a GROWTH role (see their own comments
+# below); maintenance drives a LEVEL only; adr and utilities each drive a GROWTH only (their
+# LEVEL uses `enso` directly instead — see rental_operations.adr/carrying_costs.utilities). Each
+# entry is a weighted combination of all four forecast_models plus an idiosyncratic (i.i.d., no
+# persistence of its own — the four components already carry real memory) share. EARMARKED (see
+# implementation plan): weights below are manually reasoned placeholders; the plan is to build
+# these properly in an offline utility script (with visualizations) against real occupancy/ADR/
+# utilities data, and import the result here instead of hand-setting weights.
+derived_latents:
+  construction_cost:
+    # Used TWO ways on hoa_dues_annual (LEVEL: this year's deviation from typical; GROWTH: the
+    # typical amount's own multi-year drift — see schema reference) and once on
+    # special_assessment (severity).
+    weights:
+      market: 0.1                     # REQUIRED (placeholder) — 0 to 1 each, sum of squares <= 1
+      home_price: 0.3
+      general: 0.4
+      enso: 0.0
+
+  insurance:
+    # Drives insurance_annual's level and growth (same two-role pattern as construction_cost).
+    weights:
+      market: 0.1
+      home_price: 0.1
+      general: 0.3
+      enso: 0.2                      # mountain insurance pricing plausibly tracks weather severity
+
+  maintenance:
+    # Drives maintenance_fraction's level.
+    weights:
+      market: 0.0
+      home_price: 0.1
+      general: 0.3
+      enso: 0.1
+
+  adr:
+    # Drives adr's GROWTH (secular pricing power) — adr's LEVEL/seasonal shape uses `enso`
+    # directly instead (see rental_operations.adr). ALSO reused for rent_reference.
+    # seasonal_lease_cost's growth and personal_use.alternate_lodging_cost_by_month's growth —
+    # same rental market, so the same pricing-power process applies to all three.
+    weights:
+      market: 0.1
+      home_price: 0.2
+      general: 0.3
+      enso: 0.1
+
+  utilities:
+    # Drives utilities' GROWTH — utilities' LEVEL/seasonal shape uses `enso` directly instead
+    # (a cold, snowy winter means both good skiing and high heating bills).
+    weights:
+      market: 0.0
+      home_price: 0.0
+      general: 0.5
+      enso: 0.1
 
 # -----------------------------------------------------------------------------
 # 4. acquisition
 # -----------------------------------------------------------------------------
 acquisition:
   purchase_price:
+    # STUB — actual input lives in scenario.purchase_price (a sweep). Kept here only so this
+    # variable is discoverable when reading this section; do not set values here.
     kind: sweep
-    values: null                             # TODO
-    units: USD
-    growth:
-      kind: prior
-      dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: [z_macro, z_local_housing]     # MULTI-LATENT — see open question above
-      source: null                           # TODO: fitted | elicited | quoted
+    values: null                     # see scenario.purchase_price
 
-  down_payment:
-    kind: sweep
-    values: null                             # TODO
-    units: null                              # TODO: USD or fraction — pick one, stick to it
-    # NOTE: decide once, globally, whether down_payment (and similar) are
-    # absolute dollars or a fraction of purchase_price.
-
-  closing_cost_fraction:
-    kind: constant
-    value: null                              # TODO
-    units: fraction
+  closing_costs:
+    # total = fixed_fees + (percent_of_price * purchase_price).
+    # fixed_fees: dollar costs independent of price (title insurance, escrow, recording,
+    #   attorney fees, etc.). percent_of_price: costs that scale with price (loan origination
+    #   points, transfer tax, etc.).
+    fixed_fees:
+      kind: constant
+      value: 2500                    # example
+    percent_of_price:
+      kind: constant
+      value: 0.015                   # example — 1.5%
 
   land_fraction:
+    # Share of the purchase price attributable to LAND, not the building (fraction) — needed
+    # because the IRS only lets you depreciate the BUILDING/structure, never the land under it,
+    # so purchase_price must be split into a depreciable (building) and non-depreciable (land)
+    # portion for tax purposes. Find this on your county assessor's property record: it
+    # typically shows an assessed "land value" and "improvement value" (building) separately —
+    # use that SAME ratio here regardless of what you actually paid. Example: assessor shows
+    # $80k land / $320k building on a $400k assessed value -> land_fraction = 0.20.
     kind: constant
-    value: null                              # TODO: from county assessor's split
-    units: fraction
+    value: 0.20                      # example
+
+  total_cash_at_closing:
+    # ALL cash you put in at closing (down payment + any gift/family money), as a single dollar
+    # figure. The amount financed is DERIVED: purchase_price + closing_costs.fixed_fees +
+    # (closing_costs.percent_of_price * purchase_price) - total_cash_at_closing. Deliberately
+    # NOT assumed equal to the rent branch's investment amount — see capital_markets.
+    # initial_investment for that, entered separately, since gift/family money toward a down
+    # payment wouldn't exist to invest if renting instead.
+    kind: constant
+    value: 150000                    # example
 
   initial_furnishing:
-    kind: prior
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO: does this need a latent, or is it idiosyncratic?
-    units: USD
-    source: null                             # TODO
+    # One-time STR setup/furnishing cost (USD), scalar — a cash outlay only, not depreciated for
+    # tax purposes (not a large enough amount to be worth the added complexity). Not the same
+    # thing as any furnishing cost the rent branch might need (not currently modeled there).
+    kind: constant
+    value: 15000                     # example
 
 # -----------------------------------------------------------------------------
 # 5. financing
 # -----------------------------------------------------------------------------
 financing:
   mortgage_rate:
-    kind: sweep
-    values: null                             # TODO (promote to prior later if correlated w/ z_macro wanted)
-    units: fraction
+    # Mortgage interest rate (fraction).
+    kind: constant
+    value: 0.065
 
   loan_term_years:
     kind: constant
-    value: null                              # TODO
-    units: years
-
-  points:
-    kind: constant
-    value: null                              # TODO
-    units: fraction
+    value: 30
 
   occupancy_class:
-    kind: sweep
-    values: [second_home, investment]
-    units: categorical
-    # NOTE: confirm classification rule with an actual lender — a half-year
-    # STR schedule may push this into "investment" regardless of intent.
+    # Lender classification (categorical). OPTIONS: second_home | investment. Confirm with an
+    # actual lender — a half-year STR schedule may push this into "investment" regardless of
+    # intent.
+    kind: constant
+    value: second_home               # example
 
 # -----------------------------------------------------------------------------
 # 6. carrying_costs
 # -----------------------------------------------------------------------------
 carrying_costs:
-  assessment_rate:
-    kind: prior
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO: which latent, if any?
-    units: fraction
-    source: null                             # TODO
-    growth:
-      kind: prior
-      dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: null                           # TODO
-      source: null                           # TODO
-
-  mill_levy:
-    kind: prior
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO
-    units: fraction
-    source: null                             # TODO
-    growth:
-      kind: prior
-      dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: null                           # TODO
-      source: null                           # TODO
+  property_tax_rate:
+    # Effective annual property tax (fraction of market value) — replaces the separate
+    # assessment_rate x mill_levy mechanic (CO's actual two-step system: assessed value = market
+    # value x assessment rate, then tax = assessed value x mill levy, a rate in dollars per
+    # $1000 set by overlapping local taxing districts). One blended rate is simpler and produces
+    # the same bottom line for this model's purposes.
+    kind: constant
+    value: 0.006                     # example — CO's assessment rate is unusually low, so the
+                                      #   effective rate lands well under 1%
 
   hoa_dues_annual:
+    # Annual HOA dues (USD). LEVEL via construction_cost (a bad construction-cost year raises
+    # both this and special_assessment's severity together); GROWTH also via construction_cost
+    # (same name, different role — see schema reference).
     kind: prior
     dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: z_construction_cost
-    units: USD
-    source: null                             # TODO
+    latent: construction_cost
+    median: 9600                     # example — $800/month
+    cv: 0.15
     growth:
       kind: prior
       dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: z_construction_cost
-      source: null                           # TODO
+      latent: construction_cost
+      median: 0.05                   # example — annual rate
+      cv: 0.3
 
   special_assessment:
     kind: prior
     dist: mixture
-    p: null                                  # TODO: annual probability of a special assessment
+    latent: construction_cost
+    p: 0.05                          # example — annual probability
     severity:
       dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-    latent: z_construction_cost              # drives severity
-    units: USD
-    source: null                             # TODO
+      median: 5000
+      cv: 0.5
 
   insurance_annual:
+    # Must reflect an STR-rated policy, not a standard homeowner's policy.
     kind: prior
     dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: z_insurance
-    units: USD
-    source: null                             # TODO
-    # NOTE: must reflect an STR-rated policy, not a standard homeowner's policy.
+    latent: insurance
+    median: 3500
+    cv: 0.20
     growth:
       kind: prior
       dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: z_insurance
-      source: null                           # TODO
+      latent: insurance
+      median: 0.06
+      cv: 0.3
 
-  utilities_annual:
+  utilities:
+    # Monthly (USD), seasonal shape (winter heating spike). LEVEL via `enso` directly (cold/
+    # snowy winter -> both good skiing and high heating bills).
     kind: prior
     dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO
-    units: USD
-    source: null                             # TODO
+    resolution: monthly
+    latent: enso
+    months:
+      jan: {median: 320, cv: 0.2}
+      feb: {median: 300, cv: 0.2}
+      mar: {median: 250, cv: 0.2}
+      apr: {median: 180, cv: 0.2}
+      may: {median: 130, cv: 0.2}
+      jun: {median: 110, cv: 0.2}
+      jul: {median: 110, cv: 0.2}
+      aug: {median: 120, cv: 0.2}
+      sep: {median: 130, cv: 0.2}
+      oct: {median: 160, cv: 0.2}
+      nov: {median: 220, cv: 0.2}
+      dec: {median: 300, cv: 0.2}
     growth:
       kind: prior
       dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: null                           # TODO
-      source: null                           # TODO
+      latent: utilities
+      median: 0.04
+      cv: 0.3
 
   maintenance_fraction:
+    # Annual maintenance (fraction of market value). LEVEL via `maintenance`.
     kind: prior
     dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO
-    units: fraction_of_market_value_per_year
-    source: null                             # TODO
+    latent: maintenance
+    median: 0.01
+    cv: 0.25
 
 # -----------------------------------------------------------------------------
 # 7. rental_operations
 # -----------------------------------------------------------------------------
 rental_operations:
-  available_nights:
-    kind: sweep
-    values: null                             # TODO — the half-year plan lives here
-    units: nights
-
   occupancy:
+    # DAYS booked per month, not a fraction/percent — matches personal_use_days_by_month's unit
+    # convention. median is a whole number of days; cv stays a plain fraction describing
+    # relative spread (the underlying quantity being integer-valued doesn't require cv itself to
+    # be one). Bounded above by (days in that calendar month - personal_use_days_by_month for
+    # that month) — this bound must be computed dynamically by the loader per actual month/year
+    # (28, 29 in a leap year, 30, or 31 days), not hardcoded here; lognormal draws get rounded to
+    # the nearest whole day downstream. LEVEL via `enso` directly (same shock as adr, below, so
+    # a good snow month spikes both together). No growth — a day-count doesn't have a secular
+    # multi-year trend the way dollar figures do.
     kind: prior
     dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: z_ski_demand
-    units: fraction
-    source: null                             # TODO
-    # NOTE: bounded-fraction check applies (loader must warn if P(occupancy>1) non-negligible).
+    resolution: monthly
+    latent: enso
+    months:
+      jan: {median: 22, cv: 0.15}
+      feb: {median: 20, cv: 0.15}
+      mar: {median: 20, cv: 0.15}
+      apr: {median: 10, cv: 0.25}
+      may: {median: 9, cv: 0.25}
+      jun: {median: 15, cv: 0.20}
+      jul: {median: 18, cv: 0.20}
+      aug: {median: 17, cv: 0.20}
+      sep: {median: 10, cv: 0.25}
+      oct: {median: 9, cv: 0.25}
+      nov: {median: 12, cv: 0.20}
+      dec: {median: 21, cv: 0.15}
 
   adr:
+    # USD/night, monthly seasonal shape. LEVEL via `enso` directly (ties to occupancy above).
+    # Growth (secular pricing power) via the richer `adr` derived latent instead.
     kind: prior
     dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: z_ski_demand
-    units: USD_per_night
-    source: null                             # TODO
+    resolution: monthly
+    latent: enso
+    months:
+      jan: {median: 420, cv: 0.20}
+      feb: {median: 440, cv: 0.20}
+      mar: {median: 400, cv: 0.20}
+      apr: {median: 220, cv: 0.20}
+      may: {median: 180, cv: 0.20}
+      jun: {median: 210, cv: 0.20}
+      jul: {median: 230, cv: 0.20}
+      aug: {median: 220, cv: 0.20}
+      sep: {median: 190, cv: 0.20}
+      oct: {median: 180, cv: 0.20}
+      nov: {median: 210, cv: 0.20}
+      dec: {median: 400, cv: 0.20}
     growth:
       kind: prior
       dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: null                           # TODO: same latent (z_ski_demand) or a separate growth driver?
-      source: null                           # TODO
-
-  avg_stay_nights:
-    kind: constant
-    value: null                              # TODO
-    units: nights
-    # NOTE: sets turns per year. Also a tax trigger — an average stay of
-    # 7 days or less changes passive-loss-rule classification (see taxes.passive_loss_treatment).
+      latent: adr
+      median: 0.04
+      cv: 0.3
 
   mgmt_fee_fraction:
-    kind: sweep
-    values: null                             # TODO — by PM company tier
-    units: fraction
-
-  cleaning_per_turn:
-    kind: prior
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO
-    units: USD
-    source: null                             # TODO
-    growth:
-      kind: prior
-      dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: null                           # TODO
-      source: null                           # TODO
-
-  platform_fee_fraction:
+    # Property-management fee (fraction of revenue) — also covers cleaning and platform fees
+    # (no separate line items for those).
     kind: constant
-    value: null                              # TODO
-    units: fraction
+    value: 0.25                      # example — full-service PM
 
   lodging_tax_rate:
+    # Combined state, county, and town rate.
     kind: constant
-    value: null                              # TODO — combined state, county, town rate
-    units: fraction
-
-  supplies_annual:
-    kind: prior
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO
-    units: USD
-    source: null                             # TODO
-    growth:
-      kind: prior
-      dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: null                           # TODO
-      source: null                           # TODO
-
-  str_restriction:
-    kind: prior
-    dist: mixture
-    p: null                                  # TODO: probability licensing caps/rules cut rentable nights
-    severity:
-      dist: lognormal
-      median: null                           # TODO: size of the cut, as a fraction of nights
-      cv: null                               # TODO
-    latent: null                             # TODO: policy-driven — tie to a latent, or leave idiosyncratic?
-    units: fraction
-    source: null                             # TODO
+    value: 0.088                     # example — Summit County / Keystone area, ballpark
 
 # -----------------------------------------------------------------------------
 # 8. personal_use
 # -----------------------------------------------------------------------------
 personal_use:
-  personal_use_days:
-    kind: sweep
-    values: null                             # TODO
-    units: days
-    # NOTE: drives rental/personal allocation of every deduction. The
-    # greater-of-14-days-or-10%-of-rental-days rule makes this a real decision
-    # variable, not just a lifestyle input.
+  personal_use_days_by_month:
+    # Days per month YOU personally occupy the unit (not available to rent that month).
+    # Rentable nights per month is DERIVED (days in month - this). Friends/family use is
+    # deliberately not modeled separately (small effect, not worth the complexity per the user).
+    kind: constant
+    value:
+      jan: 7                         # example — a ski week
+      feb: 0
+      mar: 0
+      apr: 0
+      may: 0
+      jun: 3
+      jul: 7                         # example — a summer week
+      aug: 0
+      sep: 0
+      oct: 0
+      nov: 0
+      dec: 7                         # example — holidays
+
+  alternate_lodging_cost_by_month:
+    # Buy branch only: months the condo is generating STR income (not personal_use_days_by_month
+    # and not your own stay) are months you'd need to pay for lodging elsewhere if you want the
+    # same flexible mountain access the rent branch has all year round (rent_reference.
+    # seasonal_lease_cost assumes a full-year lease). Same IC + growth pattern as
+    # seasonal_lease_cost, reusing the same `adr` derived latent (same rental market) — but a
+    # HIGHER per-month rate than seasonal_lease_cost's, since this is short-term/flexible
+    # lodging, not a locked-in annual lease. Applies pro-rated to whatever portion of each month
+    # isn't covered by personal_use_days_by_month — exact proration rule TBD (see implementation
+    # plan).
+    kind: constant
+    value:
+      jan: 3200                      # example
+      feb: 3200
+      mar: 2800
+      apr: 1600
+      may: 1300
+      jun: 1800
+      jul: 2100
+      aug: 2000
+      sep: 1600
+      oct: 1300
+      nov: 1700
+      dec: 3200
+    growth:
+      kind: prior
+      dist: lognormal
+      latent: adr
+      median: 0.04
+      cv: 0.3
 
 # -----------------------------------------------------------------------------
 # 9. taxes
 # -----------------------------------------------------------------------------
+# DISCLAIMER: this is NOT a full IRS return simulation. `federal_marginal_rate` below is a
+# single fixed rate applied throughout — if rental income/gains actually push you into a HIGHER
+# federal bracket, that escalation is NOT captured here. Treat all tax outputs as directional,
+# not authoritative; use a real tax professional before relying on this for a filing decision.
 taxes:
   filing_status:
+    # OPTIONS: mfj (others not yet supported).
     kind: constant
     value: mfj
-    units: categorical
 
   federal_marginal_rate:
+    # Your top federal tax bracket rate (fraction) — the rate on your LAST dollar of income,
+    # used to value deductions (mortgage interest, depreciation, rental losses). See the
+    # disclaimer above — this is fixed, not a simulated bracket schedule.
     kind: constant
-    value: null                              # TODO — fixed per sweep node; keeps brackets out of propagation
-    units: fraction
+    value: 0.32                      # example
 
-  co_income_tax_rate:
+  state_tax_profiles:
+    # One bundle per state, looked up via scenario.residency_state — replaces a bare tax-rate
+    # field with everything state-specific in one place, so picking CO automatically pulls in
+    # CO's whole tax treatment rather than several separately-scattered fields.
     kind: constant
-    value: null                              # TODO — flat rate ~4.4%, but TABOR refunds have lowered it in some years
-    units: fraction
-    # NOTE: applied only in the buy_co_resident branch.
+    value:
+      FL:
+        income_tax_rate: 0.0
+        capital_gains_as_ordinary_income: false
+      CO:
+        income_tax_rate: 0.044       # example — flat rate, TABOR refunds have lowered it some years
+        capital_gains_as_ordinary_income: true   # CO taxes gains as ordinary income at the rate above
 
   salt_cap:
+    # SALT = the federal itemized-deduction cap on state + local taxes (property tax, state
+    # income tax) you can deduct against FEDERAL taxable income. Simplified to one flat number
+    # rather than a year-indexed schedule — this has been genuinely unsettled in recent tax
+    # law, so treat this as a placeholder to double-check against current law, not a firm fact.
     kind: constant
-    value: null                              # TODO — year-indexed schedule under current law, not a single number
-    units: USD_schedule_by_year
-    # Represent as a list of {year, value} once populated, e.g.:
-    #   value:
-    #     - {year: 2026, value: 10000}
-    #     - {year: 2027, value: 10000}
+    value: 10000                     # example — verify against current-year law
 
   depreciation_years_building:
     kind: constant
-    value: 27.5                              # residential rental, per current law
-    units: years
-
-  depreciation_years_furnishing:
-    kind: constant
-    value: null                              # TODO
-    units: years
+    value: 27.5                      # residential rental, per current law
 
   recapture_rate:
     kind: constant
-    value: null                              # TODO — max 25% on unrecaptured Section 1250 gain
-    units: fraction
+    value: 0.25                      # max on unrecaptured Section 1250 gain
 
   ltcg_rate:
+    # Federal only; applies to both the condo sale and portfolio liquidation. CO's capital-gains
+    # treatment is handled via state_tax_profiles above.
     kind: constant
-    value: null                              # TODO — applies to both the condo sale and portfolio liquidation
-    units: fraction
+    value: 0.15                      # example
 
   passive_loss_treatment:
+    # Largely DETERMINED, not a free choice: an average stay of 7 days or less (a fixed fact for
+    # this STR, not modeled as a variable) takes the activity outside the "rental activity"
+    # passive-loss rules entirely, regardless of participation hours. Participation level can
+    # still matter for other classifications, hence still a field rather than fully hardcoded.
     kind: constant
-    value: null                              # TODO — categorical; depends on avg_stay_nights and participation facts
-    units: categorical
+    value: non_passive_short_term_rental   # example — confirm with a tax professional
 
 # -----------------------------------------------------------------------------
 # 10. rent_reference
 # -----------------------------------------------------------------------------
 rent_reference:
   seasonal_lease_cost:
-    kind: prior                              # or constant — TODO: decide (actual lease is a decent anchor)
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO
-    units: USD
-    source: null                             # TODO
+    # The rent branch means renting a comparable Keystone-area place FULL YEAR (not just for
+    # personal_use_days_by_month) — the direct, ongoing alternative to buying. Monthly IC values
+    # below; not swept (just a year-1 anchor — no need for multiple market scenarios). Growth
+    # uses the `adr` derived latent, NOT a fresh latent of its own: you're a landlord in this
+    # same market either way (buy branch's STR pricing), so reusing `adr` is both simpler and
+    # more correct than inventing a separate process for the same market.
+    kind: constant
+    value:
+      jan: 2200                      # example
+      feb: 2200
+      mar: 2000
+      apr: 1200
+      may: 1000
+      jun: 1400
+      jul: 1600
+      aug: 1500
+      sep: 1200
+      oct: 1000
+      nov: 1300
+      dec: 2200
     growth:
       kind: prior
       dist: lognormal
-      median: null                           # TODO
-      cv: null                               # TODO
-      latent: null                           # TODO
-      source: null                           # TODO
+      latent: adr
+      median: 0.04
+      cv: 0.3
 
-  # lease_days_equivalent is DERIVED (computed by the script to match
-  # personal_use.personal_use_days) — intentionally not entered here.
-
-  renters_insurance:
-    kind: constant
-    value: null                              # TODO
-    units: USD
+  # lease_days_equivalent is DERIVED (matches personal_use.personal_use_days_by_month) —
+  # intentionally not entered here.
 
 # -----------------------------------------------------------------------------
 # 11. capital_markets
 # -----------------------------------------------------------------------------
 capital_markets:
-  market_return:
-    kind: prior
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: z_macro
-    units: fraction
-    source: null                             # TODO
-    # NOTE: this is the opportunity-cost engine for the rent branch.
+  # market_return lives entirely in forecast_models.market now — not re-declared here.
+  initial_investment:
+    # The cash YOU have that would otherwise go toward a down payment, but instead gets invested
+    # here because you're renting instead of buying — this IS the rent branch's opportunity-cost
+    # capital. Deliberately SEPARATE from acquisition.total_cash_at_closing: e.g. gift/family
+    # money toward a down payment wouldn't exist to invest if you rented instead, so the two
+    # numbers can legitimately differ. Split between cash and market per cash_allocation_fraction
+    # below.
+    kind: constant
+    value: 100000                    # example
 
-  inflation:
-    kind: prior
-    dist: lognormal
-    median: null                             # TODO
-    cv: null                                 # TODO
-    latent: null                             # TODO
-    units: fraction
-    source: null                             # TODO
-    # NOTE: used for real-dollar reporting.
+  cash_allocation_fraction:
+    # Fraction of initial_investment held as CASH (earning cash_yield) rather than invested in
+    # the broader market (earning forecast_models.market). E.g. 0.1 = 10% cash reserve, 90%
+    # invested.
+    kind: constant
+    value: 0.1                       # example
 
   cash_yield:
+    # Yield on the CASH portion only (fraction) — see cash_allocation_fraction.
     kind: constant
-    value: null                              # TODO — for reserves and idle cash
-    units: fraction
+    value: 0.04
 
   portfolio_tax_drag:
+    # Annual tax drag on dividends/turnover — applies ONLY to the market-invested portion (see
+    # cash_allocation_fraction), not the cash portion. See implementation plan for this scoping
+    # note.
     kind: constant
-    value: null                              # TODO — annual tax on dividends and distributions
-    units: fraction
+    value: 0.15                      # example — blended effective annual drag
 
 # -----------------------------------------------------------------------------
 # 12. exit
 # -----------------------------------------------------------------------------
+# BOTH branches realize a taxable event here, always, not just the buy branch: the condo sells
+# (selling_costs + recapture + capital gains) AND the rent branch's capital_markets.
+# initial_investment portfolio is liquidated (capital gains via taxes.ltcg_rate). Taxing the
+# portfolio's liquidation too — not just letting its gains sit unrealized — is what makes ΔW an
+# apples-to-apples comparison; otherwise the rent branch would look artificially better by never
+# paying tax on its gains.
 exit:
-  selling_cost_fraction:
-    kind: constant
-    value: null                              # TODO — commission plus closing, typically 6-8%
-    units: fraction
+  selling_costs:
+    # total = fixed_fees + (percent_of_price * sale_price). Sale price is DERIVED: purchase_price
+    # appreciated via forecast_models.home_price to exit_year. Same composite pattern as
+    # acquisition.closing_costs.
+    fixed_fees:
+      kind: constant
+      value: 1500                    # example — title/escrow on the sell side
+    percent_of_price:
+      kind: constant
+      value: 0.06                    # example — commission plus remaining closing costs
 
-  # exit_year is DERIVED (equals run.horizon_years) — intentionally not
-  # entered here; one source of truth.
+  # exit_year is DERIVED (equals scenario.horizon_years) — intentionally not entered here.
+
+# -----------------------------------------------------------------------------
+# 13. run
+# -----------------------------------------------------------------------------
+run:
+  report_quantiles:
+    # Quantiles to report in outputs (probability, 0-1).
+    kind: constant
+    value: [0.1, 0.5, 0.9]
