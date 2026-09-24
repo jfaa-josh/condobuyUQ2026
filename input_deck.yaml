@@ -19,11 +19,12 @@
 #   sweep      decision variable, grid axis.       fields: values
 #   prior      ONE uncertain value, static.        fields: dist, <dist params>, latent
 #   process    an entire time-evolving path, hand-elicited (dist/marginal params + monthly_change
-#              inline) — used for home_price/market/enso.
+#              inline) — used for market/enso.
 #
-# `general` (also one of the four founding processes, see below) has no `kind` at all: it's FITTED
-# from real data instead of hand-elicited, so it carries none of the above fields — just
-# `model_name`, naming an already-built model fit (see input_deck.py's get_forecast_model_general).
+# `general` and `home_price` (also two of the four founding processes, see below) have no `kind` at
+# all: they're FITTED from real data instead of hand-elicited, so they carry none of the above
+# fields — just `model_name`, naming an already-built model fit (see input_deck.py's
+# get_forecast_model_general/get_forecast_model_home_price).
 #
 # DIST families: lognormal {median, cv} (positive quantities), normal {mean, sd} (can go
 # negative — used for monthly_change blocks and for ENSO's own marginal, since ENSO is signed
@@ -45,8 +46,8 @@
 # makes ΔW an apples-to-apples comparison. See scenario.horizon_years and the exit section.
 #
 # FOUR FOUNDING PROCESSES (`forecast_models`: general, home_price, market, enso) — the plan is
-# to fit all four from real historical data eventually. `general` already is (see KIND above);
-# home_price/market/enso still hold hand-elicited placeholder values (a marginal distribution +
+# to fit all four from real historical data eventually. `general`/`home_price` already are (see
+# KIND above); market/enso still hold hand-elicited placeholder values (a marginal distribution +
 # a monthly_change distribution, which together derive the process's own ar1_phi; see
 # .claude/implementation-plan.md for the derivation) pending the same treatment. Treated as
 # ground truth either way; nothing else in this deck feeds back and influences them.
@@ -124,22 +125,23 @@ scenario:
 # -----------------------------------------------------------------------------
 # 2. forecast_models
 # -----------------------------------------------------------------------------
-# The four founding processes. All illustrative placeholder numbers below — real fitting from
-# historical data (BLS CPI, a Summit County home price index, a broad market index, NOAA's ONI)
-# is earmarked, not done yet.
+# The four founding processes. general/home_price are fitted from real data (BLS CPI, a Denver-
+# metro Case-Shiller home price index); market/enso still hold illustrative placeholder numbers,
+# real fitting for those (a broad market index, NOAA's ONI) is earmarked, not done yet.
 #
-# IMPORTANT — annualized rate, but a MONTHLY-stepped process: for general/home_price/market,
-# the growth rate's own distribution is on an ANNUALIZED basis (e.g. median 0.03 = "running about
-# 3%/year") — that's the natural, human-elicited way to state it (or, for `general`, what its fit
-# is expressed in — see its own comment below). But each process's path is a MONTHLY AR(1) walk
-# (see "Temporal model" in .claude/implementation-plan.md): `monthly_change` (on home_price/market/
-# enso) is how much that ANNUALIZED-RATE ESTIMATE itself typically drifts from one month's reading
-# to the next's — that's what phi gets fit from — it is NOT the amount actually applied to grow a
-# variable's IC in a single month. When this growth compounds an IC forward, each of the 12
-# monthly steps in a year must apply the MONTHLY-EQUIVALENT of the annual rate (the twelve steps
-# compound TO the annual rate), never the full annual figure at every one of the 12 steps — that
-# would compound to twelve years of growth in one. The exact monthly-step formula given phi is
-# still open — see "Calibration procedure" under Open questions in the implementation plan.
+# IMPORTANT — annualized rate, but a MONTHLY-stepped process: for all four, the growth rate's own
+# distribution is on an ANNUALIZED basis (e.g. median 0.03 = "running about 3%/year") — that's the
+# natural, human-elicited way to state it (or, for general/home_price, what their fits are
+# expressed in — see their own comments below). But each process's path is a MONTHLY AR(1) walk
+# (see "Temporal model" in .claude/implementation-plan.md): `monthly_change` (on market/enso; for
+# general/home_price the equivalent comes from the fit) is how much that ANNUALIZED-RATE ESTIMATE
+# itself typically drifts from one month's reading to the next's — that's what phi gets fit from —
+# it is NOT the amount actually applied to grow a variable's IC in a single month. When this growth
+# compounds an IC forward, each of the 12 monthly steps in a year must apply the MONTHLY-EQUIVALENT
+# of the annual rate (the twelve steps compound TO the annual rate), never the full annual figure
+# at every one of the 12 steps — that would compound to twelve years of growth in one. The exact
+# monthly-step formula given phi is still open — see "Calibration procedure" under Open questions
+# in the implementation plan.
 forecast_models:
   general:
     # General (broad US urban consumer) CPI inflation, expressed as an ANNUALIZED rate — see the
@@ -148,27 +150,22 @@ forecast_models:
     # (see home_price) or this property's own utility/HOA cost drivers (those are their own
     # derived_latents entries, e.g. construction_cost/insurance/maintenance).
     #
-    # Unlike the other three forecast_models entries, this one is FITTED from real BLS data rather
-    # than hand-elicited: model_name just names a fit already built and saved by
-    # run/manual/build_general_price_model.py to models/<model_name>/fit.json (see
-    # input_deck.py's get_forecast_model_general and .claude/implementation-plan.md's Earmarks for
-    # how the fit's OU parameters map onto this model). No kind/dist/mean/sd/monthly_change here --
-    # they come from the fit, not the deck.
+    # This one and home_price below are FITTED from real data rather than hand-elicited: model_name
+    # just names a fit already built and saved by run/manual/build_general_price_model.py to
+    # models/<model_name>/fit.json (see input_deck.py's get_forecast_model_general and
+    # .claude/implementation-plan.md's Earmarks for how the fit's OU parameters map onto this
+    # model). No kind/dist/mean/sd/monthly_change here -- they come from the fit, not the deck.
     model_name: bls_cpi_all_nsa_1984_1_2026_8
 
   home_price:
-    # Local (Summit County / mountain-resort) home price appreciation (fraction/year), NOT
-    # national CPI. Used directly (unweighted) to appreciate acquisition.purchase_price to its
-    # sale value at exit — see exit section.
-    kind: process
-    dist: lognormal
-    median: 0.04
-    cv: 0.40
-    initial_value: null
-    monthly_change:
-      dist: normal
-      mean: 0.0
-      sd: 0.0015
+    # Local Denver-METRO home price appreciation (fraction/year), NOT national CPI and NOT
+    # Summit-County/Keystone-specific (no dedicated mountain-resort-town index exists -- treated as
+    # the best available proxy). Used directly (unweighted) to appreciate acquisition.purchase_price
+    # to its sale value at exit -- see exit section.
+    #
+    # FITTED from real FRED data (S&P/Case-Shiller Denver-Metro HPI, NSA) -- see general's comment
+    # above for what that means; fit built and saved by run/manual/build_co_home_price_model.py.
+    model_name: fred_denver_homes_1987_1_2026_8
 
   market:
     # Broad portfolio return (fraction/year) — the rent branch's opportunity-cost engine. This

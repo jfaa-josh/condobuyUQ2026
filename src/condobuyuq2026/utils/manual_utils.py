@@ -1,10 +1,14 @@
 """Shared backend for the manual, one-off scripts in run/manual/.
 
 Not part of the analysis package's own logic (that's the rest of condobuyuq2026) — these are
-helpers for data-pulling/model-building scripts specifically: talking to external APIs, and
-saving what comes back into data/raw/. Keep this modular by data source (one fetch_<source>_*
-function per API) so future manual scripts pulling from the same source reuse it, rather than
-each script re-implementing its own request/pagination/saving logic.
+helpers for data-pulling/model-building scripts specifically: talking to external APIs (BLS,
+FRED, ...), and saving what comes back into data/raw/. Keep this modular by data source (one
+fetch_<source>_* function per API) so future manual scripts pulling from the same source reuse
+it, rather than each script re-implementing its own request/pagination/saving logic. Every
+fetch_<source>_* function returns the same row shape regardless of source -- a list of
+{"year", "period" ("M01".."M12"), "periodName", "value"} dicts -- so everything downstream
+(filter_monthly, save_raw_csv/load_raw_csv, to_monthly_series, and beyond that fit_annual_ou etc.
+in ou_fitting.py) works identically no matter which source a given model was built from.
 """
 
 from __future__ import annotations
@@ -73,9 +77,45 @@ def fetch_bls_series(series_id: str, start_year: int, end_year: int, api_key: st
     return all_points
 
 
+FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+
+def fetch_fred_series(series_id: str) -> list[dict[str, Any]]:
+    """Pulls one FRED series' entire available history via its CSV endpoint -- no API key, no
+    rate limit, no date-range parameter (FRED always returns everything it has; slice the result
+    afterward if you need less). Returns the same year/period/periodName/value row shape
+    fetch_bls_series does (see module docstring), so the rest of a manual script's pipeline
+    (filter_monthly, save_raw_csv/load_raw_csv, to_monthly_series, ou_fitting.fit_annual_ou, ...)
+    doesn't need to know or care which source a series came from.
+
+    Values are kept as FRED wrote them, unconverted -- including FRED's own placeholder for a
+    missing/not-yet-published observation ("."), which parse_numeric_value (used by
+    to_monthly_series) already treats as NaN the same way it does BLS's "-". This keeps data/raw/'s
+    CSV a faithful copy of what the source actually returned, same as for BLS.
+
+    Only meaningfully supports series FRED reports at MONTHLY-or-finer frequency -- period is
+    always written as "M<month>", so a quarterly/annual series would be mislabeled.
+    """
+    series = pd.read_csv(f"{FRED_CSV_URL}?id={series_id}", index_col=0, parse_dates=True).iloc[:, 0]
+    if series.empty:
+        raise RuntimeError(f"FRED returned no data for series {series_id!r}")
+    return [
+        {
+            "year": str(date.year),
+            "period": f"M{date.month:02d}",
+            "periodName": date.strftime("%B"),
+            "value": str(value),
+        }
+        for date, value in series.items()
+    ]
+
+
 def filter_monthly(data_points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keeps only monthly observations (period M01-M12), dropping annual averages (M13) and any
-    other non-monthly periodicity BLS might include for a given series."""
+    other non-monthly periodicity a source might include for a given series. A no-op for sources
+    that only ever report monthly periods to begin with (e.g. fetch_fred_series) -- kept in the
+    pipeline anyway so every manual script follows the same fetch -> filter_monthly -> save_raw_csv
+    shape regardless of source."""
     return [p for p in data_points if p["period"].startswith("M") and p["period"] != "M13"]
 
 
@@ -125,10 +165,11 @@ def model_fit_path(model_name: str) -> Path:
     return path
 
 
-def parse_bls_value(raw: str) -> float:
-    """Parses a raw BLS value string to float. BLS uses non-numeric placeholders (e.g. "-") for
-    suppressed/missing observations; those come back as NaN rather than raising, so callers can
-    decide how to handle a gap (drop it, leave it as a visual gap, etc.) instead of crashing."""
+def parse_numeric_value(raw: str) -> float:
+    """Parses a raw value string to float. Sources use different non-numeric placeholders for a
+    suppressed/missing/not-yet-published observation (BLS: "-", FRED: "."); either way it comes
+    back as NaN rather than raising, so callers can decide how to handle a gap (drop it, leave it
+    as a visual gap, etc.) instead of crashing."""
     try:
         return float(raw)
     except (TypeError, ValueError):
@@ -136,10 +177,11 @@ def parse_bls_value(raw: str) -> float:
 
 
 def to_monthly_series(data_points: list[dict[str, Any]]) -> pd.Series:
-    """Converts monthly BLS-style data points (year/period/value dicts -- see filter_monthly) into
-    a float pandas Series indexed by month-start Timestamps, reindexed to a *complete* monthly
-    calendar via asfreq("MS"). Any BLS-suppressed value (parsed to NaN, see parse_bls_value) and any
-    real gap month the reindex inserts both come back as NaN.
+    """Converts monthly data points (year/period/value dicts, from any fetch_<source>_* function
+    -- see module docstring) into a float pandas Series indexed by month-start Timestamps,
+    reindexed to a *complete* monthly calendar via asfreq("MS"). Any suppressed/missing value
+    (parsed to NaN, see parse_numeric_value) and any real gap month the reindex inserts both come
+    back as NaN.
 
     The reindex matters beyond just filling gaps for display: pandas' .shift(n) shifts by row
     position, not by calendar time, so a missing month would otherwise silently misalign every
@@ -149,5 +191,5 @@ def to_monthly_series(data_points: list[dict[str, Any]]) -> pd.Series:
     index = pd.PeriodIndex(
         [f"{p['year']}-{p['period'][1:]}" for p in data_points], freq="M"
     ).to_timestamp()
-    values = [parse_bls_value(p["value"]) for p in data_points]
+    values = [parse_numeric_value(p["value"]) for p in data_points]
     return pd.Series(values, index=index).sort_index().asfreq("MS")

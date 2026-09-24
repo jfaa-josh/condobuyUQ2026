@@ -3,12 +3,12 @@ package to consume.
 
 Only barely started — the deck's structure is still being iterated on with the user (see
 .claude/implementation-plan.md). So far this loads the raw YAML, can unwrap a `kind: constant`
-entry to its plain value (see get_report_quantiles), and can resolve forecast_models.general
-(which has no `kind` -- it's fitted, not hand-elicited, so it just names a model) to the fit it
-names, with some basic sanity checks (see get_forecast_model_general). Once the deck stabilizes,
-this module should be its single validation "catch-all": everything else in this package should
-be able to assume a deck that's come through here is well-formed, without re-checking it itself.
-That means:
+entry to its plain value (see get_report_quantiles), and can resolve a fitted forecast_models
+entry (general, home_price -- neither has a `kind`, since they're fitted rather than
+hand-elicited, so they just name a model) to the fit it names, with some basic sanity checks (see
+get_fitted_forecast_model). Once the deck stabilizes, this module should be its single validation
+"catch-all": everything else in this package should be able to assume a deck that's come through
+here is well-formed, without re-checking it itself. That means:
 
 - Parsing the YAML into typed Python objects, one shape per `kind` (constant, sweep, prior,
   process), rather than leaving callers to work with raw dicts.
@@ -73,7 +73,8 @@ def _load_checked_fit(model_name: str) -> dict[str, float]:
     if not path.exists():
         raise FileNotFoundError(
             f"forecast_models references model {model_name!r}, but {path} doesn't exist -- run its "
-            "build script (e.g. run/manual/build_general_price_model.py) first."
+            "build script (e.g. run/manual/build_general_price_model.py or "
+            "run/manual/build_co_home_price_model.py) first."
         )
     if path.stat().st_size == 0:
         raise ValueError(f"Fit file for model {model_name!r} at {path} is empty.")
@@ -90,13 +91,24 @@ def _load_checked_fit(model_name: str) -> dict[str, float]:
     return fit
 
 
-def get_forecast_model_general(deck: dict[str, Any] | None = None) -> dict[str, float]:
-    """Resolves forecast_models.general -- which just names a model fit by
-    run/manual/build_general_price_model.py (model_name), rather than holding hand-elicited
-    distribution parameters inline like the other three forecast_models entries do -- to its
-    checked, loaded fit (see _load_checked_fit). Callers use the fit as-is (e.g. via
-    utils.ou_fitting.project_term_structure/project_monthly_rate, or fit["phi_monthly"] directly)
-    -- no conversion into some other shape needed.
+def get_fitted_forecast_model(name: str, deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Resolves forecast_models.<name> -- an entry that just names a model fit (model_name) rather
+    than holding hand-elicited distribution parameters inline (no `kind` at all -- see the deck's
+    schema reference) -- to its checked, loaded fit (see _load_checked_fit). Callers use the fit
+    as-is (e.g. via utils.ou_fitting.project_term_structure/project_monthly_rate, or
+    fit["phi_monthly"] directly) -- no conversion into some other shape needed.
     """
     deck = deck if deck is not None else load_deck()
-    return _load_checked_fit(deck["forecast_models"]["general"]["model_name"])
+    return _load_checked_fit(deck["forecast_models"][name]["model_name"])
+
+
+def get_forecast_model_general(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Resolves forecast_models.general -- see get_fitted_forecast_model. Fit built by
+    run/manual/build_general_price_model.py."""
+    return get_fitted_forecast_model("general", deck)
+
+
+def get_forecast_model_home_price(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Resolves forecast_models.home_price -- see get_fitted_forecast_model. Fit built by
+    run/manual/build_co_home_price_model.py."""
+    return get_fitted_forecast_model("home_price", deck)
