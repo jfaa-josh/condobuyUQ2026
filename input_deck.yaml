@@ -581,6 +581,26 @@ taxes:
     kind: constant
     value: 0.32                      # example
 
+  niit_applies:
+    # Whether household MAGI exceeds the Net Investment Income Tax threshold ($250k MFJ) --
+    # a fixed structural assumption, same spirit as federal_marginal_rate (not derived from an
+    # actual income simulation, which is out of scope -- see this section's disclaimer).
+    kind: constant
+    value: true                      # example
+
+  niit_rate:
+    # Net Investment Income Tax rate (fraction) -- applies to net rental income and capital gains
+    # when niit_applies above.
+    kind: constant
+    value: 0.038
+
+  itemizes_deductions:
+    # Whether the household itemizes deductions (Schedule A) rather than taking the standard
+    # deduction -- determines whether the PERSONAL share of mortgage interest/property tax
+    # (the share NOT allocated to rental use) yields any tax benefit at all.
+    kind: constant
+    value: false                     # example
+
   state_tax_profiles:
     # One bundle per state, looked up via scenario.residency_state — replaces a bare tax-rate
     # field with everything state-specific in one place, so picking CO automatically pulls in
@@ -615,6 +635,18 @@ taxes:
     # treatment is handled via state_tax_profiles above.
     kind: constant
     value: 0.15                      # example
+
+  sec121_exclusion:
+    # Section 121 primary-residence capital-gains exclusion (USD, MFJ) -- only applies when
+    # loan_occupancy_class (see financing section) is primary_residence AND the property's been
+    # held >= sec121_min_years below. Verify against current-year law, same spirit as salt_cap.
+    kind: constant
+    value: 500000
+
+  sec121_min_years:
+    # Ownership-and-use test for the exclusion above.
+    kind: constant
+    value: 2
 
   passive_loss_treatment:
     # Largely DETERMINED, not a free choice: an average stay of 7 days or less (a fixed fact for

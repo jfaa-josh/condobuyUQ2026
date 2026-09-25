@@ -59,6 +59,24 @@ def print_financing_report(financing: dict[str, Any]) -> None:
     )
 
 
+def print_taxes_report(taxes: dict[str, Any]) -> None:
+    """Prints one buy scenario's tax results (see taxes.compute_owner_taxes) as a single line, plus
+    a LOUD placeholder warning (taxes.PLACEHOLDER_FIELDS) and any residency flags (taxes.
+    compute_owner_taxes' "flags") on their own lines so neither is easy to miss."""
+    print(f"total_tax=${taxes['total_tax']:,.0f} over the horizon (annual + sale)")
+    if taxes["placeholder_fields"]:
+        fields = ", ".join(taxes["placeholder_fields"])
+        print(f"  [PLACEHOLDER] uses simplified, un-grown estimates for: {fields} -- see taxes.py's module docstring")
+    for flag in taxes["flags"]:
+        print(f"  {flag}")
+
+
+def print_renter_taxes_report(taxes: dict[str, Any]) -> None:
+    """Prints a reference case's tax results (see taxes.compute_renter_taxes) -- always $0, a real
+    confirmed result, not a placeholder (renting has no real-estate tax effect)."""
+    print(f"total_tax=${taxes['total_tax']:,.0f} (renting has no real-estate tax effect)")
+
+
 def print_reference_report(reference_id: int, reference_case: dict[str, Any]) -> None:
     """Prints one reference case (see scenarios.get_scenario_set) as a single, explicitly-labeled
     line -- same label style as print_acquisition_report so the two are easy to compare side by

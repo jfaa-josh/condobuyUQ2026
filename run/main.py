@@ -13,9 +13,12 @@ derived_latents section comment for the formula being applied.
 Stage 2: run every scenario (see condobuyuq2026.scenarios.get_scenario_set), pairing each buy
 scenario with its matching "rent" reference case's result -- each distinct reference case run only
 once, even though multiple buy scenarios may share it (see condobuyuq2026.runner.run_scenarios).
-Acquisition costs, occupancy/tax classification, and financing (mortgage rate + amortization) are
-actually computed today; everything else is a placeholder print, filled in as later deck sections
-(carrying_costs, taxes, rent_reference, capital_markets, exit, ...) get built.
+Acquisition costs, occupancy/tax classification, financing (mortgage rate + amortization), and
+taxes (mortgage/depreciation/rental-income/sale effects -- see condobuyuq2026.taxes) are actually
+computed today; the buy-vs-reference comparison itself is still a placeholder print, filled in as
+later deck sections (carrying_costs, rent_reference, capital_markets, exit, ...) get built.
+*** taxes.py has PLACEHOLDER inputs (gross_rent, shared_expenses) -- see that module's docstring
+and PLACEHOLDER_FIELDS constant before trusting any dollar figure it produces. ***
 
 Run with: uv run python run/main.py
 """

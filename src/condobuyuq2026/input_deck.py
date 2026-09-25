@@ -146,13 +146,18 @@ def get_financing_inputs(deck: dict[str, Any] | None = None) -> dict[str, float 
     }
 
 
-def get_rental_operations_inputs(deck: dict[str, Any] | None = None) -> dict[str, str]:
-    """Unwraps `rental_operations`'s own classification-relevant `kind: constant` field. Returns
-    {"managed_by"} (OPTIONS: self | company), straight off rental_operations.managed_by -- see
-    that field's own deck comment and classification.get_loan_occupancy_class, which is the only
-    thing that reads it."""
+def get_rental_operations_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps `rental_operations`'s own `kind: constant` fields. Returns {"managed_by"} (OPTIONS:
+    self | company -- see that field's own deck comment and
+    classification.get_loan_occupancy_class, the only thing that reads it) and
+    {"mgmt_fee_fraction"} (used by taxes.py's direct_rental_expenses -- a REAL formula,
+    mgmt_fee_fraction * gross_rent, even though gross_rent itself is a placeholder today)."""
     deck = deck if deck is not None else load_deck()
-    return {"managed_by": _constant(deck["rental_operations"]["managed_by"])}
+    rental_operations = deck["rental_operations"]
+    return {
+        "managed_by": _constant(rental_operations["managed_by"]),
+        "mgmt_fee_fraction": _constant(rental_operations["mgmt_fee_fraction"]),
+    }
 
 
 def get_annual_rented_days(deck: dict[str, Any] | None = None) -> float:
@@ -172,6 +177,75 @@ def get_annual_personal_days(deck: dict[str, Any] | None = None) -> float:
     deck = deck if deck is not None else load_deck()
     days_by_month = _constant(deck["personal_use"]["personal_use_days_by_month"])
     return sum(days_by_month.values())
+
+
+def get_rental_operations_monthly_medians(deck: dict[str, Any] | None = None) -> dict[str, dict[str, float]]:
+    """Unwraps rental_operations.occupancy/adr's own monthly medians (`kind: prior`,
+    `resolution: monthly` -- ignoring cv and growth entirely). Returns {"occupancy": {"jan": 22.0,
+    ...}, "adr": {"jan": 420.0, ...}}. Used by taxes.py's placeholder_gross_rent (multiplied month
+    by month, so the ADR/occupancy seasonal correlation -- e.g. ski season -- is at least
+    preserved) -- see that function's own docstring for why this is a PLACEHOLDER, not a real
+    revenue model."""
+    deck = deck if deck is not None else load_deck()
+    rental_operations = deck["rental_operations"]
+    return {
+        "occupancy": {month: values["median"] for month, values in rental_operations["occupancy"]["months"].items()},
+        "adr": {month: values["median"] for month, values in rental_operations["adr"]["months"].items()},
+    }
+
+
+def get_carrying_costs_placeholder_medians(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """PLACEHOLDER-only getter: unwraps carrying_costs' own median priors (ignoring cv AND growth
+    entirely) for taxes.py's placeholder_shared_expenses -- NOT a real, growth-propagated carrying-
+    costs computation (that's the still-unbuilt carrying_costs.py stage). Returns
+    {"property_tax_rate" (kind: constant -- this one IS real, not a placeholder),
+    "hoa_dues_annual_median", "insurance_annual_median", "utilities_annual_median" (monthly medians
+    summed), "maintenance_fraction_median"}."""
+    deck = deck if deck is not None else load_deck()
+    carrying_costs = deck["carrying_costs"]
+    utilities_months = carrying_costs["utilities"]["months"]
+    return {
+        "property_tax_rate": _constant(carrying_costs["property_tax_rate"]),
+        "hoa_dues_annual_median": carrying_costs["hoa_dues_annual"]["median"],
+        "insurance_annual_median": carrying_costs["insurance_annual"]["median"],
+        "utilities_annual_median": sum(month["median"] for month in utilities_months.values()),
+        "maintenance_fraction_median": carrying_costs["maintenance_fraction"]["median"],
+    }
+
+
+def get_taxes_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps `taxes`' own `kind: constant` fields that taxes.py actually uses (not
+    filing_status/passive_loss_treatment/salt_cap -- see that module's docstring for what's
+    deliberately out of scope). Returns {"federal_marginal_rate", "niit_applies", "niit_rate",
+    "itemizes_deductions", "state_tax_profiles" ({"FL": {...}, "CO": {...}}),
+    "depreciation_years_building", "recapture_rate", "ltcg_rate", "sec121_exclusion",
+    "sec121_min_years"}."""
+    deck = deck if deck is not None else load_deck()
+    taxes = deck["taxes"]
+    return {
+        "federal_marginal_rate": _constant(taxes["federal_marginal_rate"]),
+        "niit_applies": _constant(taxes["niit_applies"]),
+        "niit_rate": _constant(taxes["niit_rate"]),
+        "itemizes_deductions": _constant(taxes["itemizes_deductions"]),
+        "state_tax_profiles": _constant(taxes["state_tax_profiles"]),
+        "depreciation_years_building": _constant(taxes["depreciation_years_building"]),
+        "recapture_rate": _constant(taxes["recapture_rate"]),
+        "ltcg_rate": _constant(taxes["ltcg_rate"]),
+        "sec121_exclusion": _constant(taxes["sec121_exclusion"]),
+        "sec121_min_years": _constant(taxes["sec121_min_years"]),
+    }
+
+
+def get_exit_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Unwraps `exit.selling_costs`' own `kind: constant` fields. Returns
+    {"selling_costs_fixed_fees", "selling_costs_percent_of_price"}. exit_year/sale_price are
+    DERIVED, not read here -- see taxes.project_condo_value_schedule."""
+    deck = deck if deck is not None else load_deck()
+    selling_costs = deck["exit"]["selling_costs"]
+    return {
+        "selling_costs_fixed_fees": _constant(selling_costs["fixed_fees"]),
+        "selling_costs_percent_of_price": _constant(selling_costs["percent_of_price"]),
+    }
 
 
 def get_report_quantiles(deck: dict[str, Any] | None = None) -> list[float]:

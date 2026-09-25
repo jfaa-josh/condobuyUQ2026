@@ -6,17 +6,20 @@ sharing happens), by caching each reference_id's result the first time it's need
 STORAGE, not just printing: each stage's computed values are kept, not only printed and discarded.
 A buy scenario dict gets a new key per stage as it's computed -- so far "acquisition"
 (acquisition.compute_acquisition_costs), "classification"
-(classification.compute_occupancy_classification), and "financing" (financing.compute_financing) --
-so by the time run_scenarios returns, every scenario in its "scenarios" list carries everything
-computed for it, not just what got printed along the way. reference_results[reference_id] is,
-symmetrically, a dict a future reference-side stage adds its own key to (e.g.
-reference_results[id]["rent_reference"] = ... once that stage exists) -- empty today since only the
-buy side computes anything yet.
+(classification.compute_occupancy_classification), "financing" (financing.compute_financing), and
+"taxes" (taxes.compute_owner_taxes) -- so by the time run_scenarios returns, every scenario in its
+"scenarios" list carries everything computed for it, not just what got printed along the way.
+reference_results[reference_id] is, symmetrically, a dict a future reference-side stage adds its
+own key to -- so far just "taxes" (taxes.compute_renter_taxes, a real confirmed $0 result, not a
+placeholder -- renting has no real-estate tax effect at all).
+
+*** taxes.py has its own PLACEHOLDER inputs (gross_rent, shared_expenses) -- see that module's
+docstring and PLACEHOLDER_FIELDS constant before trusting any dollar figure it produces. ***
 
 The eventual buy-vs-reference comparison (ΔW = W_buy - W_rent, see .claude/implementation-plan.md's
-Goal) is a PLACEHOLDER for now (see reporting.print_scenario_comparison_placeholder) -- as later
-stages (carrying_costs, taxes, rent_reference, capital_markets, exit) get built, this is where
-their per-scenario computation gets wired in -- and stored, per the paragraph above -- on both the
+Goal) is still a PLACEHOLDER (see reporting.print_scenario_comparison_placeholder) -- as later
+stages (carrying_costs, rent_reference, capital_markets, exit) get built, this is where their
+per-scenario computation gets wired in -- and stored, per the paragraph above -- on both the
 reference and buy sides.
 """
 
@@ -33,25 +36,29 @@ from condobuyuq2026.reporting import (
     print_financing_report,
     print_reference_cache_hit,
     print_reference_report,
+    print_renter_taxes_report,
     print_scenario_comparison_placeholder,
+    print_taxes_report,
 )
 from condobuyuq2026.scenarios import get_scenario_set
+from condobuyuq2026.taxes import compute_owner_taxes, compute_renter_taxes
 
 
 def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
     """Iterates every buy scenario (see scenarios.get_scenario_set), running its matching reference
     case the FIRST time that reference_id is seen (cached after that -- see module docstring), then
     immediately following it with that scenario's own buy-side computation (acquisition,
-    classification, financing today; more as later stages are built), so a buy scenario and its
-    reference are always handled as a pair.
+    classification, financing, taxes today; more as later stages are built), so a buy scenario and
+    its reference are always handled as a pair.
 
     Returns {"reference_cases": ..., "reference_results": ..., "scenarios": ...}:
     - "scenarios": scenarios.get_scenario_set's buy scenarios, each one now ALSO carrying
-      "acquisition", "classification", "financing" (each stage's own full result dict for that
-      scenario) -- see module docstring's STORAGE note. Later stages add their own key the same way.
+      "acquisition", "classification", "financing", "taxes" (each stage's own full result dict for
+      that scenario) -- see module docstring's STORAGE note. Later stages add their own key the
+      same way.
     - "reference_cases" / "reference_results": as scenarios.get_scenario_set built them, plus
-      whatever a future reference-side stage stores into reference_results[reference_id] (empty
-      dicts today -- see module docstring).
+      "taxes" (compute_renter_taxes' real $0 result) stored into
+      reference_results[reference_id] the first time each reference case is seen.
     """
     reference_cases, scenarios = get_scenario_set(deck)
     reference_results: dict[int, dict[str, Any]] = {}
@@ -62,7 +69,9 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
             print_reference_cache_hit(reference_id)
         else:
             print_reference_report(reference_id, reference_cases[reference_id])
-            reference_results[reference_id] = {}  # PLACEHOLDER -- a future reference-side stage stores its own result here
+            renter_taxes = compute_renter_taxes(reference_cases[reference_id])
+            reference_results[reference_id] = {"taxes": renter_taxes}
+            print_renter_taxes_report(renter_taxes)
 
         # scenarios.get_scenario_set already computed this (to dedup reference cases) and stored it
         # on the scenario -- reuse it instead of recomputing.
@@ -77,6 +86,10 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         financing = compute_financing(scenario, deck)
         scenario["financing"] = financing
         print_financing_report(financing)
+
+        owner_taxes = compute_owner_taxes(scenario, deck)
+        scenario["taxes"] = owner_taxes
+        print_taxes_report(owner_taxes)
 
         print_scenario_comparison_placeholder(scenario, reference_id)
         print()  # blank line -- groups this scenario's reference/alternative/result together
