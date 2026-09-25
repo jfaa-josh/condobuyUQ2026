@@ -42,6 +42,8 @@ START_YEAR = 1984                  # one year before the intended 1985 fit windo
 END_YEAR = datetime.now().year
 MODEL_NAME = "bls_cpi_all_nsa_1984_1_2026_8"   # saved to data/raw/<MODEL_NAME>.csv and models/<MODEL_NAME>/
 PROJECTION_HORIZON_MONTHS = 120    # 10 years -- matches a plausible scenario.horizon_years max
+OUTER_CI = (0.01, 0.99)            # wide reference band every plot shows (dashed), regardless of
+                                    # report_quantiles -- see plotting.forecast_plots module docstring
 # =============================================================================
 
 
@@ -73,6 +75,7 @@ if __name__ == "__main__":
     plot_term_structure(
         cpi,
         project_term_structure(fit, p0=cpi.iloc[-1], horizon_months=PROJECTION_HORIZON_MONTHS, ci=projection_ci),
+        project_term_structure(fit, p0=cpi.iloc[-1], horizon_months=PROJECTION_HORIZON_MONTHS, ci=OUTER_CI),
         title=f"{MODEL_NAME} — fitted price-level projection ({int(projection_ci[0] * 100)}-{int(projection_ci[1] * 100)}% band)",
         save_path=term_structure_path,
     )
@@ -81,6 +84,7 @@ if __name__ == "__main__":
     monthly_rate_path = model_plots_dir(MODEL_NAME) / "monthly_rate.png"
     plot_monthly_rate(
         project_monthly_rate(fit, horizon_months=PROJECTION_HORIZON_MONTHS, ci=projection_ci),
+        project_monthly_rate(fit, horizon_months=PROJECTION_HORIZON_MONTHS, ci=OUTER_CI),
         title=f"{MODEL_NAME} — fitted monthly growth-rate projection ({int(projection_ci[0] * 100)}-{int(projection_ci[1] * 100)}% band)",
         save_path=monthly_rate_path,
     )

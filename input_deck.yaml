@@ -19,16 +19,17 @@
 #   sweep      decision variable, grid axis.       fields: values
 #   prior      ONE uncertain value, static.        fields: dist, <dist params>, latent
 #   process    an entire time-evolving path, hand-elicited (dist/marginal params + monthly_change
-#              inline) — used for enso only now.
+#              inline) — not currently used by any forecast_models entry (all three are fitted now,
+#              see below), kept here in case a future one goes back to being hand-elicited.
 #
-# `general`, `home_price`, and `market` (three of the four founding processes, see below) have no
-# `kind` at all: they're FITTED from real data instead of hand-elicited, so they carry none of the
-# above fields — just `model_name`, naming an already-built model fit (see input_deck.py's
-# get_forecast_model_general/get_forecast_model_home_price/get_forecast_model_market).
+# All three founding processes (see below) have no `kind` at all: they're FITTED from real data
+# instead of hand-elicited, so they carry none of the above fields — just `model_name`, naming an
+# already-built model fit (see input_deck.py's get_forecast_model_general/
+# get_forecast_model_home_price/get_forecast_model_market).
 #
 # DIST families: lognormal {median, cv} (positive quantities), normal {mean, sd} (can go
-# negative — used for monthly_change blocks and for ENSO's own marginal, since ENSO is signed
-# and centered near zero), mixture {p, severity: {dist: lognormal, median, cv}} (rare events).
+# negative — used for monthly_change blocks), mixture {p, severity: {dist: lognormal, median, cv}}
+# (rare events).
 #
 # SWEEPS ARE DELIBERATELY MINIMAL: only `scenario.alternatives`, `scenario.horizon_years`,
 # `scenario.residency_state`, and `scenario.purchase_price` are swept. Everything else is a
@@ -45,24 +46,22 @@
 # taxing both liquidations (capital gains on the portfolio too, not just the condo) is what
 # makes ΔW an apples-to-apples comparison. See scenario.horizon_years and the exit section.
 #
-# FOUR FOUNDING PROCESSES (`forecast_models`: general, home_price, market, enso) — the plan is
-# to fit all four from real historical data eventually. `general`/`home_price`/`market` already
-# are (see KIND above); `enso` still holds hand-elicited placeholder values (a marginal
-# distribution + a monthly_change distribution, which together derive the process's own ar1_phi;
-# see .claude/implementation-plan.md for the derivation) pending the same treatment. Treated as
-# ground truth either way; nothing else in this deck feeds back and influences them.
+# THREE FOUNDING PROCESSES (`forecast_models`: general, home_price, market) — all fitted from real
+# historical data (see KIND above) as annualized GROWTH RATES (BLS CPI, a Denver-metro home price
+# index, S&P 500 price — see the "annualized rate" note below). Treated as ground truth; nothing
+# else in this deck feeds back and influences them.
 #
 # REFERENCING A PROCESS/DERIVED LATENT BY NAME: everywhere a `latent:` or `derived_latents.*.
-# weights` key names a process (e.g. `enso`, `construction_cost`, `market`), it's always that
+# weights` key names a process (e.g. `market`, `construction_cost`, `general`), it's always that
 # entry's own key under forecast_models/derived_latents — never a separate identifier declared on
 # the entry itself. (An earlier draft had each forecast_models entry also declare its own
 # `latent: z_*` name for this purpose; dropped as unused dead weight once every actual reference
 # elsewhere turned out to just use the entry's key directly instead.)
 #
 # DERIVED LATENTS (`derived_latents`): for anything that needs a growth or level driver but
-# isn't itself one of the four founding processes — a weighted combination of all four
-# (`market`, `home_price`, `general`, `enso`) plus its own idiosyncratic (unmodeled) share,
-# `a²+b²+c²+d² ≤ 1`. Deliberately kept as manually-reasoned weights for now — see the earmark
+# isn't itself one of the three founding processes — a weighted combination of all three
+# (`market`, `home_price`, `general`) plus its own idiosyncratic (unmodeled) share,
+# `a²+b²+c² ≤ 1`. Deliberately kept as manually-reasoned weights for now — see the earmark
 # in the implementation plan to fit these properly from real data with a utility script.
 #
 # `growth` sub-blocks are elicited as an ANNUAL median/cv, realized monthly internally, and
@@ -72,7 +71,7 @@
 # `hoa_dues_annual.growth.latent` are both `construction_cost`, doing two different jobs — see
 # the implementation plan for a worked numeric example).
 #
-# COMPOSITE COST FORMULAS (`acquisition.closing_costs`, `exit.selling_costs`): both follow
+# COMPOSITE COST FORMULAS (`acquisition.purchase_closing_costs`, `exit.selling_costs`): both follow
 # `total = fixed_fees + (percent_of_price * price)` — a scalar dollar amount that doesn't scale
 # with price, plus a fraction that does. Written out explicitly in each section's comment.
 #
@@ -103,13 +102,13 @@ scenario:
     # so the comparison is apples-to-apples rather than favoring whichever side doesn't realize
     # its gains.
     kind: sweep
-    values: [3, 5, 10]
+    values: [1, 5, 10]
 
   residency_state:
     # Tax domicile (categorical). OPTIONS: FL | CO. Applies to both branches symmetrically —
     # see taxes.state_tax_profiles.
     kind: sweep
-    values: [FL, CO]
+    values: [FL]
 
   property_state:
     # Where the condo (or the rent branch's comparable place) sits. Fixed for this scenario.
@@ -120,28 +119,27 @@ scenario:
     # Purchase price (USD) — the deck's actual input for this; see the "SEE scenario.X" note
     # above. acquisition.purchase_price is a discoverability stub only.
     kind: sweep
-    values: [450000, 500000, 550000]
+    values: [375000, 400000]
 
 # -----------------------------------------------------------------------------
 # 2. forecast_models
 # -----------------------------------------------------------------------------
-# The four founding processes. general/home_price/market are fitted from real data (BLS CPI, a
-# Denver-metro Case-Shiller home price index, S&P 500 price); enso still holds illustrative
-# placeholder numbers, real fitting for it (NOAA's ONI) is earmarked, not done yet.
+# The three founding processes. All fitted from real data (BLS CPI, a Denver-metro Case-Shiller
+# home price index, S&P 500 price) and modeled as ANNUALIZED GROWTH RATES (see the "annualized
+# rate" note just below).
 #
-# IMPORTANT — annualized rate, but a MONTHLY-stepped process: for all four, the growth rate's own
-# distribution is on an ANNUALIZED basis (e.g. median 0.03 = "running about 3%/year") — that's the
-# natural, human-elicited way to state it (or, for general/home_price/market, what their fits are
-# expressed in — see their own comments below). But each process's path is a MONTHLY AR(1) walk
-# (see "Temporal model" in .claude/implementation-plan.md): `monthly_change` (on enso; for
-# general/home_price/market the equivalent comes from the fit) is how much that ANNUALIZED-RATE
-# ESTIMATE itself typically drifts from one month's reading to the next's — that's what phi gets
-# fit from — it is NOT the amount actually applied to grow a variable's IC in a single month. When
-# this growth compounds an IC forward, each of the 12 monthly steps in a year must apply the
-# MONTHLY-EQUIVALENT of the annual rate (the twelve steps compound TO the annual rate), never the
-# full annual figure at every one of the 12 steps — that would compound to twelve years of growth
-# in one. The exact monthly-step formula given phi is still open — see "Calibration procedure"
-# under Open questions in the implementation plan.
+# IMPORTANT — annualized rate, but a MONTHLY-stepped process: the growth rate's own distribution is
+# on an ANNUALIZED basis (e.g. median 0.03 = "running about 3%/year") — that's the natural, human-
+# elicited way to state it, or what these fits are expressed in (see their own comments below). But
+# each process's path is a MONTHLY AR(1) walk (see "Temporal model" in
+# .claude/implementation-plan.md): the fit's equivalent of `monthly_change` is how much that
+# ANNUALIZED-RATE ESTIMATE itself typically drifts from one month's reading to the next's — that's
+# what phi gets fit from — it is NOT the amount actually applied to grow a variable's IC in a
+# single month. When this growth compounds an IC forward, each of the 12 monthly steps in a year
+# must apply the MONTHLY-EQUIVALENT of the annual rate (the twelve steps compound TO the annual
+# rate), never the full annual figure at every one of the 12 steps — that would compound to twelve
+# years of growth in one. The exact monthly-step formula given phi is still open — see
+# "Calibration procedure" under Open questions in the implementation plan.
 forecast_models:
   general:
     # General (broad US urban consumer) CPI inflation, expressed as an ANNUALIZED rate — see the
@@ -177,30 +175,22 @@ forecast_models:
     # that means; fit built and saved by run/manual/build_market_model.py.
     model_name: yfinance_spx_1984_1_2026_9
 
-  enso:
-    # NOAA ONI-style index (unitless, signed, roughly -2..+2.5 historically) — El Niño/La Niña
-    # phase, used as a real proxy for snowpack/ski-demand quality. NORMAL, not lognormal: ENSO
-    # can be negative and is centered near zero, so cv doesn't apply the way it does for a
-    # positive growth rate.
-    kind: process
-    dist: normal
-    mean: 0.0                        # example — neutral long-run average
-    sd: 0.9                          # example — historical spread of the index
-    initial_value: null               # optional — today's actual ONI reading
-    monthly_change:
-      dist: normal
-      mean: 0.0
-      sd: 0.3                        # example — typical month-to-month ONI move
-
 # -----------------------------------------------------------------------------
 # 3. derived_latents
 # -----------------------------------------------------------------------------
 # For anything that needs a growth or level driver but isn't itself a founding process:
 # construction_cost and insurance drive both a LEVEL and a GROWTH role (see their own comments
-# below); maintenance drives a LEVEL only; adr and utilities each drive a GROWTH only (their
-# LEVEL uses `enso` directly instead — see rental_operations.adr/carrying_costs.utilities). Each
-# entry is a weighted combination of all four forecast_models plus an idiosyncratic (i.i.d., no
-# persistence of its own — the four components already carry real memory) share. EARMARKED (see
+# below); maintenance drives a LEVEL only; adr and utilities each drive a GROWTH only (their LEVEL/
+# seasonal shape is just their own `months:` map — see rental_operations.adr/carrying_costs.
+# utilities). Each entry is a weighted combination of all three forecast_models' own standardized
+# monthly paths -- referenced by their own key (`market`/`home_price`/`general`), same as
+# everywhere else in this deck (see "Referencing a process/derived latent by name" above), not a
+# separate `z_*` identifier -- plus an idiosyncratic share, for latent X with weights {a, b, c}:
+#
+#   X_t = a*market_t + b*home_price_t + c*general_t + sqrt(1 - a^2 - b^2 - c^2)*shock_idio_t
+#
+# a^2+b^2+c^2 <= 1 (checked by input_deck.py's get_derived_latents); the shortfall is X's own
+# idiosyncratic (unmodeled, i.i.d. each month, no persistence of its own) variance. EARMARKED (see
 # implementation plan): weights below are manually reasoned placeholders; the plan is to build
 # these properly in an offline utility script (with visualizations) against real occupancy/ADR/
 # utilities data, and import the result here instead of hand-setting weights.
@@ -210,46 +200,40 @@ derived_latents:
     # typical amount's own multi-year drift — see schema reference) and once on
     # special_assessment (severity).
     weights:
-      market: 0.1                     # REQUIRED (placeholder) — 0 to 1 each, sum of squares <= 1
-      home_price: 0.3
+      market: 0.0                     # REQUIRED (placeholder) — 0 to 1 each, sum of squares <= 1
+      home_price: 0.6
       general: 0.4
-      enso: 0.0
 
   insurance:
     # Drives insurance_annual's level and growth (same two-role pattern as construction_cost).
     weights:
-      market: 0.1
-      home_price: 0.1
-      general: 0.3
-      enso: 0.2                      # mountain insurance pricing plausibly tracks weather severity
+      market: 0.0
+      home_price: 0.9
+      general: 0.1
 
   maintenance:
     # Drives maintenance_fraction's level.
     weights:
       market: 0.0
-      home_price: 0.1
-      general: 0.3
-      enso: 0.1
+      home_price: 0.5
+      general: 0.5
 
   adr:
-    # Drives adr's GROWTH (secular pricing power) — adr's LEVEL/seasonal shape uses `enso`
-    # directly instead (see rental_operations.adr). ALSO reused for rent_reference.
+    # Drives adr's GROWTH (secular pricing power) — adr's LEVEL/seasonal shape is just its own
+    # `months:` map (see rental_operations.adr). ALSO reused for rent_reference.
     # seasonal_lease_cost's growth and personal_use.alternate_lodging_cost_by_month's growth —
     # same rental market, so the same pricing-power process applies to all three.
     weights:
-      market: 0.1
-      home_price: 0.2
+      market: 0.2
+      home_price: 0.5
       general: 0.3
-      enso: 0.1
 
   utilities:
-    # Drives utilities' GROWTH — utilities' LEVEL/seasonal shape uses `enso` directly instead
-    # (a cold, snowy winter means both good skiing and high heating bills).
+    # Drives utilities' GROWTH — utilities' LEVEL/seasonal shape is just its own `months:` map.
     weights:
-      market: 0.0
+      market: 0.3
       home_price: 0.0
-      general: 0.5
-      enso: 0.1
+      general: 0.7
 
 # -----------------------------------------------------------------------------
 # 4. acquisition
@@ -261,8 +245,10 @@ acquisition:
     kind: sweep
     values: null                     # see scenario.purchase_price
 
-  closing_costs:
-    # total = fixed_fees + (percent_of_price * purchase_price).
+  purchase_closing_costs:
+    # total = fixed_fees + (percent_of_price * purchase_price). Named "purchase_" (not just
+    # "closing_costs") to stay unambiguous against exit.selling_costs, which is the sell-side
+    # closing costs.
     # fixed_fees: dollar costs independent of price (title insurance, escrow, recording,
     #   attorney fees, etc.). percent_of_price: costs that scale with price (loan origination
     #   points, transfer tax, etc.).
@@ -271,7 +257,7 @@ acquisition:
       value: 2500                    # example
     percent_of_price:
       kind: constant
-      value: 0.015                   # example — 1.5%
+      value: 0.0                   # example — 1.5%
 
   land_fraction:
     # Share of the purchase price attributable to LAND, not the building (fraction) — needed
@@ -282,24 +268,24 @@ acquisition:
     # use that SAME ratio here regardless of what you actually paid. Example: assessor shows
     # $80k land / $320k building on a $400k assessed value -> land_fraction = 0.20.
     kind: constant
-    value: 0.20                      # example
+    value: 0.0      # Opposite of % improved
 
   total_cash_at_closing:
     # ALL cash you put in at closing (down payment + any gift/family money), as a single dollar
-    # figure. The amount financed is DERIVED: purchase_price + closing_costs.fixed_fees +
-    # (closing_costs.percent_of_price * purchase_price) - total_cash_at_closing. Deliberately
+    # figure. The amount financed is DERIVED: purchase_price + purchase_closing_costs.fixed_fees +
+    # (purchase_closing_costs.percent_of_price * purchase_price) - total_cash_at_closing. Deliberately
     # NOT assumed equal to the rent branch's investment amount — see capital_markets.
     # initial_investment for that, entered separately, since gift/family money toward a down
     # payment wouldn't exist to invest if renting instead.
     kind: constant
-    value: 150000                    # example
+    value: 300000
 
   initial_furnishing:
     # One-time STR setup/furnishing cost (USD), scalar — a cash outlay only, not depreciated for
     # tax purposes (not a large enough amount to be worth the added complexity). Not the same
     # thing as any furnishing cost the rent branch might need (not currently modeled there).
     kind: constant
-    value: 15000                     # example
+    value: 0
 
 # -----------------------------------------------------------------------------
 # 5. financing
@@ -376,12 +362,11 @@ carrying_costs:
       cv: 0.3
 
   utilities:
-    # Monthly (USD), seasonal shape (winter heating spike). LEVEL via `enso` directly (cold/
-    # snowy winter -> both good skiing and high heating bills).
+    # Monthly (USD), seasonal shape (winter heating spike) via its own `months:` map below -- no
+    # shared level-driving latent.
     kind: prior
     dist: lognormal
     resolution: monthly
-    latent: enso
     months:
       jan: {median: 320, cv: 0.2}
       feb: {median: 300, cv: 0.2}
@@ -421,13 +406,12 @@ rental_operations:
     # be one). Bounded above by (days in that calendar month - personal_use_days_by_month for
     # that month) — this bound must be computed dynamically by the loader per actual month/year
     # (28, 29 in a leap year, 30, or 31 days), not hardcoded here; lognormal draws get rounded to
-    # the nearest whole day downstream. LEVEL via `enso` directly (same shock as adr, below, so
-    # a good snow month spikes both together). No growth — a day-count doesn't have a secular
-    # multi-year trend the way dollar figures do.
+    # the nearest whole day downstream. Seasonal shape via its own `months:` map below -- no shared
+    # level-driving latent with adr. No growth — a day-count doesn't have a secular multi-year
+    # trend the way dollar figures do.
     kind: prior
     dist: lognormal
     resolution: monthly
-    latent: enso
     months:
       jan: {median: 22, cv: 0.15}
       feb: {median: 20, cv: 0.15}
@@ -443,12 +427,12 @@ rental_operations:
       dec: {median: 21, cv: 0.15}
 
   adr:
-    # USD/night, monthly seasonal shape. LEVEL via `enso` directly (ties to occupancy above).
-    # Growth (secular pricing power) via the richer `adr` derived latent instead.
+    # USD/night, monthly seasonal shape via its own `months:` map below -- no shared level-driving
+    # latent with occupancy anymore (see occupancy's own comment). Growth (secular pricing power)
+    # via the richer `adr` derived latent instead.
     kind: prior
     dist: lognormal
     resolution: monthly
-    latent: enso
     months:
       jan: {median: 420, cv: 0.20}
       feb: {median: 440, cv: 0.20}
@@ -679,7 +663,7 @@ exit:
   selling_costs:
     # total = fixed_fees + (percent_of_price * sale_price). Sale price is DERIVED: purchase_price
     # appreciated via forecast_models.home_price to exit_year. Same composite pattern as
-    # acquisition.closing_costs.
+    # acquisition.purchase_closing_costs.
     fixed_fees:
       kind: constant
       value: 1500                    # example — title/escrow on the sell side

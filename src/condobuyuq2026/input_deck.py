@@ -3,18 +3,18 @@ package to consume.
 
 Only barely started — the deck's structure is still being iterated on with the user (see
 .claude/implementation-plan.md). So far this loads the raw YAML, can unwrap a `kind: constant`
-entry to its plain value (see get_report_quantiles), and can resolve a fitted forecast_models
-entry (general, home_price, market -- none of these have a `kind`, since they're fitted rather
-than hand-elicited, so they just name a model) to the fit it names, with some basic sanity checks
-(see get_fitted_forecast_model). Once the deck stabilizes, this module should be its single
-validation "catch-all": everything else in this package should be able to assume a deck that's
-come through here is well-formed, without re-checking it itself. That means:
+entry to its plain value (see get_report_quantiles), can resolve a fitted forecast_models entry
+(general, home_price, market -- none of these have a `kind`, since they're fitted rather than
+hand-elicited, so they just name a model) to the fit it names, with some basic sanity checks (see
+get_fitted_forecast_model), and can resolve `derived_latents.*.weights` for every entry, checked
+for a^2+b^2+c^2 <= 1 (see get_derived_latents). Once the deck stabilizes, this module should be its
+single validation "catch-all": everything else in this package should be able to assume a deck
+that's come through here is well-formed, without re-checking it itself. That means:
 
 - Parsing the YAML into typed Python objects, one shape per `kind` (constant, sweep, prior,
   process), rather than leaving callers to work with raw dicts.
 - Resolving every `latent:` / `growth.latent:` reference against `forecast_models` and
   `derived_latents`, and erroring clearly on anything that doesn't resolve.
-- Checking `derived_latents.*.weights` satisfy a^2 + b^2 + c^2 + d^2 <= 1.
 - Checking bounded-fraction/count constraints (e.g. occupancy's day-count against the actual
   number of days in that calendar month and year, net of personal_use_days_by_month).
 - Checking every field marked `# REQUIRED` in the deck's comments actually has a value, and
@@ -38,7 +38,8 @@ from condobuyuq2026.paths import REPO_ROOT, model_fit_path
 from condobuyuq2026.utils.ou_fitting import load_fit
 
 DECK_PATH = REPO_ROOT / "input_deck.yaml"
-_REQUIRED_FIT_KEYS = {"alpha", "beta", "i_inf", "tau", "sig", "i0", "phi_monthly"}
+_OU_FIT_KEYS = frozenset({"alpha", "beta", "i_inf", "tau", "sig", "i0", "phi_monthly"})
+DERIVED_LATENT_COMPONENTS = ("market", "home_price", "general")
 
 
 def load_deck(path: Path = DECK_PATH) -> dict[str, Any]:
@@ -54,6 +55,73 @@ def _constant(entry: dict[str, Any]) -> Any:
     if entry["kind"] != "constant":
         raise NotImplementedError(f"input_deck.py only understands kind: constant so far, got {entry['kind']!r}")
     return entry["value"]
+
+
+def _sweep(entry: dict[str, Any]) -> list[Any]:
+    """Unwraps a `kind: sweep` deck entry to its list of values -- the sweep-side counterpart to
+    _constant."""
+    if entry["kind"] != "sweep":
+        raise NotImplementedError(f"_sweep only understands kind: sweep, got {entry['kind']!r}")
+    return entry["values"]
+
+
+def get_scenarios(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Expands `scenario`'s sweeps -- alternatives x horizon_years x residency_state x
+    purchase_price, see the deck's "SWEEPS ARE DELIBERATELY MINIMAL" note -- into the full
+    cartesian product of scenarios to run. Each returned dict also carries scenario's two fixed
+    (`kind: constant`) fields, reference and property_state, alongside that combination's swept
+    values, e.g.:
+
+        {"reference": "rent", "alternative": "buy", "horizon_years": 1, "residency_state": "FL",
+         "property_state": "CO", "purchase_price": 375000}
+
+    Note scenario.purchase_price is this deck's actual input for purchase price --
+    acquisition.purchase_price is a discoverability stub only (see the deck's "SEE scenario.X"
+    note); a scenario dict's "purchase_price" key is what acquisition.compute_acquisition_costs
+    and any other per-scenario computation should read.
+    """
+    deck = deck if deck is not None else load_deck()
+    scenario = deck["scenario"]
+    reference = _constant(scenario["reference"])
+    property_state = _constant(scenario["property_state"])
+
+    scenarios = []
+    for alternative in _sweep(scenario["alternatives"]):
+        for horizon_years in _sweep(scenario["horizon_years"]):
+            for residency_state in _sweep(scenario["residency_state"]):
+                for purchase_price in _sweep(scenario["purchase_price"]):
+                    scenarios.append(
+                        {
+                            "reference": reference,
+                            "alternative": alternative,
+                            "horizon_years": horizon_years,
+                            "residency_state": residency_state,
+                            "property_state": property_state,
+                            "purchase_price": purchase_price,
+                        }
+                    )
+    return scenarios
+
+
+def get_acquisition_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Unwraps `acquisition`'s own `kind: constant` fields to plain values -- everything except
+    purchase_price, which is a discoverability stub only (the real value comes from a scenario's
+    own "purchase_price", see get_scenarios). Returns:
+    {"closing_costs_fixed_fees", "closing_costs_percent_of_price", "land_fraction",
+    "total_cash_at_closing", "initial_furnishing"}, straight off acquisition.purchase_closing_costs
+    .fixed_fees/.percent_of_price, acquisition.land_fraction, acquisition.total_cash_at_closing,
+    acquisition.initial_furnishing respectively.
+    """
+    deck = deck if deck is not None else load_deck()
+    acquisition = deck["acquisition"]
+    closing_costs = acquisition["purchase_closing_costs"]
+    return {
+        "closing_costs_fixed_fees": _constant(closing_costs["fixed_fees"]),
+        "closing_costs_percent_of_price": _constant(closing_costs["percent_of_price"]),
+        "land_fraction": _constant(acquisition["land_fraction"]),
+        "total_cash_at_closing": _constant(acquisition["total_cash_at_closing"]),
+        "initial_furnishing": _constant(acquisition["initial_furnishing"]),
+    }
 
 
 def get_report_quantiles(deck: dict[str, Any] | None = None) -> list[float]:
@@ -80,7 +148,7 @@ def _load_checked_fit(model_name: str) -> dict[str, float]:
         raise ValueError(f"Fit file for model {model_name!r} at {path} is empty.")
 
     fit = load_fit(path)
-    missing = _REQUIRED_FIT_KEYS - fit.keys()
+    missing = _OU_FIT_KEYS - fit.keys()
     if missing:
         raise ValueError(f"Fit file for model {model_name!r} at {path} is missing keys: {sorted(missing)}.")
     if not (0 < fit["phi_monthly"] < 1):
@@ -118,3 +186,25 @@ def get_forecast_model_market(deck: dict[str, Any] | None = None) -> dict[str, f
     """Resolves forecast_models.market -- see get_fitted_forecast_model. Fit built by
     run/manual/build_market_model.py."""
     return get_fitted_forecast_model("market", deck)
+
+
+def get_derived_latents(deck: dict[str, Any] | None = None) -> dict[str, dict[str, float]]:
+    """Returns derived_latents.*.weights for every entry (construction_cost, insurance,
+    maintenance, adr, utilities), keyed by entry name -> {"market": a, "home_price": b, "general":
+    c} (see DERIVED_LATENT_COMPONENTS). Checks a^2+b^2+c^2 <= 1 for each -- the shortfall is that
+    entry's own idiosyncratic share (see the deck's derived_latents section comment and
+    .claude/implementation-plan.md's "Derived latents" design note); raises clearly if violated,
+    since a violation would make the idiosyncratic weight imaginary.
+    """
+    deck = deck if deck is not None else load_deck()
+    result: dict[str, dict[str, float]] = {}
+    for name, entry in deck["derived_latents"].items():
+        weights = {key: entry["weights"][key] for key in DERIVED_LATENT_COMPONENTS}
+        sum_sq = sum(w**2 for w in weights.values())
+        if sum_sq > 1:
+            raise ValueError(
+                f"derived_latents.{name}.weights has a^2+b^2+c^2={sum_sq!r} > 1 -- "
+                "idiosyncratic share would be negative."
+            )
+        result[name] = weights
+    return result

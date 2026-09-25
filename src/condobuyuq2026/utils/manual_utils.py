@@ -1,4 +1,6 @@
-"""Shared backend for the manual, one-off scripts in run/manual/.
+"""Shared backend for the manual, one-off scripts in run/manual/, and (via
+build_derived_latent_model/build_all_derived_latent_models) for run/main.py's first real build
+step.
 
 Not part of the analysis package's own logic (that's the rest of condobuyuq2026) — these are
 helpers for data-pulling/model-building scripts specifically: talking to external APIs (BLS,
@@ -18,12 +20,23 @@ import csv
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
 
+from condobuyuq2026.input_deck import (
+    get_derived_latents,
+    get_forecast_model_general,
+    get_forecast_model_home_price,
+    get_forecast_model_market,
+    get_report_quantiles,
+)
+from condobuyuq2026.input_deck import load_deck as _load_deck
 from condobuyuq2026.paths import DATA_RAW_DIR, MODELS_DIR
 from condobuyuq2026.paths import model_fit_path as _model_fit_path
+from condobuyuq2026.plotting.forecast_plots import plot_derived_latent_model
+from condobuyuq2026.utils.ou_fitting import project_monthly_rate, save_fit
 
 BLS_API_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 # BLS API v2's per-request limits: a registration key raises them, but doesn't require them —
@@ -229,3 +242,130 @@ def to_monthly_series(data_points: list[dict[str, Any]]) -> pd.Series:
     ).to_timestamp()
     values = [parse_numeric_value(p["value"]) for p in data_points]
     return pd.Series(values, index=index).sort_index().asfreq("MS")
+
+
+def fit_effective_ou(component_fits: dict[str, dict[str, float]], weights: dict[str, float]) -> dict[str, float]:
+    """Moment-matches the three founding processes' OWN OU fits (see ou_fitting.fit_annual_ou) into
+    a single "effective" OU fit for a derived latent's weighted blend -- so a derived latent's
+    fit.json is a MODEL (same {alpha, beta, i_inf, tau, sig, i0, phi_monthly} shape as
+    general/home_price/market's own fit.json), not a precomputed table of monthly distributions.
+    This matters for the plan: other variables' growth propagation (still to build) calls
+    project_term_structure/project_monthly_rate on a fit dict at whatever horizon/quantile it
+    needs -- a fixed table would only ever answer the exact (horizon, quantile) pairs baked in when
+    it was built, while a parametric fit answers any of them, exactly like a founding process's own.
+
+    The blend combined_t = sum(w_k * component_k_t) is itself linear in each component's OU-modeled
+    annual rate, so two of its moments are EXACT, not approximated:
+    - i_inf_eff = sum(w_k * i_inf_k): a weighted sum of long-run means is exactly the long-run mean
+      of the weighted sum.
+    - i0_eff = sum(w_k * i0_k): same identity, at the starting point.
+
+    tau/sig/phi/beta/alpha have no single exact closed form for a sum of OU processes with
+    different taus (the sum isn't itself a plain OU process in general), so these five are
+    recovered by matching the blend's actual variance curve at its two most informationally
+    distinctive points, then reading an OU fit off that -- the same "back out phi/tau from two
+    moments" style project_monthly_rate's own docstring already uses:
+    - Initial slope: d/dh[Var(h)]|_(h=0) = sig^2 for a single OU process (immediate, from
+      project_monthly_rate's var(h) formula). Assuming independent idiosyncratic components (no
+      correlation term needed -- each w_k*component_k contributes its own variance),
+      sig_eff^2 = sum(w_k^2 * sig_k^2) matches the blend's own initial slope exactly.
+    - Asymptotic level: each component's own stationary/marginal variance is sig_k^2*tau_k/2 (see
+      fit_annual_ou's docstring); the blend's is V_inf_eff = sum(w_k^2 * sig_k^2*tau_k/2) by the
+      same independence assumption (deliberately excluding each entry's own idiosyncratic share --
+      it has no natural real-unit scale here, consistent with build_derived_latent_model's plot
+      already treating the blend as real-unit, not standardized).
+    - Solving var(h) = sig_eff^2*(tau_eff/2)*(1 - phi_eff^(2h)) for tau_eff against both matched
+      points gives tau_eff = 2*V_inf_eff / sig_eff^2, then phi_eff = exp(-1/tau_eff),
+      beta_eff = phi_eff^12, alpha_eff = i_inf_eff*(1 - beta_eff) (backed out purely for interface
+      completeness -- project_monthly_rate/project_term_structure only ever read i_inf/tau/sig/i0/
+      phi_monthly, never alpha/beta directly).
+
+    Returns a fit dict in exactly fit_annual_ou's own shape, usable everywhere a founding process's
+    fit is (project_term_structure, project_monthly_rate, save_fit/load_fit).
+    """
+    i_inf_eff = sum(weights[key] * component_fits[key]["i_inf"] for key in weights)
+    i0_eff = sum(weights[key] * component_fits[key]["i0"] for key in weights)
+    sig_sq_eff = sum(weights[key] ** 2 * component_fits[key]["sig"] ** 2 for key in weights)
+    v_inf_eff = sum(
+        weights[key] ** 2 * component_fits[key]["sig"] ** 2 * component_fits[key]["tau"] / 2 for key in weights
+    )
+    tau_eff = 2 * v_inf_eff / sig_sq_eff
+    sig_eff = np.sqrt(sig_sq_eff)
+    phi_eff = np.exp(-1 / tau_eff)
+    beta_eff = phi_eff**12
+    alpha_eff = i_inf_eff * (1 - beta_eff)
+    return {
+        "alpha": alpha_eff,
+        "beta": beta_eff,
+        "i_inf": i_inf_eff,
+        "tau": tau_eff,
+        "sig": sig_eff,
+        "i0": i0_eff,
+        "phi_monthly": phi_eff,
+    }
+
+
+def build_derived_latent_model(
+    name: str, deck: dict[str, Any] | None = None, horizon_months: int = 120
+) -> dict[str, Path]:
+    """Builds one derived_latents entry's model: moment-matches the three fitted forecast_models'
+    (general/home_price/market) OWN OU fits into a single effective OU fit (see fit_effective_ou)
+    for that entry's weights (input_deck.get_derived_latents), then saves that fit -- a MODEL, in
+    the same {alpha, beta, i_inf, tau, sig, i0, phi_monthly} shape as any founding process's own
+    fit.json -- rather than a table of precomputed monthly distributions. Other variables'
+    propagation (still to build) can then call project_term_structure/project_monthly_rate on it
+    directly, at whatever horizon/quantile they need, exactly like a founding process's fit.
+
+    Saves models/derived_variables/<name>/fit.json (via ou_fitting.save_fit) and a sanity-check
+    plot to models/derived_variables/<name>/plots/model.png: each component's own REAL-UNIT
+    monthly-rate curve (ou_fitting.project_monthly_rate, unweighted -- the same curve as that
+    component's own monthly_rate.png) at an alpha proportional to its weight for this entry (a
+    0-weight component is invisible; a high-weight one is prominent), superimposed with the
+    effective fit's own projection as a fully-opaque thick black line -- see
+    plotting.forecast_plots.plot_derived_latent_model. Components won't necessarily "line up" with
+    each other or the combined line (they're different real quantities, only linearly blended for
+    comparison) -- that's expected, not a bug.
+
+    Returns {"fit_path": ..., "plot_path": ...}.
+    """
+    deck = deck if deck is not None else _load_deck()
+    weights = get_derived_latents(deck)[name]
+    component_fits = {
+        "market": get_forecast_model_market(deck),
+        "home_price": get_forecast_model_home_price(deck),
+        "general": get_forecast_model_general(deck),
+    }
+
+    report_quantiles = get_report_quantiles(deck)
+    ci = (report_quantiles[0], report_quantiles[-1])
+    outer_ci = (0.01, 0.99)  # wide reference band, same convention as the other build scripts
+
+    effective_fit = fit_effective_ou(component_fits, weights)
+
+    component_projections = {key: project_monthly_rate(fit, horizon_months, ci) for key, fit in component_fits.items()}
+    combined_projection = project_monthly_rate(effective_fit, horizon_months, ci)
+    combined_outer_projection = project_monthly_rate(effective_fit, horizon_months, outer_ci)
+
+    fit_path = model_fit_path(f"derived_variables/{name}")
+    save_fit(effective_fit, fit_path)
+
+    plot_path = model_plots_dir(f"derived_variables/{name}") / "model.png"
+    plot_derived_latent_model(
+        component_projections,
+        weights,
+        combined_projection,
+        combined_outer_projection,
+        title=f"{name} — derived latent model ({int(ci[0] * 100)}-{int(ci[1] * 100)}% band)",
+        save_path=plot_path,
+    )
+    return {"fit_path": fit_path, "plot_path": plot_path}
+
+
+def build_all_derived_latent_models(
+    deck: dict[str, Any] | None = None, horizon_months: int = 120
+) -> dict[str, dict[str, Path]]:
+    """Calls build_derived_latent_model for every entry in derived_latents. Returns {name:
+    {"fit_path": ..., "plot_path": ...}}."""
+    deck = deck if deck is not None else _load_deck()
+    names = get_derived_latents(deck)
+    return {name: build_derived_latent_model(name, deck, horizon_months) for name in names}
