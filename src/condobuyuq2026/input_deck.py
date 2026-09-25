@@ -108,9 +108,11 @@ def get_acquisition_inputs(deck: dict[str, Any] | None = None) -> dict[str, floa
     purchase_price, which is a discoverability stub only (the real value comes from a scenario's
     own "purchase_price", see get_scenarios). Returns:
     {"closing_costs_fixed_fees", "closing_costs_percent_of_price", "land_fraction",
-    "total_cash_at_closing", "initial_furnishing"}, straight off acquisition.purchase_closing_costs
-    .fixed_fees/.percent_of_price, acquisition.land_fraction, acquisition.total_cash_at_closing,
-    acquisition.initial_furnishing respectively.
+    "personal_cash_at_closing", "family_loan", "initial_furnishing"}, straight off
+    acquisition.purchase_closing_costs.fixed_fees/.percent_of_price, acquisition.land_fraction,
+    acquisition.personal_cash_at_closing, acquisition.family_loan, acquisition.initial_furnishing
+    respectively. total_cash_outlay (personal_cash_at_closing + family_loan) is DERIVED, not read
+    here -- see acquisition.compute_acquisition_costs.
     """
     deck = deck if deck is not None else load_deck()
     acquisition = deck["acquisition"]
@@ -119,7 +121,8 @@ def get_acquisition_inputs(deck: dict[str, Any] | None = None) -> dict[str, floa
         "closing_costs_fixed_fees": _constant(closing_costs["fixed_fees"]),
         "closing_costs_percent_of_price": _constant(closing_costs["percent_of_price"]),
         "land_fraction": _constant(acquisition["land_fraction"]),
-        "total_cash_at_closing": _constant(acquisition["total_cash_at_closing"]),
+        "personal_cash_at_closing": _constant(acquisition["personal_cash_at_closing"]),
+        "family_loan": _constant(acquisition["family_loan"]),
         "initial_furnishing": _constant(acquisition["initial_furnishing"]),
     }
 

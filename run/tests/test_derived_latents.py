@@ -5,6 +5,10 @@ set up for this project): either `uv run pytest run/tests/test_derived_latents.p
 
 Requires general/home_price/market's fit.json to already exist (run the three run/manual/build_*
 scripts first if not) -- this makes no external API calls itself, only combines already-saved fits.
+
+Every test here prints its own important intermediate variables as
+f"VARIABLE CHECK FOR {name}: {value}" -- test-script-only convention, never in main.py/backend
+modules (see .claude/implementation-plan.md's "Backend build progress").
 """
 
 from condobuyuq2026.input_deck import get_derived_latents, load_deck
@@ -15,8 +19,10 @@ from condobuyuq2026.utils.manual_utils import build_all_derived_latent_models, b
 def test_build_all_derived_latent_models_saves_fit_and_plot_for_every_entry():
     deck = load_deck()
     names = get_derived_latents(deck)
+    print(f"VARIABLE CHECK FOR names: {names}")
 
     results = build_all_derived_latent_models(deck)
+    print(f"VARIABLE CHECK FOR results: {results}")
 
     assert set(results.keys()) == set(names.keys())
     for name, paths in results.items():
@@ -46,9 +52,12 @@ def test_build_derived_latent_model_fit_is_a_parametric_ou_model_matching_moment
     deck = load_deck()
     name = next(iter(get_derived_latents(deck)))
     weights = get_derived_latents(deck)[name]
+    print(f"VARIABLE CHECK FOR name: {name}")
+    print(f"VARIABLE CHECK FOR weights: {weights}")
 
     paths = build_derived_latent_model(name, deck)
     saved = json.loads(paths["fit_path"].read_text(encoding="utf-8"))
+    print(f"VARIABLE CHECK FOR saved: {saved}")
 
     assert isinstance(saved, dict)
     assert set(saved.keys()) == set(_OU_FIT_KEYS)
@@ -60,6 +69,7 @@ def test_build_derived_latent_model_fit_is_a_parametric_ou_model_matching_moment
         "general": get_forecast_model_general(deck),
     }
     expected = fit_effective_ou(component_fits, weights)
+    print(f"VARIABLE CHECK FOR expected: {expected}")
     for key, value in expected.items():
         assert abs(saved[key] - value) < 1e-9, key
 

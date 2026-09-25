@@ -270,15 +270,20 @@ acquisition:
     kind: constant
     value: 0.0      # Opposite of % improved
 
-  total_cash_at_closing:
-    # ALL cash you put in at closing (down payment + any gift/family money), as a single dollar
-    # figure. The amount financed is DERIVED: purchase_price + purchase_closing_costs.fixed_fees +
-    # (purchase_closing_costs.percent_of_price * purchase_price) - total_cash_at_closing. Deliberately
-    # NOT assumed equal to the rent branch's investment amount — see capital_markets.
-    # initial_investment for that, entered separately, since gift/family money toward a down
-    # payment wouldn't exist to invest if renting instead.
+  personal_cash_at_closing:
+    # YOUR OWN money going toward closing (down payment, not from family_loan below) -- this IS the
+    # rent branch's opportunity-cost capital (see capital_markets.initial_investment, which imports
+    # this same value): unlike a family loan, your own cash wouldn't evaporate if you rented
+    # instead, so it's what you'd invest in that branch. total_cash_outlay (DERIVED, see
+    # acquisition.compute_acquisition_costs) = this + family_loan; the amount financed is DERIVED
+    # from that: purchase_price + purchase_closing_costs.fixed_fees + (purchase_closing_costs.
+    # percent_of_price * purchase_price) - total_cash_outlay.
     kind: constant
-    value: 300000
+    value: 200000
+
+  family_loan:
+    kind: constant
+    value: 100000
 
   initial_furnishing:
     # One-time STR setup/furnishing cost (USD), scalar — a cash outlay only, not depreciated for
@@ -622,14 +627,13 @@ rent_reference:
 capital_markets:
   # market_return lives entirely in forecast_models.market now — not re-declared here.
   initial_investment:
-    # The cash YOU have that would otherwise go toward a down payment, but instead gets invested
-    # here because you're renting instead of buying — this IS the rent branch's opportunity-cost
-    # capital. Deliberately SEPARATE from acquisition.total_cash_at_closing: e.g. gift/family
-    # money toward a down payment wouldn't exist to invest if you rented instead, so the two
-    # numbers can legitimately differ. Split between cash and market per cash_allocation_fraction
-    # below.
+    # STUB — actual input lives in acquisition.personal_cash_at_closing (kept here only for
+    # discoverability, same "SEE X" pattern as acquisition.purchase_price -> scenario.purchase_
+    # price). The rent branch invests exactly YOUR OWN cash, not acquisition.family_loan (that loan
+    # only exists to fund a purchase -- it wouldn't be sitting around to invest if you rented
+    # instead). Split between cash and market per cash_allocation_fraction below.
     kind: constant
-    value: 100000                    # example
+    value: null                     # see acquisition.personal_cash_at_closing
 
   cash_allocation_fraction:
     # Fraction of initial_investment held as CASH (earning cash_yield) rather than invested in

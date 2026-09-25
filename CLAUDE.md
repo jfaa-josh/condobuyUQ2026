@@ -8,6 +8,9 @@
 - The implementation plan for `src/` lives in `.claude/implementation-plan.md` (gitignored, local-only). Read it at
   the start of any session touching implementation work, and keep it current: update it whenever the plan changes
   (new decisions, scope changes, completed steps, open questions) rather than letting it go stale.
+- **If a file has changed on disk since it was last read (the user edited it directly, e.g. in the IDE), never
+  revert or "clean up" that change on your own initiative.** Treat it as deliberate. Build on it as the current
+  state. If it looks wrong or inconsistent with something else, say so and ask — don't silently undo it.
 
 ## Memory & Context Preservation
 
