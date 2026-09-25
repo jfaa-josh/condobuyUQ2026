@@ -37,6 +37,15 @@ def test_run_scenarios_pairs_every_buy_scenario_with_a_cached_reference_result()
     for scenario in scenarios:
         assert "acquisition" in scenario, scenario
         assert set(scenario["acquisition"].keys()) >= {"loan_amount", "total_cash_outlay", "closing_costs_total"}
+        assert "classification" in scenario, scenario
+        assert set(scenario["classification"].keys()) == {
+            "loan_occupancy_class",
+            "tax_use_class",
+            "annual_rented_days",
+            "annual_personal_days",
+        }
+        assert "financing" in scenario, scenario
+        assert set(scenario["financing"].keys()) >= {"mortgage_rate", "amortization_schedule", "total_interest_paid"}
 
 
 def test_compute_acquisition_costs_raises_when_purchase_price_cant_cover_total_cash_outlay():

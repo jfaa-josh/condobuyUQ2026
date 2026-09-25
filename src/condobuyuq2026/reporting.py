@@ -34,6 +34,31 @@ def print_acquisition_report(scenario: dict[str, Any], acquisition_costs: dict[s
     )
 
 
+def print_classification_report(classification: dict[str, Any]) -> None:
+    """Prints one scenario's occupancy classification (see
+    classification.compute_occupancy_classification) as a single line -- loan_occupancy_class,
+    tax_use_class, and the annual day counts tax_use_class was decided from."""
+    print(
+        f"loan_occupancy_class={classification['loan_occupancy_class']}, "
+        f"tax_use_class={classification['tax_use_class']} "
+        f"(annual_rented_days={classification['annual_rented_days']:.0f}, "
+        f"annual_personal_days={classification['annual_personal_days']:.0f})"
+    )
+
+
+def print_financing_report(financing: dict[str, Any]) -> None:
+    """Prints one scenario's financing results (see financing.compute_financing) as a single line
+    -- the mortgage rate actually applied, and the loan's cost/payoff over the scenario's horizon.
+    Not the full amortization_schedule (too verbose for a normal run) -- see a test script's own
+    VARIABLE CHECK print for that."""
+    print(
+        f"mortgage_rate={financing['mortgage_rate']:.4%} ({financing['loan_occupancy_class']}), "
+        f"loan_term_years={financing['loan_term_years']} -> "
+        f"total_interest_paid=${financing['total_interest_paid']:,.0f}, "
+        f"ending_balance=${financing['ending_balance']:,.0f}"
+    )
+
+
 def print_reference_report(reference_id: int, reference_case: dict[str, Any]) -> None:
     """Prints one reference case (see scenarios.get_scenario_set) as a single, explicitly-labeled
     line -- same label style as print_acquisition_report so the two are easy to compare side by

@@ -75,8 +75,9 @@
 # `total = fixed_fees + (percent_of_price * price)` — a scalar dollar amount that doesn't scale
 # with price, plus a fraction that does. Written out explicitly in each section's comment.
 #
-# `derived` variables (loan_amount, exit_year, lease_days_equivalent, monthly rentable-nights)
-# are computed by the script and deliberately do NOT appear in this deck.
+# `derived` variables (loan_amount, loan_occupancy_class, tax_use_class, exit_year,
+# lease_days_equivalent, monthly rentable-nights) are computed by the script and deliberately do
+# NOT appear in this deck.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -295,22 +296,40 @@ acquisition:
 # -----------------------------------------------------------------------------
 # 5. financing
 # -----------------------------------------------------------------------------
+# loan_occupancy_class (OPTIONS: primary_residence | second_home | investment) is DERIVED, not set
+# here (see classification.get_loan_occupancy_class): primary_residence iff scenario.residency_
+# state == scenario.property_state (a CO resident living in the CO property; FL residency can
+# NEVER be primary, however many days you spend there); otherwise second_home if rental_operations.
+# managed_by is "self" (you occupy it part of the year, no rental program/property manager
+# controlling who stays there), or investment if managed_by is "company" (an STR run through a
+# property manager is almost always this). "Second home" is really a LENDER term -- the tax code's
+# own classification is tax_use_class below, decided by day counts, not by who manages the
+# property or where you live.
 financing:
   mortgage_rate:
-    # Mortgage interest rate (fraction).
+    # One rate per loan_occupancy_class -- confirm with an actual lender; a half-year STR schedule
+    # may push a self-managed property into "investment" territory regardless of intent (see
+    # rental_operations.managed_by).
+    primary_residence:
+      kind: constant
+      value: 0.0625
+    second_home:
+      kind: constant
+      value: 0.065
+    investment:
+      kind: constant
+      value: 0.0725                  # 0.5-1 point over second_home typical for STR (property manager)
+
+  non_warrantable_premium:
+    # Added ON TOP of whichever mortgage_rate above applies, if the condo project itself isn't
+    # warrantable (Fannie/Freddie-eligible) -- 0.0 if it is (the common case; confirm with the
+    # HOA/a lender before assuming otherwise).
     kind: constant
-    value: 0.065
+    value: 0.0
 
   loan_term_years:
     kind: constant
     value: 30
-
-  occupancy_class:
-    # Lender classification (categorical). OPTIONS: second_home | investment. Confirm with an
-    # actual lender — a half-year STR schedule may push this into "investment" regardless of
-    # intent.
-    kind: constant
-    value: second_home               # example
 
 # -----------------------------------------------------------------------------
 # 6. carrying_costs
@@ -403,7 +422,25 @@ carrying_costs:
 # -----------------------------------------------------------------------------
 # 7. rental_operations
 # -----------------------------------------------------------------------------
+# managed_by below drives financing's loan_occupancy_class (see that section's header comment).
+# tax_use_class (OPTIONS: personal_use | mixed_use | rental) is ALSO DERIVED -- not set anywhere in
+# this deck (see classification.get_tax_use_class) -- from annual_rented_days (this section's own
+# occupancy medians, summed over the year) and annual_personal_days (personal_use.
+# personal_use_days_by_month, summed): rented <=14 days/year -> personal_use (rental income is tax-
+# free); else personal use >14 days/year OR >10% of rented days -> mixed_use (deductions capped at
+# rental income, no loss allowed); else -> rental (a pure rental -- losses suspended, released at
+# sale). Independent of loan_occupancy_class and of taxes.passive_loss_treatment (a DIFFERENT IRS
+# test -- average-guest-stay length, not day counts -- still to be wired into the future taxes
+# module alongside this).
 rental_operations:
+  managed_by:
+    # Who runs the day-to-day rental (categorical). OPTIONS: self | company. Drives financing's
+    # loan_occupancy_class when the property ISN'T your primary residence (see that section's
+    # header comment) -- an STR run through a property manager ("company") is almost always an
+    # investment loan; self-managed, occasional rental is a second-home loan.
+    kind: constant
+    value: company                   # example
+
   occupancy:
     # DAYS booked per month, not a fraction/percent — matches personal_use_days_by_month's unit
     # convention. median is a whole number of days; cv stays a plain fraction describing
@@ -475,6 +512,7 @@ rental_operations:
 personal_use:
   personal_use_days_by_month:
     # Days per month YOU personally occupy the unit (not available to rent that month).
+    # This effects tax class designation of the property!
     # Rentable nights per month is DERIVED (days in month - this). Friends/family use is
     # deliberately not modeled separately (small effect, not worth the complexity per the user).
     kind: constant

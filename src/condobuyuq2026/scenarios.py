@@ -52,7 +52,9 @@ def get_scenario_set(
     - scenarios: input_deck.get_scenarios' buy-side sweep, each dict carrying "reference_id" (one
       of reference_cases' own keys) in place of a bare, always-"rent" "reference" field -- look its
       matching reference case up via reference_cases[scenario["reference_id"]] (see
-      runner.run_scenarios).
+      runner.run_scenarios). Also carries "acquisition" (acquisition.compute_acquisition_costs'
+      full result) -- computed here anyway to read total_cash_outlay for dedup, so it's stored
+      rather than thrown away; runner.run_scenarios reuses it instead of recomputing.
     """
     deck = deck if deck is not None else load_deck()
     buy_scenarios = get_scenarios(deck)
@@ -61,8 +63,8 @@ def get_scenario_set(
     ids_by_key: dict[tuple[Any, Any, float], int] = {}
     scenarios = []
     for scenario in buy_scenarios:
-        total_cash_outlay = compute_acquisition_costs(scenario, deck)["total_cash_outlay"]
-        key = (scenario["horizon_years"], scenario["residency_state"], total_cash_outlay)
+        acquisition_costs = compute_acquisition_costs(scenario, deck)
+        key = (scenario["horizon_years"], scenario["residency_state"], acquisition_costs["total_cash_outlay"])
         if key not in ids_by_key:
             reference_id = len(reference_cases) + 1
             ids_by_key[key] = reference_id
@@ -80,6 +82,7 @@ def get_scenario_set(
                 "property_state": scenario["property_state"],
                 "purchase_price": scenario["purchase_price"],
                 "reference_id": ids_by_key[key],
+                "acquisition": acquisition_costs,
             }
         )
     return reference_cases, scenarios

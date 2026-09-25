@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -51,7 +52,10 @@ def fit_annual_ou(index_series: pd.Series) -> dict[str, float]:
 
     Returns a dict with i_inf, tau, sig, i0, phi_monthly, alpha, beta.
     """
-    a = np.log(index_series / index_series.shift(12))
+    # np.log on a Series returns a Series at runtime (numpy ufuncs respect pandas'
+    # __array_ufunc__), but numpy's stubs don't know that and declare NDArray -- cast so Pylance
+    # sees the real runtime type instead of flagging every .shift/.dropna below as unknown.
+    a = cast(pd.Series, np.log(index_series / index_series.shift(12)))
     paired = pd.concat([a, a.shift(-12)], axis=1).dropna()
     beta, alpha = np.polyfit(paired.iloc[:, 0], paired.iloc[:, 1], 1)
     resid = paired.iloc[:, 1] - (alpha + beta * paired.iloc[:, 0])

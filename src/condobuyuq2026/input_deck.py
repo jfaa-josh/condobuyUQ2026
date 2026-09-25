@@ -127,6 +127,53 @@ def get_acquisition_inputs(deck: dict[str, Any] | None = None) -> dict[str, floa
     }
 
 
+def get_financing_inputs(deck: dict[str, Any] | None = None) -> dict[str, float | int]:
+    """Unwraps `financing`'s own `kind: constant` fields to plain values. Returns
+    {"mortgage_rate_primary_residence", "mortgage_rate_second_home", "mortgage_rate_investment",
+    "non_warrantable_premium", "loan_term_years"}, straight off financing.mortgage_rate's three
+    sub-fields, financing.non_warrantable_premium, financing.loan_term_years respectively.
+    loan_occupancy_class itself is DERIVED, not read here -- see
+    classification.get_loan_occupancy_class."""
+    deck = deck if deck is not None else load_deck()
+    financing = deck["financing"]
+    mortgage_rate = financing["mortgage_rate"]
+    return {
+        "mortgage_rate_primary_residence": _constant(mortgage_rate["primary_residence"]),
+        "mortgage_rate_second_home": _constant(mortgage_rate["second_home"]),
+        "mortgage_rate_investment": _constant(mortgage_rate["investment"]),
+        "non_warrantable_premium": _constant(financing["non_warrantable_premium"]),
+        "loan_term_years": _constant(financing["loan_term_years"]),
+    }
+
+
+def get_rental_operations_inputs(deck: dict[str, Any] | None = None) -> dict[str, str]:
+    """Unwraps `rental_operations`'s own classification-relevant `kind: constant` field. Returns
+    {"managed_by"} (OPTIONS: self | company), straight off rental_operations.managed_by -- see
+    that field's own deck comment and classification.get_loan_occupancy_class, which is the only
+    thing that reads it."""
+    deck = deck if deck is not None else load_deck()
+    return {"managed_by": _constant(deck["rental_operations"]["managed_by"])}
+
+
+def get_annual_rented_days(deck: dict[str, Any] | None = None) -> float:
+    """Sums rental_operations.occupancy's monthly medians (`kind: prior`, `resolution: monthly` --
+    not a `kind: constant`, so _constant doesn't apply) into an expected annual rented-days figure.
+    Used only for occupancy/tax classification (see classification.get_tax_use_class), never for
+    revenue itself (that still uses the full occupancy distribution, median AND cv, elsewhere)."""
+    deck = deck if deck is not None else load_deck()
+    months = deck["rental_operations"]["occupancy"]["months"]
+    return sum(month["median"] for month in months.values())
+
+
+def get_annual_personal_days(deck: dict[str, Any] | None = None) -> float:
+    """Sums personal_use.personal_use_days_by_month (`kind: constant`, a plain {month: days} dict)
+    into an annual personal-use-days figure. Used only for occupancy/tax classification (see
+    classification.get_tax_use_class)."""
+    deck = deck if deck is not None else load_deck()
+    days_by_month = _constant(deck["personal_use"]["personal_use_days_by_month"])
+    return sum(days_by_month.values())
+
+
 def get_report_quantiles(deck: dict[str, Any] | None = None) -> list[float]:
     """Returns run.report_quantiles (e.g. [0.1, 0.5, 0.9]) -- the probability quantiles the model
     should report in its outputs."""
