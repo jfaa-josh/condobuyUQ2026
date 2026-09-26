@@ -1,0 +1,6 @@
+{
+  "annual_probability": 0.05,
+  "severity_median": 5000,
+  "severity_cv": 0.5,
+  "latent": "construction_cost"
+}

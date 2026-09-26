@@ -68,12 +68,17 @@ def _sweep(entry: dict[str, Any]) -> list[Any]:
 def get_scenarios(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Expands `scenario`'s sweeps -- alternatives x horizon_years x residency_state x
     purchase_price, see the deck's "SWEEPS ARE DELIBERATELY MINIMAL" note -- into the full
-    cartesian product of scenarios to run. Each returned dict also carries scenario's two fixed
-    (`kind: constant`) fields, reference and property_state, alongside that combination's swept
-    values, e.g.:
+    cartesian product of scenarios to run. Each returned dict also carries scenario's fixed
+    (`kind: constant`) fields (reference, property_state, closing_month, closing_year) alongside
+    that combination's swept values, e.g.:
 
         {"reference": "rent", "alternative": "buy", "horizon_years": 1, "residency_state": "FL",
-         "property_state": "CO", "purchase_price": 375000}
+         "property_state": "CO", "purchase_price": 375000, "closing_month": 10,
+         "closing_year": 2026}
+
+    closing_month/closing_year are TIMESTEP 0 for month-indexed models (see
+    carrying_costs.project_market_value_schedule) -- not swept, a single fixed reference point for
+    every scenario.
 
     Note scenario.purchase_price is this deck's actual input for purchase price --
     acquisition.purchase_price is a discoverability stub only (see the deck's "SEE scenario.X"
@@ -84,6 +89,8 @@ def get_scenarios(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     scenario = deck["scenario"]
     reference = _constant(scenario["reference"])
     property_state = _constant(scenario["property_state"])
+    closing_month = _constant(scenario["closing_month"])
+    closing_year = _constant(scenario["closing_year"])
 
     scenarios = []
     for alternative in _sweep(scenario["alternatives"]):
@@ -98,9 +105,23 @@ def get_scenarios(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                             "residency_state": residency_state,
                             "property_state": property_state,
                             "purchase_price": purchase_price,
+                            "closing_month": closing_month,
+                            "closing_year": closing_year,
                         }
                     )
     return scenarios
+
+
+def get_closing_date(deck: dict[str, Any] | None = None) -> dict[str, int]:
+    """Returns scenario.closing_month/closing_year (see get_scenarios' own docstring -- TIMESTEP 0
+    for every month-indexed model in this deck, e.g. carrying_costs.project_market_value_schedule).
+    Returns {"closing_month", "closing_year"}."""
+    deck = deck if deck is not None else load_deck()
+    scenario = deck["scenario"]
+    return {
+        "closing_month": _constant(scenario["closing_month"]),
+        "closing_year": _constant(scenario["closing_year"]),
+    }
 
 
 def get_acquisition_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
@@ -194,22 +215,81 @@ def get_rental_operations_monthly_medians(deck: dict[str, Any] | None = None) ->
     }
 
 
-def get_carrying_costs_placeholder_medians(deck: dict[str, Any] | None = None) -> dict[str, float]:
-    """PLACEHOLDER-only getter: unwraps carrying_costs' own median priors (ignoring cv AND growth
-    entirely) for taxes.py's placeholder_shared_expenses -- NOT a real, growth-propagated carrying-
-    costs computation (that's the still-unbuilt carrying_costs.py stage). Returns
-    {"property_tax_rate" (kind: constant -- this one IS real, not a placeholder),
-    "hoa_dues_annual_median", "insurance_annual_median", "utilities_annual_median" (monthly medians
-    summed), "maintenance_fraction_median"}."""
+def get_property_tax_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Unwraps `carrying_costs.property_tax.assessment_rate`'s local/school components (each its
+    own rate + mill_levy -- see that field's own deck comment). classification and the lodging
+    assessment rate are NOT here -- HARDCODED in carrying_costs.py (see that module's
+    PROPERTY_TAX_CLASSIFICATION/LODGING_ASSESSMENT_RATE constants and their own comments for why),
+    not deck fields, since 2026-09-26. Returns {"assessment_rate_local", "mill_levy_local",
+    "assessment_rate_school", "mill_levy_school"}. market_value has its own LEVEL+GROWTH shape --
+    see get_carrying_cost_prior_config(\"market_value\", deck)."""
     deck = deck if deck is not None else load_deck()
-    carrying_costs = deck["carrying_costs"]
-    utilities_months = carrying_costs["utilities"]["months"]
+    assessment_rate = deck["carrying_costs"]["property_tax"]["assessment_rate"]
     return {
-        "property_tax_rate": _constant(carrying_costs["property_tax_rate"]),
-        "hoa_dues_annual_median": carrying_costs["hoa_dues_annual"]["median"],
-        "insurance_annual_median": carrying_costs["insurance_annual"]["median"],
-        "utilities_annual_median": sum(month["median"] for month in utilities_months.values()),
-        "maintenance_fraction_median": carrying_costs["maintenance_fraction"]["median"],
+        "assessment_rate_local": _constant(assessment_rate["local"]["rate"]),
+        "mill_levy_local": _constant(assessment_rate["local"]["mill_levy"]),
+        "assessment_rate_school": _constant(assessment_rate["school"]["rate"]),
+        "mill_levy_school": _constant(assessment_rate["school"]["mill_levy"]),
+    }
+
+
+def get_carrying_cost_prior_config(name: str, deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps the LEVEL+GROWTH shape shared by carrying_costs.hoa_dues_annual/insurance_annual/
+    maintenance_annual (see that section's own header comment) for name in {"hoa_dues_annual",
+    "insurance_annual", "maintenance_annual"}. Returns {"level_median", "level_cv", "latent"}
+    (growth.latent) -- used by manual_utils.build_carrying_cost_prior_model. NOT
+    carrying_costs.property_tax.market_value (REDESIGNED 2026-09-26 -- no longer this shape at all,
+    see get_market_value_config), special_assessment (a mixture, see get_special_assessment_config),
+    or utilities (monthly resolution, see get_utilities_prior_config) -- those have their own
+    shapes."""
+    deck = deck if deck is not None else load_deck()
+    entry = deck["carrying_costs"][name]
+    return {"level_median": entry["median"], "level_cv": entry["cv"], "latent": entry["growth"]["latent"]}
+
+
+def get_market_value_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps carrying_costs.property_tax.market_value's OWN shape (see that field's own deck
+    comment for why it's not the generic LEVEL+GROWTH pattern -- a closing-date-anchored,
+    averaged-window stair-step instead). Returns {"initial_price", "reassessment_frequency_years",
+    "first_reassessment_year" (an int -- 1 = the January immediately after closing_year, see that
+    field's own deck comment), "latent"}. Used by carrying_costs.project_market_value_schedule and
+    manual_utils.build_market_value_prior_model."""
+    deck = deck if deck is not None else load_deck()
+    entry = deck["carrying_costs"]["property_tax"]["market_value"]
+    return {
+        "initial_price": entry["initial_price"],
+        "reassessment_frequency_years": entry["reassessment_frequency_years"],
+        "first_reassessment_year": entry["first_reassessment_year"],
+        "latent": entry["latent"],
+    }
+
+
+def get_special_assessment_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps carrying_costs.special_assessment's mixture shape. Returns {"annual_probability" (p,
+    NOT grown -- see that field's own deck comment), "severity_median", "severity_cv" (grown via
+    "latent"), "latent"}."""
+    deck = deck if deck is not None else load_deck()
+    entry = deck["carrying_costs"]["special_assessment"]
+    return {
+        "annual_probability": entry["p"],
+        "severity_median": entry["severity"]["median"],
+        "severity_cv": entry["severity"]["cv"],
+        "latent": entry["growth"]["latent"],
+    }
+
+
+def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps carrying_costs.utilities' monthly-resolution shape. Returns {"level_medians_by_month"
+    ({"jan": 320.0, ...}), "level_cvs_by_month" ({"jan": 0.2, ...}), "latent"} -- see
+    manual_utils.build_utilities_prior_model for how growth scales every month's own median by the
+    same year's growth factor, preserving the seasonal shape."""
+    deck = deck if deck is not None else load_deck()
+    entry = deck["carrying_costs"]["utilities"]
+    months = entry["months"]
+    return {
+        "level_medians_by_month": {month: values["median"] for month, values in months.items()},
+        "level_cvs_by_month": {month: values["cv"] for month, values in months.items()},
+        "latent": entry["growth"]["latent"],
     }
 
 
@@ -283,6 +363,17 @@ def _load_checked_fit(model_name: str) -> dict[str, float]:
     return fit
 
 
+def get_forecast_model_name(name: str, deck: dict[str, Any] | None = None) -> str:
+    """Returns forecast_models.<name>.model_name (e.g. "fred_denver_homes_1987_1_2026_8" for
+    "home_price") -- the raw string identifying which model this founding process resolves to, for
+    a caller that needs to locate that model's raw historical data (data/raw/<model_name>.csv, see
+    manual_utils.raw_csv_path) rather than its fitted OU parameters (see get_fitted_forecast_model
+    for that). name must be one of DERIVED_LATENT_COMPONENTS -- a derived_latents entry has no raw
+    data of its own (it's a synthetic weighted combination, not fetched from anywhere)."""
+    deck = deck if deck is not None else load_deck()
+    return deck["forecast_models"][name]["model_name"]
+
+
 def get_fitted_forecast_model(name: str, deck: dict[str, Any] | None = None) -> dict[str, float]:
     """Resolves forecast_models.<name> -- an entry that just names a model fit (model_name) rather
     than holding hand-elicited distribution parameters inline (no `kind` at all -- see the deck's
@@ -332,3 +423,29 @@ def get_derived_latents(deck: dict[str, Any] | None = None) -> dict[str, dict[st
             )
         result[name] = weights
     return result
+
+
+def get_derived_latent_fit(name: str, deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Resolves derived_latents.<name>'s own BUILT fit (models/derived_variables/<name>/fit.json --
+    see manual_utils.build_derived_latent_model) to its checked, loaded fit (see
+    _load_checked_fit -- the same validation get_fitted_forecast_model uses for forecast_models, at
+    a different path). name must be an actual derived_latents entry (construction_cost/insurance/
+    maintenance/adr/utilities) -- for a `growth.latent` that might instead name one of the three
+    FOUNDING processes (general/home_price/market, e.g. carrying_costs.property_tax.market_value's
+    own growth), use get_growth_fit instead, which dispatches to whichever this actually is."""
+    return _load_checked_fit(f"derived_variables/{name}")
+
+
+def get_growth_fit(name: str, deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """Resolves a `growth.latent` reference to its fitted OU model, whichever kind of process it
+    names: one of the three FOUNDING processes (DERIVED_LATENT_COMPONENTS: general/home_price/
+    market -- e.g. carrying_costs.property_tax.market_value's own growth, via
+    get_fitted_forecast_model) or a derived_latents entry (construction_cost/insurance/maintenance/
+    adr/utilities -- e.g. hoa_dues_annual's, via get_derived_latent_fit). Prefer this over calling
+    either directly when the caller doesn't already know which kind a given `growth.latent` name is
+    -- manual_utils.build_carrying_cost_prior_model and carrying_costs.py's own per-scenario
+    projections both do."""
+    deck = deck if deck is not None else load_deck()
+    if name in DERIVED_LATENT_COMPONENTS:
+        return get_fitted_forecast_model(name, deck)
+    return get_derived_latent_fit(name, deck)

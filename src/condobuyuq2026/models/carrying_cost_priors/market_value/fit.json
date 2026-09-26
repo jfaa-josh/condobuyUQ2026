@@ -1,0 +1,57 @@
+{
+  "closing_month": 10,
+  "first_reassessment_year": 2,
+  "reassessment_frequency_years": 2,
+  "latent": "home_price",
+  "periods": [
+    {
+      "start_month": 0,
+      "end_month": 15,
+      "growth_a": 1.0,
+      "growth_b": 0.0,
+      "growth_sigma": 0.0
+    },
+    {
+      "start_month": 15,
+      "end_month": 39,
+      "growth_a": 0.551421888526496,
+      "growth_b": 0.4437199084240673,
+      "growth_sigma": 0.0076405730074491545
+    },
+    {
+      "start_month": 39,
+      "end_month": 63,
+      "growth_a": 0.0,
+      "growth_b": 1.028452329308308,
+      "growth_sigma": 0.06180523183984231
+    },
+    {
+      "start_month": 63,
+      "end_month": 87,
+      "growth_a": 0.0,
+      "growth_b": 1.1122038197083088,
+      "growth_sigma": 0.12793047771635113
+    },
+    {
+      "start_month": 87,
+      "end_month": 111,
+      "growth_a": 0.0,
+      "growth_b": 1.2222157895223207,
+      "growth_sigma": 0.18148476787253287
+    },
+    {
+      "start_month": 111,
+      "end_month": 135,
+      "growth_a": 0.0,
+      "growth_b": 1.349474905701709,
+      "growth_sigma": 0.22541687713421213
+    },
+    {
+      "start_month": 135,
+      "end_month": null,
+      "growth_a": 0.0,
+      "growth_b": 1.492065306164041,
+      "growth_sigma": 0.2628308710873889
+    }
+  ]
+}

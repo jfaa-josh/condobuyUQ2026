@@ -41,8 +41,8 @@ from typing import Any
 
 from condobuyuq2026.input_deck import load_deck
 from condobuyuq2026.paths import REPO_ROOT
+from condobuyuq2026.raw_data import load_raw_csv
 from condobuyuq2026.reporting import print_forecast_model_refresh, print_forecast_model_up_to_date
-from condobuyuq2026.utils.manual_utils import load_raw_csv
 
 FORECAST_MODEL_BUILD_SCRIPTS: dict[str, Path] = {
     "general": REPO_ROOT / "run" / "manual" / "build_general_price_model.py",

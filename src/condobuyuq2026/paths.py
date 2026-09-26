@@ -12,6 +12,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_DIR.parents[1]
 DATA_RAW_DIR = REPO_ROOT / "data" / "raw"
 MODELS_DIR = PACKAGE_DIR / "models"
+RESULTS_DIR = REPO_ROOT / "results"
 
 
 def model_dir(model_name: str) -> Path:

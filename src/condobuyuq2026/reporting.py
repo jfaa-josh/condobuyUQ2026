@@ -20,6 +20,14 @@ def print_derived_latent_build_report(results: dict[str, dict[str, Path]]) -> No
         print(f"{name}: saved fit to /{name} and plot to /{name}/plots")
 
 
+def print_carrying_cost_prior_build_report(results: dict[str, dict[str, Path]]) -> None:
+    """Prints one line per carrying_costs LEVEL+GROWTH entry build result -- results as returned by
+    utils.manual_utils.build_all_carrying_cost_prior_models (name -> {"fit_path", "plot_path"})."""
+    print("\nSaving carrying-cost priors to //models/carrying_cost_priors/...")
+    for name, paths in results.items():
+        print(f"{name}: saved fit to {paths['fit_path']}, plot to {paths['plot_path']}")
+
+
 def print_acquisition_report(scenario: dict[str, Any], acquisition_costs: dict[str, float]) -> None:
     """Prints one buy scenario's acquisition costs as a single, explicitly-labeled line -- scenario
     as returned by scenarios.get_scenario_set (or input_deck.get_scenarios), acquisition_costs as
@@ -57,6 +65,38 @@ def print_financing_report(financing: dict[str, Any]) -> None:
         f"total_interest_paid=${financing['total_interest_paid']:,.0f}, "
         f"ending_balance=${financing['ending_balance']:,.0f}"
     )
+
+
+def print_carrying_costs_report(carrying_costs: dict[str, Any]) -> None:
+    """Prints one buy scenario's carrying costs (see carrying_costs.compute_carrying_costs) as a
+    single line -- total over the horizon, plus year-1's own breakdown so each prior's level is
+    visible at a glance -- and a second line with property tax's own year-1 median/lo/hi band
+    (carrying_costs.compute_property_tax_schedule -- the one carrying-cost figure that carries a
+    real distribution, not just a point estimate, per the user's explicit request)."""
+    year_1 = carrying_costs["annual_schedule"].loc[1]
+    property_tax_year_1 = carrying_costs["property_tax_schedule"].loc[1]
+    print(
+        f"total_carrying_costs=${carrying_costs['total_carrying_costs']:,.0f} over the horizon "
+        f"(year 1: property_tax=${year_1['property_tax']:,.0f}, hoa_dues=${year_1['hoa_dues']:,.0f}, "
+        f"insurance=${year_1['insurance']:,.0f}, maintenance=${year_1['maintenance']:,.0f}, "
+        f"special_assessment_expected=${year_1['special_assessment_expected']:,.0f}, "
+        f"utilities=${year_1['utilities']:,.0f})"
+    )
+    print(
+        f"  property_tax year 1 distribution: assessed_value=${property_tax_year_1['assessed_value_median']:,.0f} "
+        f"(${property_tax_year_1['assessed_value_lo']:,.0f}-${property_tax_year_1['assessed_value_hi']:,.0f}), "
+        f"tax=${property_tax_year_1['tax_median']:,.0f} "
+        f"(${property_tax_year_1['tax_lo']:,.0f}-${property_tax_year_1['tax_hi']:,.0f})"
+    )
+
+
+def print_carrying_cost_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """Prints where one scenario's own SCALED carrying-cost plots were saved (see
+    results.save_carrying_cost_result_plots) -- results/<scenario>/carrying_costs/, one line total
+    rather than one per plot (the folder itself is the useful pointer; the report's own year-1
+    breakdown line already shows the numbers)."""
+    folder = next(iter(result_plots.values())).parent
+    print(f"  saved {len(result_plots)} carrying-cost result plots to {folder}")
 
 
 def print_taxes_report(taxes: dict[str, Any]) -> None:

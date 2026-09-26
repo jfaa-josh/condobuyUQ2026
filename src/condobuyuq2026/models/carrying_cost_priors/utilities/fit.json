@@ -1,0 +1,31 @@
+{
+  "level_medians_by_month": {
+    "jan": 320,
+    "feb": 300,
+    "mar": 250,
+    "apr": 180,
+    "may": 130,
+    "jun": 110,
+    "jul": 110,
+    "aug": 120,
+    "sep": 130,
+    "oct": 160,
+    "nov": 220,
+    "dec": 300
+  },
+  "level_cvs_by_month": {
+    "jan": 0.2,
+    "feb": 0.2,
+    "mar": 0.2,
+    "apr": 0.2,
+    "may": 0.2,
+    "jun": 0.2,
+    "jul": 0.2,
+    "aug": 0.2,
+    "sep": 0.2,
+    "oct": 0.2,
+    "nov": 0.2,
+    "dec": 0.2
+  },
+  "latent": "utilities"
+}

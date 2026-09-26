@@ -7,6 +7,11 @@ unconditionally, no -s needed).
 Every test here prints its own important intermediate variables as
 f"VARIABLE CHECK FOR {name}: {value}" -- test-script-only convention, never in main.py/backend
 modules (see .claude/implementation-plan.md's "Backend build progress").
+
+Requires models/carrying_cost_priors/*/fit.json to already exist (run/main.py builds these
+automatically every real run -- see test_carrying_costs.py if running this file in isolation, e.g.
+`pytest run/tests/test_carrying_costs.py run/tests/test_acquisition.py`, on a fresh checkout where
+main.py hasn't run yet) -- run_scenarios() now computes carrying_costs for every scenario.
 """
 
 import pytest

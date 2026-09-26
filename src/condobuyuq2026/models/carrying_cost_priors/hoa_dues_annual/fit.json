@@ -1,0 +1,5 @@
+{
+  "level_median": 9600,
+  "level_cv": 0.15,
+  "latent": "construction_cost"
+}

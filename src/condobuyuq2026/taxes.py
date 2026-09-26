@@ -24,37 +24,26 @@ placeholder: renting has no real-estate tax effect at all):
 tax_use_class (personal_use/mixed_use/rental) is NEVER recomputed here -- it's read straight from
 scenario["classification"] (classification.py already applies the exact same day-count rule this
 module's reference implementation used internally). Same for loan_occupancy_class, cost_basis
-(acquisition), and mortgage_interest (financing's own amortization_schedule, resampled to annual).
+(acquisition), mortgage_interest (financing's own amortization_schedule, resampled to annual), and
+property_tax/hoa_dues/insurance/maintenance/special_assessment/utilities (carrying_costs.py's own
+per-year schedule -- see carrying_costs.compute_carrying_costs_schedule; property_tax uses
+Colorado's REAL two-step assessment/mill-levy mechanic, and the other five are each projected from
+their own pre-built carrying_cost_prior model, both real, not placeholders, as of 2026-09-26).
 
 ===========================================================================================
-*** PLACEHOLDER INPUTS -- READ THIS BEFORE TRUSTING ANY DOLLAR FIGURE THIS MODULE PRODUCES ***
+*** ONE REMAINING PLACEHOLDER INPUT -- READ THIS BEFORE TRUSTING gross_rent-DERIVED FIGURES ***
 ===========================================================================================
-carrying_costs.py and a real rental-revenue model (rental_operations.adr x occupancy, with actual
-growth propagation via their own fitted derived-latents) DON'T EXIST YET. Two inputs below are
-flat, UN-GROWN, single-year estimates taken directly off the deck's own median priors (ignoring cv
-AND growth entirely), applied identically to every year of the horizon -- see PLACEHOLDER_FIELDS,
-which every compute_owner_taxes result echoes back (and reporting.print_taxes_report prints loudly)
-so this is never silently mistaken for a real number:
+A real rental-revenue model (rental_operations.adr x occupancy, with actual growth propagation)
+DOESN'T EXIST YET. `gross_rent` (placeholder_gross_rent) is a flat, UN-GROWN estimate taken
+directly off the deck's own ADR/occupancy medians (ignoring cv and growth entirely), applied
+identically to every year of the horizon -- see PLACEHOLDER_FIELDS, echoed back in every
+compute_owner_taxes result and printed loudly by reporting.print_taxes_report. `direct_rental_
+expenses` is REAL logic despite depending on this placeholder: mgmt_fee_fraction * gross_rent won't
+change once gross_rent itself is real -- only the number it's fed will.
 
-    - gross_rent      (placeholder_gross_rent)      -- needs the real rental revenue model.
-    - shared_expenses (placeholder_shared_expenses) -- needs carrying_costs.py's real growth
-                                                         propagation for HOA/insurance/utilities/
-                                                         maintenance (construction_cost/insurance/
-                                                         utilities derived-latent growth is already
-                                                         FITTED -- see models/derived_variables/ --
-                                                         just not yet applied here).
-
-direct_rental_expenses is REAL logic despite depending on a placeholder input: mgmt_fee_fraction *
-gross_rent won't change once gross_rent itself is real -- only the number it's fed will.
-
-property_tax and the sale price are REAL, not placeholders, despite looking similar: this module
-builds a genuine projected condo value per year via forecast_models.home_price's own fit +
-ou_fitting.project_term_structure (both already built and tested) -- see
-project_condo_value_schedule. This is also this project's first real use of the `exit` deck section
-(selling_costs).
-
-See .claude/implementation-plan.md's "Backend build progress" for the tracked TODO to replace
-PLACEHOLDER_FIELDS once carrying_costs.py and a real revenue model exist.
+(As of 2026-09-25 this section also covered property_tax/shared_expenses -- both are now REAL,
+built via carrying_costs.py; see .claude/implementation-plan.md's "Backend build progress" for
+that history and the still-open TODO on gross_rent.)
 """
 
 from __future__ import annotations
@@ -63,17 +52,15 @@ from typing import Any
 
 import pandas as pd
 
+from condobuyuq2026.carrying_costs import compute_carrying_costs_schedule, project_condo_value_schedule
 from condobuyuq2026.input_deck import (
     get_acquisition_inputs,
-    get_carrying_costs_placeholder_medians,
     get_exit_inputs,
-    get_forecast_model_home_price,
     get_rental_operations_inputs,
     get_rental_operations_monthly_medians,
     get_taxes_inputs,
     load_deck,
 )
-from condobuyuq2026.utils.ou_fitting import project_term_structure
 
 # Statutory day-count threshold this module itself owns (a WARNING only, doesn't affect any tax
 # math below) -- kept as a module constant rather than a deck field, the same precedent
@@ -84,10 +71,6 @@ PLACEHOLDER_FIELDS = {
     "gross_rent": (
         "flat, un-grown ADR x occupancy month-by-month sum from deck medians only -- needs the "
         "real rental revenue model (growth, cv, actual per-year variation)."
-    ),
-    "shared_expenses": (
-        "flat, un-grown sum of HOA/insurance/utilities/maintenance medians -- needs "
-        "carrying_costs.py's real growth propagation."
     ),
 }
 
@@ -100,39 +83,6 @@ def placeholder_gross_rent(deck: dict[str, Any] | None = None) -> float:
     deck = deck if deck is not None else load_deck()
     medians = get_rental_operations_monthly_medians(deck)
     return sum(medians["adr"][month] * medians["occupancy"][month] for month in medians["adr"])
-
-
-def placeholder_shared_expenses(purchase_price: float, deck: dict[str, Any] | None = None) -> float:
-    """PLACEHOLDER (see module docstring) -- flat sum of carrying_costs' own median priors
-    (HOA + insurance + utilities, all as given; maintenance as a fraction of purchase_price),
-    ignoring cv AND growth entirely, applied identically every year. Replace with
-    carrying_costs.py's real growth-propagated output once it exists."""
-    deck = deck if deck is not None else load_deck()
-    medians = get_carrying_costs_placeholder_medians(deck)
-    return (
-        medians["hoa_dues_annual_median"]
-        + medians["insurance_annual_median"]
-        + medians["utilities_annual_median"]
-        + medians["maintenance_fraction_median"] * purchase_price
-    )
-
-
-def project_condo_value_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.Series:
-    """REAL (not a placeholder): projects the condo's own value at the end of each year of
-    scenario["horizon_years"], via forecast_models.home_price's fit applied to purchase_price as
-    p0 (see ou_fitting.project_term_structure -- exactly the use this deck's own home_price comment
-    anticipated: "Used directly (unweighted) to appreciate acquisition.purchase_price to its sale
-    value at exit"). Returns a Series indexed by year (0..horizon_years; year 0 is purchase_price
-    itself) of the projected MEDIAN value -- this module doesn't propagate the uncertainty band,
-    only the median path (property_tax/sale price are directional estimates, consistent with the
-    deck's own "not a full simulation" disclaimer elsewhere)."""
-    deck = deck if deck is not None else load_deck()
-    purchase_price = scenario["acquisition"]["purchase_price"]
-    horizon_years = scenario["horizon_years"]
-    home_price_fit = get_forecast_model_home_price(deck)
-    projection = project_term_structure(home_price_fit, p0=purchase_price, horizon_months=horizon_years * 12)
-    year_end_months = [year * 12 for year in range(horizon_years + 1)]
-    return projection.loc[year_end_months, "median"].set_axis(range(horizon_years + 1))
 
 
 def estimate_sale_proceeds(
@@ -168,10 +118,10 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
 
     tax_use_class is read from scenario["classification"] (never recomputed -- see module
     docstring) and held CONSTANT across every year, matching classification.py's own annual
-    (not year-varying) day-count assumption. gross_rent/shared_expenses are PLACEHOLDERS (see
-    module docstring) held flat across every year for the same reason; mortgage_interest and
-    property_tax are real and DO vary year to year (the amortization schedule, and the condo's
-    own projected appreciation, respectively).
+    (not year-varying) day-count assumption. gross_rent is a PLACEHOLDER (see module docstring)
+    held flat across every year for that reason; mortgage_interest, property_tax, and
+    shared_expenses are all real and DO vary year to year (the amortization schedule, the condo's
+    own projected appreciation, and carrying_costs.py's own per-year schedule, respectively).
 
     Returns a DataFrame indexed by year (1..horizon_years) with columns: use_class, mortgage_
     interest, property_tax, gross_rent, shared_expenses, direct_rental_expenses, taxable_rental,
@@ -199,18 +149,25 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
     niit_rate = taxes_inputs["niit_rate"] if taxes_inputs["niit_applies"] else 0.0
     co_income_tax_rate = taxes_inputs["state_tax_profiles"]["CO"]["income_tax_rate"]
 
-    condo_value_schedule = project_condo_value_schedule(scenario, deck)
-    property_tax_rate = get_carrying_costs_placeholder_medians(deck)["property_tax_rate"]
+    # carrying_costs.py already computed this (runner.run_scenarios stores it before taxes runs) --
+    # reuse it instead of recomputing, same pattern as acquisition/financing's own reuse.
+    carrying_costs = scenario.get("carrying_costs")
+    carrying_costs_schedule = carrying_costs["annual_schedule"] if carrying_costs else compute_carrying_costs_schedule(scenario, deck)
+    property_tax_by_year = carrying_costs_schedule["property_tax"]
+    shared_expenses_by_year = carrying_costs_schedule[
+        ["hoa_dues", "insurance", "maintenance", "special_assessment_expected", "utilities"]
+    ].sum(axis=1)
+
     mortgage_interest_by_year = _annual_mortgage_interest(scenario, horizon_years)
     gross_rent = placeholder_gross_rent(deck)  # PLACEHOLDER -- flat every year, see module docstring
-    shared_expenses = placeholder_shared_expenses(purchase_price, deck)  # PLACEHOLDER -- flat every year
     direct_rental_expenses = rental_operations_inputs["mgmt_fee_fraction"] * gross_rent  # REAL formula
 
     depr_taken, suspended_passive, carry_280a, carry_280a_depr = 0.0, 0.0, 0.0, 0.0
     rows = []
     for year in range(1, horizon_years + 1):
         mortgage_interest = mortgage_interest_by_year[year - 1]
-        property_tax = property_tax_rate * condo_value_schedule.loc[year]  # REAL -- appreciated value
+        property_tax = property_tax_by_year.loc[year]  # REAL -- Colorado's own assessment/mill-levy mechanic
+        shared_expenses = shared_expenses_by_year.loc[year]  # REAL -- carrying_costs.py's own per-year schedule
         interest_tax = mortgage_interest + property_tax
         taxable, personal_it, depr_this_year = 0.0, interest_tax, 0.0
 

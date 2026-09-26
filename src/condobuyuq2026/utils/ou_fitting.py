@@ -73,7 +73,11 @@ def fit_annual_ou(index_series: pd.Series) -> dict[str, float]:
 
 
 def project_term_structure(
-    fit: dict[str, float], p0: float, horizon_months: int, ci: tuple[float, float] = (0.05, 0.95)
+    fit: dict[str, float],
+    p0: float,
+    horizon_months: int,
+    ci: tuple[float, float] = (0.05, 0.95),
+    extra_log_variance: float = 0.0,
 ) -> pd.DataFrame:
     """Projects the index's median path and a (ci[0], ci[1]) confidence band forward from p0,
     given an OU fit from fit_annual_ou. Returns a DataFrame indexed by month offset h = 0..
@@ -98,13 +102,21 @@ def project_term_structure(
     For h >> tau this grows ~linearly (unboundedly, as expected for a cumulative price level);
     for h << tau it's small, correctly reflecting that a fast-mean-reverting rate (small tau)
     barely has time to move the cumulative total before reverting back.
+
+    extra_log_variance: an additional, CONSTANT (not compounding, not mean-reverting) log-variance
+    added at every h -- for when p0 itself carries its own persistent uncertainty independent of
+    the fitted process (e.g. carrying_costs.py's hand-elicited level priors: "how far this
+    particular property's actual bill differs from the typical one" doesn't fade or grow with the
+    horizon the way the fitted growth-rate's own uncertainty does -- it's just always there).
+    Assumed independent of the fitted process's own variance, so the two simply add. Default 0.0
+    is a no-op -- every existing caller's behavior is unchanged.
     """
     h = np.arange(horizon_months + 1)
     tau = fit["tau"]
     drift = (fit["i_inf"] * h + (fit["i0"] - fit["i_inf"]) * tau * (1 - np.exp(-h / tau))) / 12
     median = p0 * np.exp(drift)
     x = h / tau
-    variance = fit["sig"] ** 2 * tau**3 * (x - 1.5 + 2 * np.exp(-x) - 0.5 * np.exp(-2 * x)) / 144
+    variance = fit["sig"] ** 2 * tau**3 * (x - 1.5 + 2 * np.exp(-x) - 0.5 * np.exp(-2 * x)) / 144 + extra_log_variance
     sd = np.sqrt(np.clip(variance, 0, None))  # clip: only ever-so-slightly negative from float error near h=0
     z_lo, z_hi = norm.ppf(ci)
     lo = p0 * np.exp(drift + z_lo * sd)

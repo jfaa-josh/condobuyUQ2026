@@ -3,7 +3,7 @@ CI (no CI is set up for this project): either `uv run pytest run/tests/test_taxe
 `uv run python run/tests/test_taxes.py` to run the checks in order as a plain script (prints
 unconditionally, no -s needed).
 
-*** taxes.py has PLACEHOLDER inputs (gross_rent, shared_expenses) -- see its module docstring and
+*** taxes.py has ONE remaining PLACEHOLDER input (gross_rent) -- see its module docstring and
 PLACEHOLDER_FIELDS constant. These tests check the MACHINERY is wired correctly, not that the
 dollar figures are realistic. ***
 
@@ -13,6 +13,7 @@ modules (see .claude/implementation-plan.md's "Backend build progress").
 """
 
 from condobuyuq2026.acquisition import compute_acquisition_costs
+from condobuyuq2026.carrying_costs import compute_carrying_costs
 from condobuyuq2026.classification import compute_occupancy_classification
 from condobuyuq2026.financing import compute_financing
 from condobuyuq2026.input_deck import get_scenarios, load_deck
@@ -22,42 +23,29 @@ from condobuyuq2026.taxes import (
     compute_owner_taxes,
     compute_renter_taxes,
     placeholder_gross_rent,
-    placeholder_shared_expenses,
-    project_condo_value_schedule,
 )
 
 
 def _build_real_scenario(deck):
-    """Runs the real pipeline (acquisition -> classification -> financing) on one real scenario,
-    exactly like runner.run_scenarios does, so taxes.py sees the same shape it does for real."""
+    """Runs the real pipeline (acquisition -> classification -> financing -> carrying_costs) on one
+    real scenario, exactly like runner.run_scenarios does, so taxes.py sees the same shape it does
+    for real."""
     scenario = get_scenarios(deck)[0]
     scenario["acquisition"] = compute_acquisition_costs(scenario, deck)
     scenario["classification"] = compute_occupancy_classification(scenario, deck)
     scenario["financing"] = compute_financing(scenario, deck)
+    scenario["carrying_costs"] = compute_carrying_costs(scenario, deck)
     return scenario
 
 
-def test_project_condo_value_schedule_starts_at_purchase_price():
-    deck = load_deck()
-    scenario = _build_real_scenario(deck)
-    schedule = project_condo_value_schedule(scenario, deck)
-    print(f"VARIABLE CHECK FOR condo_value_schedule: {schedule.to_dict()}")
-
-    assert len(schedule) == scenario["horizon_years"] + 1
-    assert abs(schedule.loc[0] - scenario["acquisition"]["purchase_price"]) < 1e-6
-
-
-def test_placeholder_estimates_are_positive_and_clearly_documented():
+def test_placeholder_gross_rent_is_positive_and_clearly_documented():
     deck = load_deck()
     gross_rent = placeholder_gross_rent(deck)
-    shared_expenses = placeholder_shared_expenses(purchase_price=400_000, deck=deck)
     print(f"VARIABLE CHECK FOR placeholder_gross_rent: {gross_rent}")
-    print(f"VARIABLE CHECK FOR placeholder_shared_expenses: {shared_expenses}")
     print(f"VARIABLE CHECK FOR PLACEHOLDER_FIELDS: {PLACEHOLDER_FIELDS}")
 
     assert gross_rent > 0
-    assert shared_expenses > 0
-    assert set(PLACEHOLDER_FIELDS.keys()) == {"gross_rent", "shared_expenses"}
+    assert set(PLACEHOLDER_FIELDS.keys()) == {"gross_rent"}
 
 
 def test_owner_tax_schedule_accumulates_depreciation_monotonically():
@@ -70,12 +58,16 @@ def test_owner_tax_schedule_accumulates_depreciation_monotonically():
     # Cumulative depreciation never decreases year over year.
     assert (schedule["cumulative_depr_taken"].diff().dropna() >= -1e-9).all()
     assert set(schedule["use_class"].unique()) == {scenario["classification"]["tax_use_class"]}
+    # property_tax/shared_expenses are now REAL (carrying_costs.py), not flat placeholders --
+    # property_tax should vary with the condo's own appreciating value.
+    assert schedule["property_tax"].iloc[0] > 0
 
 
 def test_compute_owner_taxes_end_to_end_for_a_real_scenario():
     deck = load_deck()
     scenario = _build_real_scenario(deck)
     print(f"VARIABLE CHECK FOR scenario['classification']: {scenario['classification']}")
+    print(f"VARIABLE CHECK FOR scenario['carrying_costs']['total_carrying_costs']: {scenario['carrying_costs']['total_carrying_costs']}")
 
     taxes = compute_owner_taxes(scenario, deck)
     print(f"VARIABLE CHECK FOR taxes['sale']: {taxes['sale']}")
@@ -84,7 +76,7 @@ def test_compute_owner_taxes_end_to_end_for_a_real_scenario():
     print(f"VARIABLE CHECK FOR taxes['placeholder_fields']: {taxes['placeholder_fields']}")
 
     assert set(taxes.keys()) == {"annual_schedule", "sale", "total_tax", "flags", "placeholder_fields"}
-    assert taxes["placeholder_fields"] == ["gross_rent", "shared_expenses"]
+    assert taxes["placeholder_fields"] == ["gross_rent"]
     # Sale-year math is internally consistent: recapture never exceeds the gain, and the pieces of
     # the gain that get excluded/taxed as LTCG are both non-negative.
     sale = taxes["sale"]
@@ -119,8 +111,7 @@ def test_compute_renter_taxes_is_always_zero():
 
 
 if __name__ == "__main__":
-    test_project_condo_value_schedule_starts_at_purchase_price()
-    test_placeholder_estimates_are_positive_and_clearly_documented()
+    test_placeholder_gross_rent_is_positive_and_clearly_documented()
     test_owner_tax_schedule_accumulates_depreciation_monotonically()
     test_compute_owner_taxes_end_to_end_for_a_real_scenario()
     test_owner_tax_schedule_branches_match_tax_use_class()

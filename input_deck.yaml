@@ -54,9 +54,7 @@
 # REFERENCING A PROCESS/DERIVED LATENT BY NAME: everywhere a `latent:` or `derived_latents.*.
 # weights` key names a process (e.g. `market`, `construction_cost`, `general`), it's always that
 # entry's own key under forecast_models/derived_latents — never a separate identifier declared on
-# the entry itself. (An earlier draft had each forecast_models entry also declare its own
-# `latent: z_*` name for this purpose; dropped as unused dead weight once every actual reference
-# elsewhere turned out to just use the entry's key directly instead.)
+# the entry itself.
 #
 # DERIVED LATENTS (`derived_latents`): for anything that needs a growth or level driver but
 # isn't itself one of the three founding processes — a weighted combination of all three
@@ -64,12 +62,17 @@
 # `a²+b²+c² ≤ 1`. Deliberately kept as manually-reasoned weights for now — see the earmark
 # in the implementation plan to fit these properly from real data with a utility script.
 #
-# `growth` sub-blocks are elicited as an ANNUAL median/cv, realized monthly internally, and
-# COMPOUND over the horizon. A variable's plain top-level `latent:` (no `growth`) instead
-# modulates its *seasonal/year-to-year level* — bounded, not compounding. These are different
-# roles even when they reference the same named process (e.g. `hoa_dues_annual.latent` and
-# `hoa_dues_annual.growth.latent` are both `construction_cost`, doing two different jobs — see
-# the implementation plan for a worked numeric example).
+# `growth` sub-blocks are elicited as an ANNUAL median/cv, realized monthly internally, and COMPOUND
+# over the horizon. Two shapes exist:
+#   - `carrying_costs`'s five entries (`hoa_dues_annual`/`insurance_annual`/`maintenance_annual`/
+#     `special_assessment`/`utilities`): `growth:` names ONLY a `latent:` — no separate `dist`/
+#     `median`/`cv` of its own. The named latent's own already-fitted process supplies both the mean
+#     growth and how its uncertainty widens/mean-reverts (see that section's header comment).
+#   - Everywhere else (`rental_operations.adr.growth`, `rent_reference.seasonal_lease_cost.growth`,
+#     `personal_use.alternate_lodging_cost_by_month.growth` — all `latent: adr`): `growth:` carries
+#     its own hand-set `dist`/`median`/`cv` ALONGSIDE the latent. EARMARKED: this is the older,
+#     redundant shape (the hand-set rate can silently disagree with the latent's own fitted rate) —
+#     revisit the same way `carrying_costs` was, if/when worth doing.
 #
 # COMPOSITE COST FORMULAS (`acquisition.purchase_closing_costs`, `exit.selling_costs`): both follow
 # `total = fixed_fees + (percent_of_price * price)` — a scalar dollar amount that doesn't scale
@@ -121,6 +124,20 @@ scenario:
     # above. acquisition.purchase_price is a discoverability stub only.
     kind: sweep
     values: [375000, 400000]
+
+  closing_month:
+    # Month (1-12) the purchase closes. Together with closing_year below, this is TIMESTEP 0 for
+    # every month-indexed model in this deck (currently just carrying_costs.property_tax.
+    # market_value's own stair-step -- see that field's own comment) -- everything else still only
+    # ever tracks integer months FROM this point, never a real calendar date beyond it. closing_
+    # month/year exist only so a calculation that genuinely needs to know a REAL calendar month
+    # (e.g. how many months until reassessment year 1's January, or which historical month a
+    # pre-closing data lookup needs) has a fixed reference point to count from.
+    kind: constant
+    value: 10                      # example — October
+  closing_year:
+    kind: constant
+    value: 2026                    # example
 
 # -----------------------------------------------------------------------------
 # 2. forecast_models
@@ -197,23 +214,23 @@ forecast_models:
 # utilities data, and import the result here instead of hand-setting weights.
 derived_latents:
   construction_cost:
-    # Used TWO ways on hoa_dues_annual (LEVEL: this year's deviation from typical; GROWTH: the
-    # typical amount's own multi-year drift — see schema reference) and once on
-    # special_assessment (severity).
+    # Drives hoa_dues_annual's and special_assessment's (severity's) GROWTH -- their multi-year
+    # drift, not their own year-to-year LEVEL deviation (see carrying_costs section's own header
+    # comment for why there's no longer a LEVEL-driving latent on either).
     weights:
       market: 0.0                     # REQUIRED (placeholder) — 0 to 1 each, sum of squares <= 1
       home_price: 0.6
       general: 0.4
 
   insurance:
-    # Drives insurance_annual's level and growth (same two-role pattern as construction_cost).
+    # Drives insurance_annual's GROWTH (same role as construction_cost's, see that entry's comment).
     weights:
       market: 0.0
       home_price: 0.9
       general: 0.1
 
   maintenance:
-    # Drives maintenance_fraction's level.
+    # Drives maintenance_annual's growth (see carrying_costs section).
     weights:
       market: 0.0
       home_price: 0.5
@@ -334,60 +351,141 @@ financing:
 # -----------------------------------------------------------------------------
 # 6. carrying_costs
 # -----------------------------------------------------------------------------
+# LEVEL + GROWTH pattern (hoa_dues_annual, insurance_annual, maintenance_annual, special_assessment,
+# utilities): each has a hand-elicited LEVEL (`dist: lognormal, median, cv` -- tune by hand, no
+# `latent:` of its own) and a `growth:` block naming ONLY a `latent:` (construction_cost/insurance/
+# maintenance/utilities, per entry) -- no separate growth `dist`/`median`/`cv`. The named latent's
+# own fit (models/derived_variables/<latent>/fit.json, already built) supplies BOTH the mean growth
+# AND how its own uncertainty widens/mean-reverts over the horizon, via the exact closed-form
+# machinery forecast_models already uses (ou_fitting.project_term_structure, called with p0 = the
+# LEVEL's median). The level's own `cv` becomes a separate, CONSTANT (non-compounding) log-variance
+# added on top -- see project_term_structure's `extra_log_variance` parameter and
+# manual_utils.build_carrying_cost_prior for exactly how these combine (the level's own year-to-year
+# deviation and the multi-year growth trend are deliberately two different processes, not one).
+#
+# Built the same way `derived_latents` are (see that section) -- NOT read directly from the deck at
+# runtime: manual_utils.build_all_carrying_cost_prior_models combines each entry's level + growth
+# latent into a saved projection (models/carrying_cost_priors/<name>/fit.json + plot), rebuilt
+# automatically every time run/main.py runs (so an edit here always takes effect on the next run,
+# without needing a separate manual step) -- carrying_costs.py then just loads the result.
 carrying_costs:
-  property_tax_rate:
-    # Effective annual property tax (fraction of market value) — replaces the separate
-    # assessment_rate x mill_levy mechanic (CO's actual two-step system: assessed value = market
-    # value x assessment rate, then tax = assessed value x mill levy, a rate in dollars per
-    # $1000 set by overlapping local taxing districts). One blended rate is simpler and produces
-    # the same bottom line for this model's purposes.
-    kind: constant
-    value: 0.006                     # example — CO's assessment rate is unusually low, so the
-                                      #   effective rate lands well under 1%
+  property_tax:
+    # Colorado's REAL two-step system (assessed value = market_value x assessment_rate, then tax =
+    # assessed value x mill_levy), with LOCAL and SCHOOL each their own assessment_rate/mill_levy
+    # (see assessment_rate below) applied to a different FRACTION of market_value (see
+    # carrying_costs.py's LOCAL_ASSESSED_VALUE_FRACTION/SCHOOL_ASSESSED_VALUE_FRACTION -- 90%/100%
+    # respectively, hardcoded there rather than deck fields, same reasoning as classification just
+    # below). Only the COMBINED total (local + school) is ever passed on to a scenario -- the
+    # local/school split itself is an internal computation detail, not exposed.
+    #
+    # classification (residential | lodging) and the lodging assessment rate are HARDCODED in
+    # carrying_costs.py (PROPERTY_TAX_CLASSIFICATION/LODGING_ASSESSMENT_RATE), NOT deck fields, and
+    # NOT auto-derived from rental_operations.managed_by/financing.loan_occupancy_class: there is NO
+    # current CO law tying property-tax classification to rental activity -- two bills that would
+    # have (HB24-1299: owner-occupancy test; SB24-033: a 90-rented-days/year threshold) both DIED in
+    # committee in 2024, and Summit County STRs are still taxed at the residential rate today
+    # regardless of rental activity -- see
+    # https://propertytaxrates.org/blog/colorado-property-tax-guide-2026 and
+    # https://leg.colorado.gov/bills/sb24-033. "residential" is simply the only currently-real
+    # option, so hardcoding it needs no deck-level toggle; revisit if that law ever changes.
+    market_value:
+      # The COUNTY ASSESSOR'S OWN determination of market value for property-tax purposes -- NOT
+      # the same thing as this model's own sale-price projection (carrying_costs.
+      # project_condo_value_schedule, which tracks TRUE ongoing appreciation continuously via
+      # forecast_models.home_price). Deliberately NOT the LEVEL+GROWTH pattern the other
+      # carrying_costs entries use (no median/cv of its own) -- instead, the assessed value is
+      # STAIR-STEPPED, anchored to scenario.closing_month/closing_year (timestep 0) rather than a
+      # real calendar date read at run time, and each new step is an AVERAGE over part of the prior
+      # assessment window, not a single point -- see carrying_costs.project_market_value_schedule
+      # for the exact mechanism. Concretely:
+      #   - From closing until January of (closing_year + first_reassessment_year), the value is
+      #     exactly initial_price -- constant and fully known (no county reassessment has happened
+      #     yet).
+      #   - At that first reassessment (month 1 of the target year) and every
+      #     reassessment_frequency_years after, the new value is the AVERAGE of the market's own
+      #     growth over the first 1.5 years (18 months) of the 2-year assessment window that's
+      #     ENDING at this reassessment -- e.g. a reassessment on Jan 1 2025 (with
+      #     reassessment_frequency_years=2) uses the average of Jan 2023-Jun 2024, then holds that
+      #     new value constant until the Jan 2027 reassessment.
+      #   - Whatever part of that 18-month averaging window falls BEFORE closing uses REAL
+      #     historical market data (not a projection); whatever part falls after closing uses
+      #     `latent`'s own projected distribution -- so if e.g. 80% of a window is already-recorded
+      #     history, only the remaining 20% contributes any uncertainty to that reassessment's value.
+      # `initial_price` scales the WHOLE stair-stepped path (a plain multiplier, not a distribution
+      # of its own) -- all of this entry's own uncertainty comes from `latent`'s fitted process.
+      kind: constant
+      initial_price: 555400          # example -- MUST be the property's actual price/assessed
+                                      #   value AS OF THE CLOSING DATE (scenario.closing_month/
+                                      #   closing_year), not today's or any other date's -- every
+                                      #   projection below is anchored to that exact month.
+      reassessment_frequency_years: 2
+      first_reassessment_year: 2     # 1 = the calendar year immediately following closing (i.e.
+                                      #   reassessment on Jan 1 of closing_year+1); 2 = the year
+                                      #   after that; etc. Reassessment always lands on month 1
+                                      #   (January) of the target year.
+      latent: home_price
+    assessment_rate:
+      # LOCAL and SCHOOL are Colorado's own two, separately-set components (each its own
+      # assessment_rate AND mill_levy -- see this field's own header comment for how they combine).
+      local:
+        rate:
+          kind: constant
+          value: 0.068                # example — CO 2026 local-government residential assessment rate
+        mill_levy:
+          # Summit County's own local-government mill levy, expressed as a plain fraction of
+          # ASSESSED value (not a dollars-per-$1000 "mills" figure) -- e.g. 38.219 mills = 0.038219.
+          kind: constant
+          value: 0.038219             # example
+      school:
+        rate:
+          kind: constant
+          value: 0.0705               # example — CO 2026 school-district residential assessment rate
+        mill_levy:
+          # Summit County's own school-district mill levy, same units as local's above.
+          kind: constant
+          value: 0.015343             # example
 
   hoa_dues_annual:
-    # Annual HOA dues (USD). LEVEL via construction_cost (a bad construction-cost year raises
-    # both this and special_assessment's severity together); GROWTH also via construction_cost
-    # (same name, different role — see schema reference).
+    # Annual HOA dues (USD) -- typical current-year level (tune by hand); growth via
+    # construction_cost's own fitted process (see this section's header comment).
     kind: prior
     dist: lognormal
-    latent: construction_cost
     median: 9600                     # example — $800/month
     cv: 0.15
     growth:
-      kind: prior
-      dist: lognormal
       latent: construction_cost
-      median: 0.05                   # example — annual rate
-      cv: 0.3
 
   special_assessment:
+    # Rare-event mixture: p = annual probability, severity = dollar cost if it occurs. GROWTH grows
+    # severity's own median via construction_cost -- a special assessment years from now should
+    # cost more in nominal dollars, for the same reason HOA dues do. p itself is NOT grown (the
+    # chance of a bad year isn't modeled as trending).
     kind: prior
     dist: mixture
-    latent: construction_cost
     p: 0.05                          # example — annual probability
     severity:
       dist: lognormal
       median: 5000
       cv: 0.5
+    growth:
+      latent: construction_cost
 
   insurance_annual:
-    # Must reflect an STR-rated policy, not a standard homeowner's policy.
+    # Must reflect an STR-rated policy, not a standard homeowner's policy. LEVEL/GROWTH pattern --
+    # see this section's header comment.
     kind: prior
     dist: lognormal
-    latent: insurance
     median: 3500
     cv: 0.20
     growth:
-      kind: prior
-      dist: lognormal
       latent: insurance
-      median: 0.06
-      cv: 0.3
 
   utilities:
-    # Monthly (USD), seasonal shape (winter heating spike) via its own `months:` map below -- no
-    # shared level-driving latent.
+    # Monthly (USD), seasonal shape (winter heating spike) via its own `months:` map -- no shared
+    # level-driving latent (each month's own median/cv IS the level). GROWTH scales every month's
+    # median by the SAME year's growth factor (construction_cost's own fitted process would be the
+    # wrong latent here -- utilities has its own, see derived_latents.utilities), preserving the
+    # seasonal shape while the overall level inflates over the horizon.
     kind: prior
     dist: lognormal
     resolution: monthly
@@ -405,19 +503,19 @@ carrying_costs:
       nov: {median: 220, cv: 0.2}
       dec: {median: 300, cv: 0.2}
     growth:
-      kind: prior
-      dist: lognormal
       latent: utilities
-      median: 0.04
-      cv: 0.3
 
-  maintenance_fraction:
-    # Annual maintenance (fraction of market value). LEVEL via `maintenance`.
+  maintenance_annual:
+    # Annual maintenance (USD) -- a flat dollar LEVEL, deliberately NOT a fraction of the condo's
+    # market value (that dependency would mean this couldn't be pre-built once like hoa_dues_annual/
+    # insurance_annual). median is a flat dollar estimate (a rule of thumb like "~1% of purchase
+    # price" is a reasonable way to pick a starting number, but pick a plain dollar figure here).
     kind: prior
     dist: lognormal
-    latent: maintenance
-    median: 0.01
+    median: 2000
     cv: 0.25
+    growth:
+      latent: maintenance
 
 # -----------------------------------------------------------------------------
 # 7. rental_operations

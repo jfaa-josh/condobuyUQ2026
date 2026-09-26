@@ -11,9 +11,12 @@ the caller chose, typically run.report_quantiles' outer two) and a wider referen
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import matplotlib
+import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 matplotlib.use("Agg")  # headless-safe: these scripts only ever save figures, never display them
 import matplotlib.pyplot as plt
@@ -112,6 +115,89 @@ def plot_derived_latent_model(
     ax.set_title(title)
     ax.set_xlabel("Months ahead")
     ax.set_ylabel("Monthly price increase (fraction)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
+
+
+def plot_price_level_projection(
+    projection: pd.DataFrame, outer_projection: pd.DataFrame, title: str, save_path: Path, ylabel: str = "USD"
+) -> Path:
+    """Plots a projected price LEVEL (e.g. from ou_fitting.project_term_structure) as a median line
+    with a shaded confidence band, x-axis in months-ahead, plus outer_projection as a dashed
+    reference band (see module docstring). No history/scatter -- unlike plot_term_structure, this
+    is for a hand-elicited level prior (carrying_costs.py's hoa_dues_annual/insurance_annual/
+    maintenance_annual/utilities/special_assessment) with no real observed data series to plot
+    against, only the projection itself."""
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(projection.index, projection["median"], color="C1", label="projected median")
+    ax.fill_between(
+        projection.index, projection["lo"], projection["hi"], color="C1", alpha=0.2, label="confidence band"
+    )
+    _plot_outer_band(ax, projection.index, outer_projection)
+    ax.set_title(title)
+    ax.set_xlabel("Months ahead")
+    ax.set_ylabel(ylabel)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
+
+
+def plot_market_value_periods(
+    periods: list[dict[str, Any]],
+    initial_price: float,
+    ci: tuple[float, float],
+    outer_ci: tuple[float, float],
+    horizon_months: int,
+    title: str,
+    save_path: Path,
+) -> Path:
+    """Plots carrying_costs.build_market_value_change_magnitude's own stair-stepped periods, scaled
+    by initial_price -- each period drawn as its OWN independent set of plot calls (a 2-point
+    horizontal line/fill per period, never one array spanning several periods) so consecutive
+    periods show a clean vertical break instead of plot_price_level_projection's usual continuous
+    line, which would draw a diagonal connecting the last point of one period to the first of the
+    next -- misleading here, since the value genuinely doesn't move between reassessments, it jumps.
+
+    A period's own median/lo/hi at a given z-score come from build_market_value_change_magnitude's
+    own {growth_a, growth_b, growth_sigma}: median = initial_price*(a+b), lo/hi =
+    initial_price*(a + b*exp(z*sigma)) -- see that function's docstring for the derivation.
+    """
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    z_lo, z_hi = norm.ppf(ci)
+    z_lo_outer, z_hi_outer = norm.ppf(outer_ci)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    for i, period in enumerate(periods):
+        start = period["start_month"]
+        if start >= horizon_months:
+            break
+        end = horizon_months if period["end_month"] is None else min(period["end_month"], horizon_months)
+        a, b, sigma = period["growth_a"], period["growth_b"], period["growth_sigma"]
+        x = [start, end]
+        median = initial_price * (a + b)
+        lo = initial_price * (a + b * np.exp(z_lo * sigma))
+        hi = initial_price * (a + b * np.exp(z_hi * sigma))
+        lo_outer = initial_price * (a + b * np.exp(z_lo_outer * sigma))
+        hi_outer = initial_price * (a + b * np.exp(z_hi_outer * sigma))
+        ax.fill_between(x, [lo, lo], [hi, hi], color="C1", alpha=0.2, label="confidence band" if i == 0 else None)
+        ax.plot(x, [median, median], color="C1", linewidth=2, label="projected median" if i == 0 else None)
+        ax.plot(
+            x, [lo_outer, lo_outer], linestyle="--", color="C1", alpha=0.6, linewidth=1, label="1-99% band" if i == 0 else None
+        )
+        ax.plot(x, [hi_outer, hi_outer], linestyle="--", color="C1", alpha=0.6, linewidth=1)
+
+    ax.set_title(title)
+    ax.set_xlabel("Months from closing")
+    ax.set_ylabel("USD")
     ax.legend()
     fig.tight_layout()
     fig.savefig(save_path)
