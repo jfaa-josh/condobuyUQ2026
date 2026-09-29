@@ -20,12 +20,31 @@ def print_derived_latent_build_report(results: dict[str, dict[str, Path]]) -> No
         print(f"{name}: saved fit to /{name} and plot to /{name}/plots")
 
 
-def print_carrying_cost_prior_build_report(results: dict[str, dict[str, Path]]) -> None:
-    """Prints one line per carrying_costs LEVEL+GROWTH entry build result -- results as returned by
-    utils.manual_utils.build_all_carrying_cost_prior_models (name -> {"fit_path", "plot_path"})."""
+def print_carrying_cost_prior_build_report(results: dict[str, dict[str, Any]]) -> None:
+    """Prints one line per carrying_costs prior build result -- results as returned by
+    utils.prior_utils.build_all_carrying_cost_prior_models (name -> {"fit_path", "plot_path", ...}).
+    For market_value (the one INFORMED entry, see carrying_costs.INFORMED_CARRYING_COST_PRIORS), if
+    at least 2 real observations exist, also prints the fitted Denver-to-Keystone calibration line
+    (utils.prior_utils.fit_market_value_calibration's own slope/intercept) plus one line per
+    observation showing how far the fitted line's own prediction is from what was actually recorded
+    -- so it's visible on every run how well the line fits the known data, not just in the saved
+    plot."""
     print("\nSaving carrying-cost priors to //models/carrying_cost_priors/...")
     for name, paths in results.items():
         print(f"{name}: saved fit to {paths['fit_path']}, plot to {paths['plot_path']}")
+        if "calibration_report" in paths:
+            calibration = paths["calibration_report"]
+            print(
+                f"  market_value calibration saved to {paths['calibration_plot_path']}: "
+                f"slope={calibration['slope']:,.1f}, intercept={calibration['intercept']:,.0f}"
+            )
+            for observation in calibration["observations"]:
+                predicted = calibration["slope"] * observation["denver_window_avg"] + calibration["intercept"]
+                residual = predicted - observation["keystone_actual"]
+                print(
+                    f"    {observation['effective_year']}: actual=${observation['keystone_actual']:,.0f}, "
+                    f"fitted=${predicted:,.0f} (residual ${residual:+,.0f})"
+                )
 
 
 def print_acquisition_report(scenario: dict[str, Any], acquisition_costs: dict[str, float]) -> None:

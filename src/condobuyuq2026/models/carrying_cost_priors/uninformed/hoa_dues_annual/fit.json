@@ -1,0 +1,848 @@
+{
+  "initial_annual_dues": 8700,
+  "initial_annual_association_dues": 325,
+  "latent": "construction_cost",
+  "association_dues_fraction": 0.036011080332409975,
+  "periods": [
+    {
+      "start_month": 0,
+      "end_month": 1,
+      "known_value": 0.0,
+      "projected_value": 1066.768682883049,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 1,
+      "end_month": 2,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 2,
+      "end_month": 3,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 3,
+      "end_month": 4,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 4,
+      "end_month": 5,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 5,
+      "end_month": 6,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 6,
+      "end_month": 7,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 7,
+      "end_month": 8,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 8,
+      "end_month": 9,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 9,
+      "end_month": 10,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 10,
+      "end_month": 11,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 11,
+      "end_month": 12,
+      "known_value": 0.0,
+      "projected_value": 736.578376276391,
+      "growth_sigma": 0.016787608485742383
+    },
+    {
+      "start_month": 12,
+      "end_month": 13,
+      "known_value": 0.0,
+      "projected_value": 1096.7819365777104,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 13,
+      "end_month": 14,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 14,
+      "end_month": 15,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 15,
+      "end_month": 16,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 16,
+      "end_month": 17,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 17,
+      "end_month": 18,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 18,
+      "end_month": 19,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 19,
+      "end_month": 20,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 20,
+      "end_month": 21,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 21,
+      "end_month": 22,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 22,
+      "end_month": 23,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 23,
+      "end_month": 24,
+      "known_value": 0.0,
+      "projected_value": 757.3018133512763,
+      "growth_sigma": 0.0389457813155121
+    },
+    {
+      "start_month": 24,
+      "end_month": 25,
+      "known_value": 0.0,
+      "projected_value": 1134.8146262456878,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 25,
+      "end_month": 26,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 26,
+      "end_month": 27,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 27,
+      "end_month": 28,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 28,
+      "end_month": 29,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 29,
+      "end_month": 30,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 30,
+      "end_month": 31,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 31,
+      "end_month": 32,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 32,
+      "end_month": 33,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 33,
+      "end_month": 34,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 34,
+      "end_month": 35,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 35,
+      "end_month": 36,
+      "known_value": 0.0,
+      "projected_value": 783.5624800267844,
+      "growth_sigma": 0.059978931911078996
+    },
+    {
+      "start_month": 36,
+      "end_month": 37,
+      "known_value": 0.0,
+      "projected_value": 1178.1415994358542,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 37,
+      "end_month": 38,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 38,
+      "end_month": 39,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 39,
+      "end_month": 40,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 40,
+      "end_month": 41,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 41,
+      "end_month": 42,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 42,
+      "end_month": 43,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 43,
+      "end_month": 44,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 44,
+      "end_month": 45,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 45,
+      "end_month": 46,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 46,
+      "end_month": 47,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 47,
+      "end_month": 48,
+      "known_value": 0.0,
+      "projected_value": 813.4787234199945,
+      "growth_sigma": 0.07889745123185582
+    },
+    {
+      "start_month": 48,
+      "end_month": 49,
+      "known_value": 0.0,
+      "projected_value": 1225.3278906322628,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 49,
+      "end_month": 50,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 50,
+      "end_month": 51,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 51,
+      "end_month": 52,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 52,
+      "end_month": 53,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 53,
+      "end_month": 54,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 54,
+      "end_month": 55,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 55,
+      "end_month": 56,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 56,
+      "end_month": 57,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 57,
+      "end_month": 58,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 58,
+      "end_month": 59,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 59,
+      "end_month": 60,
+      "known_value": 0.0,
+      "projected_value": 846.0597340079909,
+      "growth_sigma": 0.0957637265807179
+    },
+    {
+      "start_month": 60,
+      "end_month": 61,
+      "known_value": 0.0,
+      "projected_value": 1275.627916316997,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 61,
+      "end_month": 62,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 62,
+      "end_month": 63,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 63,
+      "end_month": 64,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 64,
+      "end_month": 65,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 65,
+      "end_month": 66,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 66,
+      "end_month": 67,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 67,
+      "end_month": 68,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 68,
+      "end_month": 69,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 69,
+      "end_month": 70,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 70,
+      "end_month": 71,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 71,
+      "end_month": 72,
+      "known_value": 0.0,
+      "projected_value": 880.7907041236407,
+      "growth_sigma": 0.11087861090071147
+    },
+    {
+      "start_month": 72,
+      "end_month": 73,
+      "known_value": 0.0,
+      "projected_value": 1328.6722366566287,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 73,
+      "end_month": 74,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 74,
+      "end_month": 75,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 75,
+      "end_month": 76,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 76,
+      "end_month": 77,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 77,
+      "end_month": 78,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 78,
+      "end_month": 79,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 79,
+      "end_month": 80,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 80,
+      "end_month": 81,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 81,
+      "end_month": 82,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 82,
+      "end_month": 83,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 83,
+      "end_month": 84,
+      "known_value": 0.0,
+      "projected_value": 917.4165443581484,
+      "growth_sigma": 0.12455610763426367
+    },
+    {
+      "start_month": 84,
+      "end_month": 85,
+      "known_value": 0.0,
+      "projected_value": 1384.2995865912474,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 85,
+      "end_month": 86,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 86,
+      "end_month": 87,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 87,
+      "end_month": 88,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 88,
+      "end_month": 89,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 89,
+      "end_month": 90,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 90,
+      "end_month": 91,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 91,
+      "end_month": 92,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 92,
+      "end_month": 93,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 93,
+      "end_month": 94,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 94,
+      "end_month": 95,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 95,
+      "end_month": 96,
+      "known_value": 0.0,
+      "projected_value": 955.8259050272898,
+      "growth_sigma": 0.13706414930246633
+    },
+    {
+      "start_month": 96,
+      "end_month": 97,
+      "known_value": 0.0,
+      "projected_value": 1442.4654006197347,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 97,
+      "end_month": 98,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 98,
+      "end_month": 99,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 99,
+      "end_month": 100,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 100,
+      "end_month": 101,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 101,
+      "end_month": 102,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 102,
+      "end_month": 103,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 103,
+      "end_month": 104,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 104,
+      "end_month": 105,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 105,
+      "end_month": 106,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 106,
+      "end_month": 107,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 107,
+      "end_month": 108,
+      "known_value": 0.0,
+      "projected_value": 995.9880147136263,
+      "growth_sigma": 0.1486167300324143
+    },
+    {
+      "start_month": 108,
+      "end_month": 109,
+      "known_value": 0.0,
+      "projected_value": 1503.1915973907976,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 109,
+      "end_month": 110,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 110,
+      "end_month": 111,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 111,
+      "end_month": 112,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 112,
+      "end_month": 113,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 113,
+      "end_month": 114,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 114,
+      "end_month": 115,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 115,
+      "end_month": 116,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 116,
+      "end_month": 117,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 117,
+      "end_month": 118,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 118,
+      "end_month": 119,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    },
+    {
+      "start_month": 119,
+      "end_month": 120,
+      "known_value": 0.0,
+      "projected_value": 1037.9180077222175,
+      "growth_sigma": 0.15938084075717346
+    }
+  ]
+}

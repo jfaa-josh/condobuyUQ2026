@@ -2,7 +2,7 @@
 two-step assessment_rate x mill_levy mechanic, local AND school components separately -- see
 input_deck.yaml's carrying_costs.property_tax comment for the research behind it), plus HOA dues,
 insurance, maintenance, special assessment (expected value), and utilities -- each projected from
-its own pre-built carrying_cost_prior model (see manual_utils.build_all_carrying_cost_prior_models,
+its own pre-built carrying_cost_prior model (see utils.prior_utils.build_all_carrying_cost_prior_models,
 wired into run/main.py's build stage, the same way derived_latents are).
 
 Also owns project_condo_value_schedule -- the condo's own CONTINUOUSLY appreciating value over the
@@ -12,14 +12,13 @@ of duplicating it. NOT the same thing as project_market_value_schedule below (th
 only-periodically-updated determination used for property tax specifically) -- see that function's
 own docstring for why they're different.
 
-CHANGE-MAGNITUDE MODELS: every carrying_cost_prior (including market_value) is built and saved
-UNSCALED (see manual_utils.build_all_carrying_cost_prior_models) -- a scenario run never re-fits
-anything, it just scales the saved change-magnitude model by that scenario's own price/horizon.
-market_value's own build step (build_market_value_change_magnitude, below) is the expensive one: it
-resolves real historical data + OU projections into one set of per-reassessment-period parameters
-{growth_a, growth_b, growth_sigma} ONCE; project_market_value_schedule then just looks up the right
-period for each requested year and scales by initial_price -- see that function's own docstring for
-the exact math.
+RUNTIME ONLY: this module is per-scenario load-and-scale logic, never fitting/building. Every
+carrying_cost_prior (including market_value) is built and saved UNSCALED by utils.prior_utils --
+see that module's own docstring for why prior-BUILDING lives there, not here, and for
+INFORMED_CARRYING_COST_PRIORS/carrying_cost_prior_path below, which market_value's own build step
+also uses to know where to save (a single source of truth for the read/write path scheme, shared
+between the two modules without a circular import -- prior_utils.py imports FROM here, not the
+other way around).
 
 Deliberately NOT part of input_deck.py (deck loading/validation only) -- this is the section's own
 per-scenario computation, the same "one computation module per deck section" pattern
@@ -35,18 +34,12 @@ import pandas as pd
 from scipy.stats import norm
 
 from condobuyuq2026.input_deck import (
-    DERIVED_LATENT_COMPONENTS,
-    get_closing_date,
     get_forecast_model_home_price,
-    get_forecast_model_name,
-    get_growth_fit,
-    get_market_value_config,
     get_property_tax_inputs,
     get_report_quantiles,
     load_deck,
 )
 from condobuyuq2026.paths import model_fit_path
-from condobuyuq2026.raw_data import load_monthly_series
 from condobuyuq2026.utils.ou_fitting import load_fit, project_term_structure
 
 # classification/lodging assessment rate are HARDCODED here (moved out of the deck 2026-09-26) --
@@ -67,160 +60,36 @@ LOCAL_ASSESSED_VALUE_FRACTION = 0.90
 SCHOOL_ASSESSED_VALUE_FRACTION = 1.00
 
 
-REASSESSMENT_AVERAGING_WINDOW_MONTHS = 18  # 1.5 years -- Colorado's own real assessment-cycle
-                                            # convention (see input_deck.yaml's market_value comment
-                                            # for the worked Jan2023/Jun2024/Jan2025 example)
+# Which carrying_cost_prior entries are "informed" (checked against REAL historical data for that
+# specific variable, not just a pure growth/derived-latent extrapolation -- see
+# utils.prior_utils.build_market_value_informed_model) vs "uninformed" (everything else: a
+# hand-elicited level scaled by a growth latent, no variable-specific real data behind it).
+INFORMED_CARRYING_COST_PRIORS = frozenset({"market_value"})
 
 
-def months_to_first_reassessment(closing_month: int, first_reassessment_year: int) -> int:
-    """Whole months from closing to January 1 of (closing_year + first_reassessment_year) -- e.g.
-    closing_month=10 (October), first_reassessment_year=2 gives 15 (Nov+Dec of closing_year, all of
-    year closing_year+1, plus Jan of closing_year+2 -- 12*2 - (10-1) = 15). closing_year itself
-    cancels out of this formula (first_reassessment_year is already relative to it), so only
-    closing_month matters here."""
-    return first_reassessment_year * 12 - (closing_month - 1)
+def carrying_cost_prior_path(name: str) -> str:
+    """models/carrying_cost_priors/<category>/<name> -- category is "informed" or "uninformed" (see
+    INFORMED_CARRYING_COST_PRIORS). Single source of truth for this path scheme, shared between the
+    read side here (_load_carrying_cost_prior_fit) and the write side (utils.prior_utils's own
+    build_* functions) so they can never drift apart."""
+    category = "informed" if name in INFORMED_CARRYING_COST_PRIORS else "uninformed"
+    return f"carrying_cost_priors/{category}/{name}"
 
 
-def reassessment_boundary_months(closing_month: int, first_reassessment_year: int, reassessment_frequency_years: int, num_periods: int) -> list[int]:
-    """Returns the month offsets (from closing, t=0) where market_value's assessed value changes:
-    [0, M_1, M_1+P, M_1+2P, ..., M_1+(num_periods-1)*P] -- period k spans [boundaries[k],
-    boundaries[k+1]) (the last period is open-ended). Period 0 (before the first reassessment) is
-    the deterministic initial_price itself; every period from 1 onward is an AVERAGED value -- see
-    project_market_value_schedule's own docstring for the full mechanism."""
-    period_months = reassessment_frequency_years * 12
-    m1 = months_to_first_reassessment(closing_month, first_reassessment_year)
-    return [0] + [m1 + k * period_months for k in range(num_periods)]
-
-
-def historical_growth_factor(monthly_series: pd.Series, closing_calendar_date: pd.Timestamp, offset_months: int) -> float:
-    """The REAL, already-recorded ratio of the market's own index level at (closing + offset_months)
-    to its level AT closing -- offset_months must be <= 0 (a calendar month at or before closing;
-    see project_market_value_schedule's docstring for why only pre-closing months use real data
-    instead of a projection). Uses Series.asof, which returns the last valid (non-NaN) value AT OR
-    BEFORE a given timestamp -- this both skips real gap months in the raw data AND, if closing
-    itself is a near-future month the raw data doesn't extend to yet, pins to the latest actually-
-    recorded value rather than needing a separate "today vs. closing" special case."""
-    target_date = closing_calendar_date + pd.DateOffset(months=offset_months)
-    index_at_closing = monthly_series.asof(closing_calendar_date)
-    index_at_target = monthly_series.asof(target_date)
-    if pd.isna(index_at_closing) or pd.isna(index_at_target):
-        raise ValueError(
-            f"No historical data at or before {target_date.date()} or {closing_calendar_date.date()} "
-            "in this founding process's own raw series -- closing_month/closing_year (or a "
-            "reassessment window that reaches further back) predates all available historical data."
-        )
-    return index_at_target / index_at_closing
-
-
-def build_market_value_change_magnitude(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Any]:
-    """Builds market_value's own CHANGE-MAGNITUDE model: unscaled (price=1.0 basis), independent of
-    any particular scenario's horizon_years or purchase_price -- the expensive part (real historical
-    lookups + OU projections + the pre-closing/projected averaging blend, see
-    project_market_value_schedule's own docstring for the full per-reassessment mechanism) done ONCE
-    here, so a scenario run never repeats it (see this module's own docstring). Called by
-    manual_utils.build_market_value_prior_model (the build step) -- NOT by
-    project_market_value_schedule, which just loads the SAVED result and scales it.
-
-    horizon_months: the "extrapolation limit" -- how far out to precompute reassessment periods for.
-    Must cover whatever scenario.horizon_years the deck's sweep might need; defaults to 120 (10
-    years), matching every other carrying_cost_prior build function's own default.
-
-    Returns {"closing_month", "first_reassessment_year", "reassessment_frequency_years", "latent",
-    "periods": [{"start_month", "end_month" (None for the last, open-ended period), "growth_a",
-    "growth_b", "growth_sigma"}, ...]}. A period's SCALED median/lo/hi (given a live initial_price
-    and confidence level) is:
-        median = initial_price * (growth_a + growth_b)
-        lo/hi  = initial_price * (growth_a + growth_b * exp(z_lo/hi * growth_sigma))
-    (growth_a is the window's known/recorded contribution, growth_b its projected contribution,
-    growth_sigma the projected portion's own representative log-space uncertainty -- see this
-    function's body for the derivation. growth_sigma is deliberately NOT resolved to a lo/hi at any
-    particular confidence level here, so the SAME saved model answers any report_quantiles the deck
-    is set to at use time, without rebuilding.)
-    """
-    deck = deck if deck is not None else load_deck()
-    config = get_market_value_config(deck)
-    if config["latent"] not in DERIVED_LATENT_COMPONENTS:
-        raise NotImplementedError(
-            f"market_value.latent={config['latent']!r} isn't a founding process -- the pre-closing "
-            "averaging window needs REAL historical market data, which only exists for "
-            "forecast_models' three founding processes (general/home_price/market), not a synthetic "
-            "derived_latents entry."
-        )
-    latent_fit = get_growth_fit(config["latent"], deck)
-    monthly_series = load_monthly_series(get_forecast_model_name(config["latent"], deck))
-
-    closing = get_closing_date(deck)
-    closing_calendar_date = pd.Timestamp(year=closing["closing_year"], month=closing["closing_month"], day=1)
-
-    reassessment_frequency_months = config["reassessment_frequency_years"] * 12
-    m1 = months_to_first_reassessment(closing["closing_month"], config["first_reassessment_year"])
-    num_periods = max(1, -(-(horizon_months - m1) // reassessment_frequency_months) + 1)  # ceil division
-    boundaries = reassessment_boundary_months(
-        closing["closing_month"], config["first_reassessment_year"], config["reassessment_frequency_years"], num_periods
-    )
-
-    # Each reassessment k's window looks BACKWARD from its own start: [boundaries[k] - P, boundaries[k]
-    # - P + REASSESSMENT_AVERAGING_WINDOW_MONTHS) -- see this module's docstring for the worked
-    # example. Collect every window up front so the OU projection below is computed ONCE, far enough
-    # to cover the furthest-out month any window actually needs.
-    windows = [
-        list(range(boundaries[k] - reassessment_frequency_months, boundaries[k] - reassessment_frequency_months + REASSESSMENT_AVERAGING_WINDOW_MONTHS))
-        for k in range(1, len(boundaries))
-    ]
-    projected_months = sorted({m for window in windows for m in window if m > 0})
-    report_quantiles = get_report_quantiles(deck)
-    ci = (report_quantiles[0], report_quantiles[-1])
-    z_hi = norm.ppf(ci[1])
-    max_projected_h = max(projected_months) if projected_months else 1
-    projection = project_term_structure(latent_fit, p0=1.0, horizon_months=max_projected_h, ci=ci)
-    # Recover each h's own log-space sigma from the projection's own median/hi (CI-independent once
-    # divided back out by z_hi) -- so it can be re-combined with any ci at USE time, not just the
-    # one read here at build time.
-    sigma_at_h = np.log(projection["hi"] / projection["median"]) / z_hi
-
-    periods: list[dict[str, Any]] = [
-        {"start_month": 0, "end_month": boundaries[1], "growth_a": 1.0, "growth_b": 0.0, "growth_sigma": 0.0}
-    ]
-    for k in range(1, len(boundaries)):
-        window_months = windows[k - 1]
-        known_months = [m for m in window_months if m <= 0]
-        window_projected_months = [m for m in window_months if m > 0]
-        known_sum = sum(historical_growth_factor(monthly_series, closing_calendar_date, m) for m in known_months)
-        if window_projected_months:
-            projected_median_sum = sum(projection.loc[m, "median"] for m in window_projected_months)
-            representative_sigma = sum(sigma_at_h.loc[m] for m in window_projected_months) / len(window_projected_months)
-        else:
-            projected_median_sum = 0.0
-            representative_sigma = 0.0
-        n_total = len(window_months)
-        period_end = boundaries[k + 1] if k + 1 < len(boundaries) else None
-        periods.append(
-            {
-                "start_month": boundaries[k],
-                "end_month": period_end,
-                "growth_a": known_sum / n_total,
-                "growth_b": projected_median_sum / n_total,
-                "growth_sigma": representative_sigma,
-            }
-        )
-
-    return {
-        "closing_month": closing["closing_month"],
-        "first_reassessment_year": config["first_reassessment_year"],
-        "reassessment_frequency_years": config["reassessment_frequency_years"],
-        "latent": config["latent"],
-        "periods": periods,
-    }
-
-
-def _resolve_market_value_period(periods: list[dict[str, Any]], h_months: int) -> dict[str, Any]:
-    """Finds the period (see build_market_value_change_magnitude) covering h_months."""
+def resolve_period(periods: list[dict[str, Any]], h_months: int) -> dict[str, Any]:
+    """Finds the period ({"start_month", "end_month", "known_value", "projected_value",
+    "growth_sigma"} -- see utils.prior_utils.build_market_value_change_magnitude for the shape every
+    carrying_cost_prior's own saved `periods` list now uses) covering h_months. Public (not
+    `_`-prefixed), and generic over ANY prior's periods (not just market_value's, despite the name of
+    the concept it originated from -- renamed from resolve_market_value_period 2026-09-29 once every
+    carrying_cost_prior started saving this same shape): every `_project_*` read-side function below,
+    plus results.py's own per-year distribution plot, resolves periods this exact same way."""
     for period in periods:
         if h_months >= period["start_month"] and (period["end_month"] is None or h_months < period["end_month"]):
             return period
     raise ValueError(
-        f"h_months={h_months} isn't covered by any precomputed market_value period -- rebuild via "
-        "manual_utils.build_market_value_prior_model with a larger horizon_months."
+        f"h_months={h_months} isn't covered by any precomputed period -- rebuild via "
+        "utils.prior_utils.build_all_carrying_cost_prior_models with a larger horizon_months."
     )
 
 
@@ -247,26 +116,27 @@ def project_market_value_schedule(scenario: dict[str, Any], deck: dict[str, Any]
     scenario["horizon_years"] -- NOT the same thing as project_condo_value_schedule (this model's
     own continuous appreciation estimate). Anchored to scenario.closing_month/closing_year
     (TIMESTEP 0), not "today," and stair-stepped at REAL reassessment years (see
-    get_market_value_config), each new step an AVERAGE rather than a single point:
+    input_deck.get_market_value_config), each new step an AVERAGE rather than a single point:
 
     - From closing until January of (closing_year + first_reassessment_year): the value is exactly
       initial_price -- known, constant, zero variance (no reassessment has happened yet).
     - At that reassessment, and every reassessment_frequency_years after: the new value is the
-      AVERAGE of the market's own growth over the first REASSESSMENT_AVERAGING_WINDOW_MONTHS (18,
-      i.e. 1.5 years) of the reassessment_frequency_years-long window ENDING at this reassessment --
-      e.g. reassessment_frequency_years=2, reassessing Jan 2025 uses the average of Jan 2023-Jun
-      2024, then holds that value until the Jan 2027 reassessment. Whatever part of that window
-      falls BEFORE closing uses REAL historical data (historical_growth_factor); whatever part falls
-      at or after closing uses `latent`'s own projected distribution -- so a window that's e.g. 80%
-      already-recorded history only gets ~20% of a fully-projected window's uncertainty (see
-      build_market_value_change_magnitude's docstring for the exact math).
+      AVERAGE of the market's own growth over the first 18 months (1.5 years) of the
+      reassessment_frequency_years-long window ENDING at this reassessment -- e.g.
+      reassessment_frequency_years=2, reassessing Jan 2025 uses the average of Jan 2023-Jun 2024,
+      then holds that value until the Jan 2027 reassessment. Whatever part of that window falls
+      BEFORE closing uses REAL historical data; whatever part falls at or after closing uses
+      `latent`'s own projected distribution -- so a window that's e.g. 80% already-recorded history
+      only gets ~20% of a fully-projected window's uncertainty.
 
     All of the actual computation (real-data lookups, OU projections, the historical/projected
-    blend) happens ONCE at BUILD time (manual_utils.build_market_value_prior_model ->
-    build_market_value_change_magnitude) -- this function just loads that saved, UNSCALED
-    (price=1.0 basis) result and does two cheap things per requested year: find which precomputed
-    period it falls in, and scale by the deck's CURRENT initial_price and report_quantiles (both
-    read live, so changing either doesn't require a rebuild).
+    blend, and the Denver-to-Keystone dollar calibration -- see utils.prior_utils.
+    fit_market_value_calibration) happens ONCE at BUILD time (utils.prior_utils.
+    build_market_value_informed_model -> build_market_value_change_magnitude) -- this function just
+    loads that saved result, ALREADY IN USD, and does two cheap things per requested year: find
+    which precomputed period it falls in, and apply the deck's CURRENT report_quantiles (read live,
+    so changing quantiles doesn't require a rebuild). No further scaling happens here -- the saved
+    periods need no additional conversion.
 
     Returns a DataFrame indexed by year (1..horizon_years) with columns "median"/"lo"/"hi" -- the
     FULL band, not just the median (unlike project_condo_value_schedule): this is exactly what's
@@ -274,22 +144,57 @@ def project_market_value_schedule(scenario: dict[str, Any], deck: dict[str, Any]
     request that these come out as a real distribution, not a point estimate.
     """
     deck = deck if deck is not None else load_deck()
-    config = get_market_value_config(deck)
     change_magnitude = _load_carrying_cost_prior_fit("market_value")
     report_quantiles = get_report_quantiles(deck)
     z_lo, z_hi = norm.ppf((report_quantiles[0], report_quantiles[-1]))
-    initial_price = config["initial_price"]
 
     horizon_years = scenario["horizon_years"]
     years = list(range(1, horizon_years + 1))
     medians, los, his = [], [], []
     for year in years:
-        period = _resolve_market_value_period(change_magnitude["periods"], year * 12)
-        a, b, sigma = period["growth_a"], period["growth_b"], period["growth_sigma"]
-        medians.append(initial_price * (a + b))
-        los.append(initial_price * (a + b * np.exp(z_lo * sigma)))
-        his.append(initial_price * (a + b * np.exp(z_hi * sigma)))
+        period = resolve_period(change_magnitude["periods"], year * 12)
+        known, projected, sigma = period["known_value"], period["projected_value"], period["growth_sigma"]
+        medians.append(known + projected)
+        los.append(known + projected * np.exp(z_lo * sigma))
+        his.append(known + projected * np.exp(z_hi * sigma))
     return pd.DataFrame({"median": medians, "lo": los, "hi": his}, index=pd.Index(years))
+
+
+def get_combined_property_tax_rate(deck: dict[str, Any] | None = None) -> float:
+    """The single combined LOCAL+SCHOOL rate that converts a market_value dollar into a property_tax
+    dollar (assessment_rate x mill_levy for each of LOCAL/SCHOOL, weighted by their own
+    ASSESSED_VALUE_FRACTION and summed -- see compute_property_tax_schedule for the full derivation).
+    Exposed separately (not just inlined there) so a caller needing market_value's own saved PERIOD
+    STRUCTURE rescaled into tax dollars (see market_value_periods_to_tax_periods) can reuse this exact
+    rate, rather than recomputing the LOCAL/SCHOOL combination a second time."""
+    deck = deck if deck is not None else load_deck()
+    if PROPERTY_TAX_CLASSIFICATION != "residential":
+        raise NotImplementedError(
+            f"PROPERTY_TAX_CLASSIFICATION={PROPERTY_TAX_CLASSIFICATION!r} has no defined local/school "
+            "assessment_rate/mill_levy split -- only 'residential' is implemented (see that "
+            "constant's own comment for why 'lodging' isn't reachable today anyway)."
+        )
+    inputs = get_property_tax_inputs(deck)
+    return (
+        LOCAL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_local"] * inputs["mill_levy_local"]
+        + SCHOOL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_school"] * inputs["mill_levy_school"]
+    )
+
+
+def market_value_periods_to_tax_periods(
+    periods: list[dict[str, Any]], deck: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Rescales market_value's own saved periods (see utils.prior_utils.
+    build_market_value_change_magnitude) into property_tax dollar terms: known_value/projected_value
+    scaled by get_combined_property_tax_rate (growth_sigma is a unitless log-space ratio, untouched by
+    the rescale -- same reasoning project_market_value_schedule itself relies on). Exposes the PERIOD
+    STRUCTURE itself, not just compute_property_tax_schedule's own per-year band, for a caller that
+    needs to group by underlying period the way results.py's own distribution plot does."""
+    rate = get_combined_property_tax_rate(deck)
+    return [
+        {**period, "known_value": period["known_value"] * rate, "projected_value": period["projected_value"] * rate}
+        for period in periods
+    ]
 
 
 def compute_property_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
@@ -307,21 +212,12 @@ def compute_property_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any]
     local/school split itself is an internal computation detail.
     """
     deck = deck if deck is not None else load_deck()
-    if PROPERTY_TAX_CLASSIFICATION != "residential":
-        raise NotImplementedError(
-            f"PROPERTY_TAX_CLASSIFICATION={PROPERTY_TAX_CLASSIFICATION!r} has no defined local/school "
-            "assessment_rate/mill_levy split -- only 'residential' is implemented (see that "
-            "constant's own comment for why 'lodging' isn't reachable today anyway)."
-        )
     inputs = get_property_tax_inputs(deck)
     combined_assessed_rate = (
         LOCAL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_local"]
         + SCHOOL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_school"]
     )
-    combined_tax_rate = (
-        LOCAL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_local"] * inputs["mill_levy_local"]
-        + SCHOOL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_school"] * inputs["mill_levy_school"]
-    )
+    combined_tax_rate = get_combined_property_tax_rate(deck)
 
     market_value_schedule = project_market_value_schedule(scenario, deck)
     return pd.DataFrame(
@@ -336,85 +232,98 @@ def compute_property_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any]
     )
 
 
+def load_carrying_cost_prior_fit(name: str) -> dict[str, Any]:
+    """Public wrapper around _load_carrying_cost_prior_fit -- for a caller (e.g. results.py's own
+    per-scenario plots) that needs one of the six carrying_cost_priors' saved `periods`/config
+    directly, not just this module's own per-scenario Series/DataFrame projection of them."""
+    return _load_carrying_cost_prior_fit(name)
+
+
 def load_market_value_change_magnitude() -> dict[str, Any]:
-    """Public wrapper around _load_carrying_cost_prior_fit("market_value") -- for a caller (e.g.
-    results.py's own per-scenario plot) that needs the saved periods directly, not just
-    project_market_value_schedule's per-year median/lo/hi."""
-    return _load_carrying_cost_prior_fit("market_value")
+    """Public wrapper around load_carrying_cost_prior_fit("market_value") -- kept as its own named
+    function since market_value's own callers (project_market_value_schedule's own docstring,
+    results.py) read more naturally this way than the generic name."""
+    return load_carrying_cost_prior_fit("market_value")
 
 
 def _load_carrying_cost_prior_fit(name: str) -> dict[str, Any]:
-    """Loads models/carrying_cost_priors/<name>/fit.json (see
-    manual_utils.build_carrying_cost_prior_model/build_special_assessment_prior_model/
-    build_utilities_prior_model) -- a plain resolved-config dict, not an OU fit itself (no new
-    fitting happens when these are built -- see those functions' own docstrings), so this doesn't
-    reuse input_deck._load_checked_fit's OU-key validation."""
-    path = model_fit_path(f"carrying_cost_priors/{name}")
+    """Loads models/carrying_cost_priors/<category>/<name>/fit.json (see carrying_cost_prior_path
+    for the category, utils.prior_utils's own build_* functions for what writes it) -- a plain
+    resolved-config dict, not an OU fit itself (no new fitting happens when these are built -- see
+    those functions' own docstrings), so this doesn't reuse input_deck._load_checked_fit's OU-key
+    validation."""
+    path = model_fit_path(carrying_cost_prior_path(name))
     if not path.exists() or path.stat().st_size == 0:
         raise FileNotFoundError(
-            f"carrying_cost_priors/{name}/fit.json doesn't exist or is empty -- run "
-            "manual_utils.build_all_carrying_cost_prior_models (called automatically by "
+            f"{carrying_cost_prior_path(name)}/fit.json doesn't exist or is empty -- run "
+            "utils.prior_utils.build_all_carrying_cost_prior_models (called automatically by "
             "run/main.py) first."
         )
     return load_fit(path)
 
 
 def _project_carrying_cost_prior(name: str, horizon_years: int, deck: dict[str, Any] | None = None) -> pd.Series:
-    """Projects one of the simple LEVEL+GROWTH priors (hoa_dues_annual/insurance_annual/
-    maintenance_annual) to a per-year Series (1..horizon_years), using its saved config + the named
-    latent's own fit."""
-    deck = deck if deck is not None else load_deck()
+    """Projects insurance_annual/maintenance_annual to a per-year Series (1..horizon_years) -- a pure
+    LOOKUP against its saved FULL-MONTHLY-RESOLUTION `periods` (see
+    utils.prior_utils.bake_monthly_periods), no re-projection at scenario-run time (standardized
+    2026-09-29, matching project_market_value_schedule's own "build once, read many times"
+    convention). Each of these represents a CONTINUOUSLY-evolving annual-cost estimate (not a real
+    monthly bill), so a single lookup at the year's own end is the right annual figure -- unlike
+    hoa_dues_annual/utilities, which are genuine monthly bills and need _project_hoa_dues_annual/
+    _project_utilities_annual's own SUM instead. Queries year*12 - 1 (the period covering that month
+    holds the value AT h=year*12, its own period's end -- see bake_monthly_periods's own docstring)."""
     config = _load_carrying_cost_prior_fit(name)
-    latent_fit = get_growth_fit(config["latent"], deck)
-    extra_log_variance = np.log(1 + config["level_cv"] ** 2)
-    projection = project_term_structure(
-        latent_fit, p0=config["level_median"], horizon_months=horizon_years * 12, extra_log_variance=extra_log_variance
-    )
-    year_end_months = [year * 12 for year in range(1, horizon_years + 1)]
-    return projection.loc[year_end_months, "median"].set_axis(range(1, horizon_years + 1)).rename(name)
+    periods_by_year = [resolve_period(config["periods"], year * 12 - 1) for year in range(1, horizon_years + 1)]
+    values = [period["known_value"] + period["projected_value"] for period in periods_by_year]
+    return pd.Series(values, index=pd.Index(range(1, horizon_years + 1)), name=name)
+
+
+def _project_hoa_dues_annual(horizon_years: int, deck: dict[str, Any] | None = None) -> pd.Series:
+    """Annual HOA total = sum of the 12 MONTHLY periods falling in that year (see
+    utils.prior_utils.bake_hoa_monthly_periods -- each month's own payment, including January's
+    association-fee spike, already correctly split) -- hoa_dues_annual is a genuine monthly bill, so
+    (like utilities) its annual total needs a SUM, not the single year-end lookup
+    _project_carrying_cost_prior uses for insurance_annual/maintenance_annual's own continuously-
+    evolving estimates."""
+    config = _load_carrying_cost_prior_fit("hoa_dues_annual")
+    periods = config["periods"]
+    totals = [
+        sum(
+            period["known_value"] + period["projected_value"]
+            for period in periods
+            if (year - 1) * 12 <= period["start_month"] < year * 12
+        )
+        for year in range(1, horizon_years + 1)
+    ]
+    return pd.Series(totals, index=pd.Index(range(1, horizon_years + 1)), name="hoa_dues")
 
 
 def _project_special_assessment_expected(horizon_years: int, deck: dict[str, Any] | None = None) -> pd.Series:
-    """Expected annual special-assessment cost = annual_probability x projected severity median
-    (severity grows via its own latent; annual_probability doesn't -- see that field's own deck
-    comment)."""
-    deck = deck if deck is not None else load_deck()
+    """Expected annual special-assessment cost -- a pure LOOKUP against its saved FULL-MONTHLY-
+    RESOLUTION `periods` (already annual_probability x projected severity median, see
+    utils.prior_utils.build_special_assessment_prior_model), same convention as
+    _project_carrying_cost_prior (a continuously-evolving estimate, not a real monthly bill)."""
     config = _load_carrying_cost_prior_fit("special_assessment")
-    latent_fit = get_growth_fit(config["latent"], deck)
-    extra_log_variance = np.log(1 + config["severity_cv"] ** 2)
-    projection = project_term_structure(
-        latent_fit,
-        p0=config["severity_median"],
-        horizon_months=horizon_years * 12,
-        extra_log_variance=extra_log_variance,
-    )
-    year_end_months = [year * 12 for year in range(1, horizon_years + 1)]
-    severity = projection.loc[year_end_months, "median"].set_axis(range(1, horizon_years + 1))
-    return (severity * config["annual_probability"]).rename("special_assessment_expected")
+    periods_by_year = [resolve_period(config["periods"], year * 12 - 1) for year in range(1, horizon_years + 1)]
+    values = [period["known_value"] + period["projected_value"] for period in periods_by_year]
+    return pd.Series(values, index=pd.Index(range(1, horizon_years + 1)), name="special_assessment_expected")
 
 
 def _project_utilities_annual(horizon_years: int, deck: dict[str, Any] | None = None) -> pd.Series:
-    """Annual utilities cost = sum of all 12 months' own projected median, each month projected
-    INDEPENDENTLY from its own level/cv via the utilities latent (h_months=0 is "now" for every
-    month's own projection, so h_months=12*year correctly lands on that same calendar month year
-    years out -- see manual_utils.build_utilities_prior_model's own docstring)."""
-    deck = deck if deck is not None else load_deck()
+    """Annual utilities cost = sum of the 12 MONTHLY periods falling in that year (see
+    utils.prior_utils.bake_calendar_month_periods) -- a pure LOOKUP, no re-projection at scenario-run
+    time, same convention as _project_hoa_dues_annual."""
     config = _load_carrying_cost_prior_fit("utilities")
-    latent_fit = get_growth_fit(config["latent"], deck)
-    medians_by_month = config["level_medians_by_month"]
-    cvs_by_month = config["level_cvs_by_month"]
-    year_end_months = [year * 12 for year in range(1, horizon_years + 1)]
-
-    monthly_projections = [
-        project_term_structure(
-            latent_fit,
-            p0=medians_by_month[month],
-            horizon_months=horizon_years * 12,
-            extra_log_variance=np.log(1 + cvs_by_month[month] ** 2),
-        ).loc[year_end_months, "median"]
-        for month in medians_by_month
+    periods = config["periods"]
+    totals = [
+        sum(
+            period["known_value"] + period["projected_value"]
+            for period in periods
+            if (year - 1) * 12 <= period["start_month"] < year * 12
+        )
+        for year in range(1, horizon_years + 1)
     ]
-    return sum(monthly_projections).set_axis(range(1, horizon_years + 1)).rename("utilities")
+    return pd.Series(totals, index=pd.Index(range(1, horizon_years + 1)), name="utilities")
 
 
 def compute_carrying_costs_schedule(
@@ -437,7 +346,7 @@ def compute_carrying_costs_schedule(
     schedule = pd.DataFrame(
         {
             "property_tax": property_tax_schedule["tax_median"],
-            "hoa_dues": _project_carrying_cost_prior("hoa_dues_annual", horizon_years, deck),
+            "hoa_dues": _project_hoa_dues_annual(horizon_years, deck),
             "insurance": _project_carrying_cost_prior("insurance_annual", horizon_years, deck),
             "maintenance": _project_carrying_cost_prior("maintenance_annual", horizon_years, deck),
             "special_assessment_expected": _project_special_assessment_expected(horizon_years, deck),
@@ -462,3 +371,71 @@ def compute_carrying_costs(scenario: dict[str, Any], deck: dict[str, Any] | None
         "property_tax_schedule": property_tax_schedule,
         "total_carrying_costs": annual_schedule["total"].sum(),
     }
+
+
+def compute_total_carrying_costs_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
+    """Combines property_tax + hoa_dues + insurance + maintenance + utilities into ONE MONTHLY total
+    cost distribution (1..horizon_months). DELIBERATELY EXCLUDES special_assessment -- its own rare,
+    spiky risk is a separate, deferred "what-if" concern (see results.py's own module docstring and
+    the "carrying-costs-known-value-redesign" project notes): folding a small-probability,
+    large-severity mixture into this sum would misleadingly smear a spiky tail risk into an
+    ordinary-looking smooth confidence band, which is exactly what the user asked NOT to do. If this
+    exclusion is ever revisited, it must be a deliberate decision, not something silently reintroduced
+    here.
+
+    property_tax/insurance/maintenance are saved as ANNUAL-cadence quantities (one saved period
+    represents the FULL YEAR's cost, evaluated continuously) -- divided by 12 here to get each one's
+    own MONTHLY contribution. hoa_dues/utilities are already genuine MONTHLY bills, used as-is (scale
+    1.0). Getting this scale factor right per variable is exactly the "some are yearly, some are
+    monthly" bookkeeping the user asked to take care with.
+
+    Each contributing period is `known_value + projected_value*exp(Z*growth_sigma)` -- i.e. a
+    deterministic `known_value` plus a lognormal-ish `projected_value` component. Summing several such
+    (assumed INDEPENDENT -- each driven by a DIFFERENT fitted latent process: construction_cost,
+    insurance's own, maintenance's own, utilities' own, home_price for property_tax) components has no
+    closed form in general, so this uses the same MOMENT-MATCHING approximation this codebase already
+    relies on elsewhere (e.g. combining derived_latents components): sum each component's own real
+    MEAN and VARIANCE in closed form, then approximate the total as a single lognormal with that same
+    mean/variance (solving for the equivalent median/sigma) -- closed-form throughout, no Monte Carlo.
+
+    Returns a DataFrame indexed by month (1..horizon_months) with columns "median", "lo", "hi".
+    """
+    deck = deck if deck is not None else load_deck()
+    horizon_months = scenario["horizon_years"] * 12
+    report_quantiles = get_report_quantiles(deck)
+    z_lo, z_hi = norm.ppf((report_quantiles[0], report_quantiles[-1]))
+
+    tax_periods = market_value_periods_to_tax_periods(load_market_value_change_magnitude()["periods"], deck)
+    contributions = [
+        (tax_periods, 1 / 12),
+        (_load_carrying_cost_prior_fit("hoa_dues_annual")["periods"], 1.0),
+        (_load_carrying_cost_prior_fit("insurance_annual")["periods"], 1 / 12),
+        (_load_carrying_cost_prior_fit("maintenance_annual")["periods"], 1 / 12),
+        (_load_carrying_cost_prior_fit("utilities")["periods"], 1.0),
+    ]
+
+    medians, los, his = [], [], []
+    for month in range(horizon_months):
+        combined_mean = 0.0
+        combined_var = 0.0
+        for periods, scale in contributions:
+            period = resolve_period(periods, month)
+            known = period["known_value"] * scale
+            projected = period["projected_value"] * scale
+            sigma = period["growth_sigma"]
+            combined_mean += known + projected * np.exp(sigma**2 / 2)
+            combined_var += (projected**2) * np.exp(sigma**2) * (np.exp(sigma**2) - 1)
+
+        if combined_var < 1e-12 or combined_mean <= 0:
+            medians.append(combined_mean)
+            los.append(combined_mean)
+            his.append(combined_mean)
+            continue
+        cv_sq = combined_var / combined_mean**2
+        sigma_eff = float(np.sqrt(np.log(1 + cv_sq)))
+        median_eff = combined_mean * np.exp(-(sigma_eff**2) / 2)
+        medians.append(median_eff)
+        los.append(median_eff * np.exp(z_lo * sigma_eff))
+        his.append(median_eff * np.exp(z_hi * sigma_eff))
+
+    return pd.DataFrame({"median": medians, "lo": los, "hi": his}, index=pd.Index(range(1, horizon_months + 1), name="month"))

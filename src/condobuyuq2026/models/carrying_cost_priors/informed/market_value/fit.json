@@ -1,0 +1,73 @@
+{
+  "closing_month": 10,
+  "first_reassessment_year": 1,
+  "reassessment_frequency_years": 2,
+  "latent": "home_price",
+  "calibration": {
+    "slope": 1305.3551061375592,
+    "intercept": 145507.11322121284,
+    "observations": [
+      {
+        "effective_year": 2023,
+        "denver_window_avg": 289.80074847075554,
+        "keystone_actual": 523800.0
+      },
+      {
+        "effective_year": 2025,
+        "denver_window_avg": 314.0087205784389,
+        "keystone_actual": 555400
+      }
+    ]
+  },
+  "periods": [
+    {
+      "start_month": 0,
+      "end_month": 3,
+      "known_value": 555400,
+      "projected_value": 0.0,
+      "growth_sigma": 0.0
+    },
+    {
+      "start_month": 3,
+      "end_month": 27,
+      "known_value": 557611.8998020675,
+      "projected_value": 0.0,
+      "growth_sigma": 0.0
+    },
+    {
+      "start_month": 27,
+      "end_month": 51,
+      "known_value": 145507.11322121284,
+      "projected_value": 416520.16217443324,
+      "growth_sigma": 0.026423181091383707
+    },
+    {
+      "start_month": 51,
+      "end_month": 75,
+      "known_value": 145507.11322121284,
+      "projected_value": 441890.86445840937,
+      "growth_sigma": 0.09643919586626543
+    },
+    {
+      "start_month": 75,
+      "end_month": 99,
+      "known_value": 145507.11322121284,
+      "projected_value": 482868.1048138121,
+      "growth_sigma": 0.15614468736895679
+    },
+    {
+      "start_month": 99,
+      "end_month": 123,
+      "known_value": 145507.11322121284,
+      "projected_value": 532258.5176918152,
+      "growth_sigma": 0.20443217895155522
+    },
+    {
+      "start_month": 123,
+      "end_month": null,
+      "known_value": 145507.11322121284,
+      "projected_value": 588209.8032339977,
+      "growth_sigma": 0.2447903781411995
+    }
+  ]
+}

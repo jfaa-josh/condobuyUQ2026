@@ -266,7 +266,8 @@ acquisition:
   purchase_closing_costs:
     # total = fixed_fees + (percent_of_price * purchase_price). Named "purchase_" (not just
     # "closing_costs") to stay unambiguous against exit.selling_costs, which is the sell-side
-    # closing costs.
+    # closing costs. Does NOT include a property-tax proration credit -- see the ASSUMPTION note at
+    # the top of carrying_costs.property_tax for why that's deliberately left out.
     # fixed_fees: dollar costs independent of price (title insurance, escrow, recording,
     #   attorney fees, etc.). percent_of_price: costs that scale with price (loan origination
     #   points, transfer tax, etc.).
@@ -351,25 +352,45 @@ financing:
 # -----------------------------------------------------------------------------
 # 6. carrying_costs
 # -----------------------------------------------------------------------------
-# LEVEL + GROWTH pattern (hoa_dues_annual, insurance_annual, maintenance_annual, special_assessment,
-# utilities): each has a hand-elicited LEVEL (`dist: lognormal, median, cv` -- tune by hand, no
-# `latent:` of its own) and a `growth:` block naming ONLY a `latent:` (construction_cost/insurance/
-# maintenance/utilities, per entry) -- no separate growth `dist`/`median`/`cv`. The named latent's
+# Every entry below except special_assessment starts from a single STARTING VALUE and grows it
+# forward via a `growth: {latent: ...}` block naming ONLY a `latent:` (construction_cost/insurance/
+# maintenance/utilities, per entry), never a separate growth `dist`/`median`/`cv`. The named latent's
 # own fit (models/derived_variables/<latent>/fit.json, already built) supplies BOTH the mean growth
-# AND how its own uncertainty widens/mean-reverts over the horizon, via the exact closed-form
-# machinery forecast_models already uses (ou_fitting.project_term_structure, called with p0 = the
-# LEVEL's median). The level's own `cv` becomes a separate, CONSTANT (non-compounding) log-variance
-# added on top -- see project_term_structure's `extra_log_variance` parameter and
-# manual_utils.build_carrying_cost_prior for exactly how these combine (the level's own year-to-year
-# deviation and the multi-year growth trend are deliberately two different processes, not one).
+# AND how its own uncertainty widens over the horizon, via the exact closed-form machinery
+# forecast_models already uses (ou_fitting.project_term_structure, p0 = the starting value above).
+# Two kinds of starting value:
+# - KNOWN (hoa_dues_annual, utilities): a real, currently-billed truth number -- 0% uncertain at
+#   closing, the same role market_value.initial_price plays. No separate spread parameter at all --
+#   ALL uncertainty comes purely from the latent's own growth process, which correctly starts at 0 at
+#   h=0 and grows from there (an earlier design added a hand-picked `cv` as a CONSTANT extra
+#   log-variance on top, which never actually shrank to 0 at h=0 the way the growth process itself
+#   does -- see utils.prior_utils.build_hoa_dues_prior_model's own docstring for the full story).
+# - GUESS (insurance_annual, maintenance_annual -- REDESIGNED 2026-09-30 to move insurance_annual
+#   from KNOWN to this: a real current premium turned out to be an ESTIMATE too, not known truth data
+#   the way HOA dues are): a genuine hand-elicited guess, since there's no real truth data for either.
+#   Its own point-in-time uncertainty is DERIVED from the latent's own marginal/stationary rate
+#   variance (see utils.prior_utils._build_guess_plus_growth_model) rather than a separately
+#   hand-picked cv -- a CONSTANT term, not compounding with horizon.
 #
 # Built the same way `derived_latents` are (see that section) -- NOT read directly from the deck at
-# runtime: manual_utils.build_all_carrying_cost_prior_models combines each entry's level + growth
-# latent into a saved projection (models/carrying_cost_priors/<name>/fit.json + plot), rebuilt
-# automatically every time run/main.py runs (so an edit here always takes effect on the next run,
-# without needing a separate manual step) -- carrying_costs.py then just loads the result.
+# runtime: utils.prior_utils.build_all_carrying_cost_prior_models combines each entry's starting value
+# + growth latent into a saved projection (models/carrying_cost_priors/<name>/fit.json + plot),
+# rebuilt automatically every time run/main.py runs (so an edit here always takes effect on the next
+# run, without needing a separate manual step) -- carrying_costs.py then just loads the result.
 carrying_costs:
   property_tax:
+    # ASSUMPTION -- NO CLOSING-DAY PRORATION CREDIT IS MODELED: in a real CO closing, property tax
+    # for a given tax year is billed the FOLLOWING year (2026's tax is billed in 2027), so at
+    # closing the SELLER typically gives the BUYER a cash CREDIT for the seller's own prorated
+    # share of the year up to the closing date -- since the buyer ends up the one who actually pays
+    # the whole year's bill once it's billed. That credit would reduce total_cash_outlay at closing
+    # (acquisition.py), not add to it. This model has NO such credit: it simply starts charging a
+    # full 12 months of property_tax from closing_month/closing_year forward (see market_value
+    # below), with nothing netted against acquisition costs for the partial first year the seller
+    # actually owned. Decided 2026-09-28: left as-is deliberately -- acceptable for this model's
+    # purpose, not an oversight. Revisit acquisition.purchase_closing_costs if precise closing-day
+    # cash timing (rather than a reasonable rolling annual estimate) ever becomes the goal.
+    #
     # Colorado's REAL two-step system (assessed value = market_value x assessment_rate, then tax =
     # assessed value x mill_levy), with LOCAL and SCHOOL each their own assessment_rate/mill_levy
     # (see assessment_rate below) applied to a different FRACTION of market_value (see
@@ -393,37 +414,71 @@ carrying_costs:
       # the same thing as this model's own sale-price projection (carrying_costs.
       # project_condo_value_schedule, which tracks TRUE ongoing appreciation continuously via
       # forecast_models.home_price). Deliberately NOT the LEVEL+GROWTH pattern the other
-      # carrying_costs entries use (no median/cv of its own) -- instead, the assessed value is
-      # STAIR-STEPPED, anchored to scenario.closing_month/closing_year (timestep 0) rather than a
-      # real calendar date read at run time, and each new step is an AVERAGE over part of the prior
-      # assessment window, not a single point -- see carrying_costs.project_market_value_schedule
-      # for the exact mechanism. Concretely:
-      #   - From closing until January of (closing_year + first_reassessment_year), the value is
-      #     exactly initial_price -- constant and fully known (no county reassessment has happened
-      #     yet).
-      #   - At that first reassessment (month 1 of the target year) and every
-      #     reassessment_frequency_years after, the new value is the AVERAGE of the market's own
-      #     growth over the first 1.5 years (18 months) of the 2-year assessment window that's
-      #     ENDING at this reassessment -- e.g. a reassessment on Jan 1 2025 (with
-      #     reassessment_frequency_years=2) uses the average of Jan 2023-Jun 2024, then holds that
-      #     new value constant until the Jan 2027 reassessment.
-      #   - Whatever part of that 18-month averaging window falls BEFORE closing uses REAL
-      #     historical market data (not a projection); whatever part falls after closing uses
-      #     `latent`'s own projected distribution -- so if e.g. 80% of a window is already-recorded
-      #     history, only the remaining 20% contributes any uncertainty to that reassessment's value.
-      # `initial_price` scales the WHOLE stair-stepped path (a plain multiplier, not a distribution
-      # of its own) -- all of this entry's own uncertainty comes from `latent`'s fitted process.
-      kind: constant
+      # carrying_costs entries use (no median/cv of its own).
+      #
+      # "REASSESSMENT" MEANS THE EFFECTIVE DATE THE NEW VALUE TAKES EFFECT FOR TAXES -- NOT the
+      # window of real market data used to calculate it (that's a separate, automatically-derived
+      # thing, explained below; you never set it directly). Concretely:
+      #   - From closing until the next reassessment, the value is EXACTLY initial_price -- known,
+      #     constant, no estimating happens for this stretch at all.
+      #   - `first_reassessment_year` says WHEN (which January) the assessor's value NEXT changes:
+      #     1 = the January immediately after closing_year; 2 = the January after that; etc. If
+      #     closing falls INSIDE an already-active assessment cycle (the normal case -- e.g.
+      #     closing partway through 2026, with a 2025-2026 cycle already live and reflected in
+      #     initial_price), this must point to the NEXT cycle's own start, not the one already in
+      #     effect -- closing Oct 2026 with a live 2025-2026 cycle means the next reassessment is
+      #     Jan 2027, so first_reassessment_year=1 (a value of 2 would wrongly describe a cycle
+      #     starting a year late, Jan 2028).
+      #   - Every `reassessment_frequency_years` after that (2 years, Colorado's real cycle), the
+      #     value changes again, the same way.
+      #   - THE AVERAGING WINDOW ITSELF is NOT a separate input: it's always the first 18 months
+      #     (1.5 years) of the reassessment_frequency_years-long period ENDING at that reassessment,
+      #     derived automatically from the effective date -- e.g. a reassessment effective Jan 2025
+      #     (2-year cycle) is based on averaging real market data from Jan 2023-Jun 2024. Whatever
+      #     part of that derived window falls BEFORE closing uses REAL historical data; whatever
+      #     part falls after closing uses `latent`'s own projected distribution -- so a window
+      #     that's e.g. 80% already-recorded history only gets ~20% of a fully-projected window's
+      #     uncertainty.
+      #
+      # FITTING/VALIDATION APPROACH (short version -- see utils.prior_utils.
+      # fit_market_value_calibration for the full one): the Denver-metro home_price index supplies
+      # the underlying TREND and its uncertainty (fit from real Denver data); a separate line
+      # (slope + intercept, least squares) then CALIBRATES that Denver trend into actual Keystone
+      # dollars, fit against this property's own known real reassessment values below. Every saved
+      # number is already in USD -- Denver "index points" never leak past this calibration step.
+      #
+      # SCALING: for the CURRENT (pre-first-reassessment) period, the model reproduces initial_price
+      # EXACTLY -- 0% uncertainty, never estimated, and never re-derived from the calibration line
+      # even though that line is itself informed by this same value (see carrying_costs.py's own
+      # docstring for the exact algebra guaranteeing this regardless of anything below). For every
+      # LATER reassessment, the model applies the fitted calibration line to the Denver-metro
+      # home_price index's own real/projected level -- see validation_data_source below for where
+      # the line comes from.
+      kind: market_value_schedule    # this block's own distinct shape -- NOT a single constant value
+                                      #   (fixed 2026-09-29: `kind: constant` here was always wrong,
+                                      #   just never actually checked -- see input_deck._expect_kind)
       initial_price: 555400          # example -- MUST be the property's actual price/assessed
                                       #   value AS OF THE CLOSING DATE (scenario.closing_month/
-                                      #   closing_year), not today's or any other date's -- every
-                                      #   projection below is anchored to that exact month.
+                                      #   closing_year), not today's or any other date's. This is
+                                      #   the answer for right now -- never estimated.
       reassessment_frequency_years: 2
-      first_reassessment_year: 2     # 1 = the calendar year immediately following closing (i.e.
-                                      #   reassessment on Jan 1 of closing_year+1); 2 = the year
-                                      #   after that; etc. Reassessment always lands on month 1
-                                      #   (January) of the target year.
+      first_reassessment_year: 1     # see the "REASSESSMENT MEANS..." note above -- must point to
+                                      #   the NEXT (future) reassessment after closing, not the one
+                                      #   already live and reflected in initial_price.
       latent: home_price
+      validation_data_source: 166_Argentine_Ct_Unit1433_keystone_mkt_value.csv
+                                      # Filename under data/manual/ holding this property's OWN past
+                                      # real reassessment records (effective_year, the averaging
+                                      # window it was based on, assessed_value -- see that file's
+                                      # own format in data/manual/README.md), used to fit the
+                                      # calibration line above (utils.prior_utils.
+                                      # fit_market_value_calibration). The model ALSO automatically
+                                      # includes a record for the CURRENT cycle, built from
+                                      # initial_price/first_reassessment_year/
+                                      # reassessment_frequency_years above -- don't duplicate that in
+                                      # the CSV. With only 1 known point (no CSV data yet), the line
+                                      # degenerates to a plain proportional scaling; with 2 it passes
+                                      # through both exactly; with more, a real least-squares fit.
     assessment_rate:
       # LOCAL and SCHOOL are Colorado's own two, separately-set components (each its own
       # assessment_rate AND mill_levy -- see this field's own header comment for how they combine).
@@ -446,12 +501,34 @@ carrying_costs:
           value: 0.015343             # example
 
   hoa_dues_annual:
-    # Annual HOA dues (USD) -- typical current-year level (tune by hand); growth via
-    # construction_cost's own fitted process (see this section's header comment).
-    kind: prior
-    dist: lognormal
-    median: 9600                     # example — $800/month
-    cv: 0.15
+    # KNOWN-VALUE+GROWTH. initial_annual_dues and initial_annual_association_dues are both REAL truth
+    # values -- what this property's HOA actually bills right now, not hand-tuned guesses -- so
+    # there's 0% uncertainty about either at closing, exactly like market_value.initial_price. They're
+    # COMBINED into one starting value (utils.prior_utils.build_hoa_dues_prior_model) that's projected
+    # as a SINGLE draw from construction_cost's own fitted OU process, so the association charge
+    # shares in the same growth and uncertainty as the rest, rather than being frozen at today's
+    # dollar amount forever. No separate cv (a hand-picked cv would have been added as a CONSTANT
+    # extra term at every horizon, including h=0, which is why an earlier version of this model's own
+    # diagnostic plot never actually started at 0 uncertainty -- see build_hoa_dues_prior_model's own
+    # docstring for the full root-cause writeup).
+    #
+    # NO FLOOR/CLAMP of any kind: an earlier version of this model enforced "dues only go up" with a
+    # hard floor at the initial value, which the user correctly flagged as producing a mixed/censored
+    # shape (a point mass at the floor plus a truncated lognormal above it), not a real lognormal one.
+    # Removed -- construction_cost's own fitted drift is trusted as-is, a genuine unmodified lognormal.
+    #
+    # DISPLAY: the saved model.png/results plot show this as a MONTHLY stair-step (HOA dues are billed
+    # monthly, not annually), splitting the grown combined total back into a flat recurring payment
+    # for 11 months plus a taller January payment carrying the association share -- see
+    # plotting.forecast_plots.plot_hoa_dues_monthly_stairstep.
+    kind: known_plus_growth
+    initial_annual_dues: 8700                  # example -- TODAY's actual annual HOA dues (the
+                                                #   regular monthly-billed portion, annualized),
+                                                #   exactly as billed -- not a guess
+    initial_annual_association_dues: 325       # example -- TODAY's actual once-a-year special
+                                                #   charge (e.g. a board-set capital-reserve line
+                                                #   item) -- set to 0 if this property's HOA doesn't
+                                                #   have one
     growth:
       latent: construction_cost
 
@@ -460,6 +537,13 @@ carrying_costs:
     # severity's own median via construction_cost -- a special assessment years from now should
     # cost more in nominal dollars, for the same reason HOA dues do. p itself is NOT grown (the
     # chance of a bad year isn't modeled as trending).
+    #
+    # UNCHANGED as of 2026-09-29 -- modeling this as a smooth ever-present confidence band (like the
+    # other five entries) would either wash out a real, infrequent, spiky risk into a misleadingly
+    # calm-looking band, or blow up the whole model's own bands to reflect a risk that mostly doesn't
+    # apply in any given year. How to model this properly (a frequency-severity / actuarial reserve
+    # approach, kept OUT of the main confidence bands, likely as its own separate "what-if" result)
+    # is a real, larger design question -- deliberately deferred, not yet decided.
     kind: prior
     dist: mixture
     p: 0.05                          # example — annual probability
@@ -471,49 +555,59 @@ carrying_costs:
       latent: construction_cost
 
   insurance_annual:
-    # Must reflect an STR-rated policy, not a standard homeowner's policy. LEVEL/GROWTH pattern --
-    # see this section's header comment.
-    kind: prior
-    dist: lognormal
-    median: 3500
-    cv: 0.20
+    # GUESS+GROWTH (moved here 2026-09-30 from a known-value shape -- a current insurance premium
+    # turned out to also be an ESTIMATE, not known truth data the way hoa_dues_annual's dues are, so
+    # it needs the same point-in-time-uncertainty treatment maintenance_annual already has).
+    # initial_guess_premium is a best guess at this property's current premium (an STR-rated policy,
+    # not a standard homeowner's policy); its own point-uncertainty is DERIVED from `latent`'s own
+    # fitted process rather than a separately hand-picked cv (see
+    # utils.prior_utils._build_guess_plus_growth_model). No floor/no-decrease assumption here (unlike
+    # hoa_dues_annual): insurance premiums genuinely can fall, e.g. a real market softening.
+    kind: guess_plus_growth
+    initial_guess_premium: 1200      # example -- your best guess at this property's current annual
+                                      #   premium (not a truth value)
     growth:
       latent: insurance
 
   utilities:
-    # Monthly (USD), seasonal shape (winter heating spike) via its own `months:` map -- no shared
-    # level-driving latent (each month's own median/cv IS the level). GROWTH scales every month's
-    # median by the SAME year's growth factor (construction_cost's own fitted process would be the
-    # wrong latent here -- utilities has its own, see derived_latents.utilities), preserving the
-    # seasonal shape while the overall level inflates over the horizon.
-    kind: prior
-    dist: lognormal
-    resolution: monthly
-    months:
-      jan: {median: 320, cv: 0.2}
-      feb: {median: 300, cv: 0.2}
-      mar: {median: 250, cv: 0.2}
-      apr: {median: 180, cv: 0.2}
-      may: {median: 130, cv: 0.2}
-      jun: {median: 110, cv: 0.2}
-      jul: {median: 110, cv: 0.2}
-      aug: {median: 120, cv: 0.2}
-      sep: {median: 130, cv: 0.2}
-      oct: {median: 160, cv: 0.2}
-      nov: {median: 220, cv: 0.2}
-      dec: {median: 300, cv: 0.2}
+    # SEASONAL+GROWTH (redesigned 2026-09-29, replacing 12 hand-typed monthly median/cv pairs).
+    # initial_annual_average_monthly_cost is this property's REAL current average monthly utility
+    # bill (0% uncertain) -- spread across the year via a TEMPERATURE-DERIVED seasonal shape (colder
+    # month = higher cost) fit to seasonal_data_source below, then each month grown independently via
+    # `latent`'s own fitted process exactly as before (see utils.prior_utils.
+    # build_utilities_prior_model for the exact sine-fit/rescale mechanism, and its own
+    # seasonal_shape.png for the derivation). No more per-month cv -- like hoa_dues_annual/
+    # insurance_annual, each month's current value is treated as KNOWN, all uncertainty coming from
+    # `latent`'s own growth process.
+    kind: seasonal_plus_growth
+    initial_annual_average_monthly_cost: 119  # example -- this property's ACTUAL average monthly
+                                               #   utility bill (annual total / 12), not any single
+                                               #   month's own bill
+    seasonal_data_source: keystone_co_monthly_temperature_averages.csv
+                                               # Filename under data/manual/ -- 12 rows (month,
+                                               # avg_temp_f), each month's own average of that
+                                               # month's average daily high and average daily low.
+                                               # See data/manual/README.md for the source and the
+                                               # exact sine-fit/inversion this drives.
     growth:
       latent: utilities
 
   maintenance_annual:
-    # Annual maintenance (USD) -- a flat dollar LEVEL, deliberately NOT a fraction of the condo's
-    # market value (that dependency would mean this couldn't be pre-built once like hoa_dues_annual/
-    # insurance_annual). median is a flat dollar estimate (a rule of thumb like "~1% of purchase
-    # price" is a reasonable way to pick a starting number, but pick a plain dollar figure here).
-    kind: prior
-    dist: lognormal
-    median: 2000
-    cv: 0.25
+    # GUESS+GROWTH (redesigned 2026-09-29): unlike hoa_dues_annual/insurance_annual/utilities, there
+    # is genuinely NO truth data for TODAY's maintenance cost -- initial_guess_mean is a real
+    # hand-elicited GUESS (a rule of thumb like "~1% of purchase price" is a reasonable way to pick a
+    # starting number, but enter a plain dollar figure here, deliberately NOT a fraction of the
+    # condo's market value -- that dependency would mean this couldn't be pre-built once like the
+    # other entries). Because it's a guess, not a truth value, there IS real point-in-time
+    # uncertainty about it -- but rather than a separately hand-picked cv, that uncertainty is now
+    # DERIVED directly from `latent`'s own fitted process (its own marginal/stationary rate variance,
+    # sig^2*tau/2 -- see utils.prior_utils.build_maintenance_prior_model's own docstring for why this
+    # is a reasonable stand-in for "how uncertain is a plausible guess about the level right now").
+    # That derived uncertainty is a CONSTANT (doesn't compound with horizon) -- uncertainty in the
+    # level NOW, not uncertainty further inflated by extrapolating over a long horizon.
+    kind: guess_plus_growth
+    initial_guess_mean: 2000          # example -- your best guess at today's actual annual
+                                       #   maintenance cost (not a truth value)
     growth:
       latent: maintenance
 

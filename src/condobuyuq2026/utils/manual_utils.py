@@ -12,14 +12,17 @@ fetch_<source>_* function returns the same row shape regardless of source -- a l
 {"year", "period" ("M01".."M12"), "periodName", "value"} dicts -- so everything downstream
 (filter_monthly here, then save_raw_csv/load_raw_csv/to_monthly_series in raw_data.py, and beyond
 that fit_annual_ou etc. in ou_fitting.py) works identically no matter which source a given model
-was built from. raw_data.py holds the disk-storage/parsing half of this pipeline, not this module
--- split out so carrying_costs.py can read raw historical data without a circular import back
-through here (this module already imports FROM carrying_costs.py, see below).
+was built from. raw_data.py holds the disk-storage/parsing half of this pipeline, not this module.
+
+carrying_cost_prior building (hoa_dues_annual, market_value, ...) lives in utils/prior_utils.py, NOT
+here -- split out (2026-09-28) because those are rebuilt automatically from the deck on every run,
+never a deliberate one-off external-data pull the way everything else in this module is. This
+module has no dependency on prior_utils.py or carrying_costs.py (prior_utils.py imports FROM this
+module, for model_fit_path/model_plots_dir, not the other way around).
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -28,28 +31,18 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-from condobuyuq2026.carrying_costs import build_market_value_change_magnitude
 from condobuyuq2026.input_deck import (
-    get_carrying_cost_prior_config,
     get_derived_latents,
     get_forecast_model_general,
     get_forecast_model_home_price,
     get_forecast_model_market,
-    get_growth_fit,
-    get_market_value_config,
     get_report_quantiles,
-    get_special_assessment_config,
-    get_utilities_prior_config,
 )
 from condobuyuq2026.input_deck import load_deck as _load_deck
 from condobuyuq2026.paths import MODELS_DIR
 from condobuyuq2026.paths import model_fit_path as _model_fit_path
-from condobuyuq2026.plotting.forecast_plots import (
-    plot_derived_latent_model,
-    plot_market_value_periods,
-    plot_price_level_projection,
-)
-from condobuyuq2026.utils.ou_fitting import project_monthly_rate, project_term_structure, save_fit
+from condobuyuq2026.plotting.forecast_plots import plot_derived_latent_model
+from condobuyuq2026.utils.ou_fitting import project_monthly_rate, save_fit
 
 BLS_API_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 # BLS API v2's per-request limits: a registration key raises them, but doesn't require them —
@@ -324,227 +317,3 @@ def build_all_derived_latent_models(
     deck = deck if deck is not None else _load_deck()
     names = get_derived_latents(deck)
     return {name: build_derived_latent_model(name, deck, horizon_months) for name in names}
-
-
-_CARRYING_COST_PRIOR_OUTER_CI = (0.01, 0.99)  # wide reference band, same convention as other build scripts
-
-
-def build_carrying_cost_prior_model(
-    name: str, deck: dict[str, Any] | None = None, horizon_months: int = 120, ylabel: str = "USD/year"
-) -> dict[str, Path]:
-    """Builds one of carrying_costs' LEVEL+GROWTH entries (hoa_dues_annual/insurance_annual/
-    maintenance_annual/property_tax.market_value -- NOT special_assessment or utilities, see
-    build_special_assessment_prior_model/build_utilities_prior_model for their own shapes) into a
-    saved projection: the named growth latent's own fit (already built) applied to the level's own
-    median via ou_fitting.project_term_structure, with the level's own cv folded in as a constant
-    extra_log_variance (see that parameter's own docstring, and input_deck.yaml's carrying_costs
-    section header comment for why this replaces a separately hand-set growth rate).
-
-    No new "fitting" happens here -- this is a formula, not information learned from data -- so
-    fit.json just echoes the resolved deck config back out ({"level_median", "level_cv", "latent"}),
-    and the real value of this build step is the plot: a sanity check while tuning the level prior
-    by hand, the same workflow build_derived_latent_model already gives derived_latents. ylabel
-    defaults to "USD/year" (an annual cost) -- market_value passes "USD" instead (a value, not a
-    yearly flow).
-
-    Saves models/carrying_cost_priors/<name>/fit.json and .../plots/model.png. Returns
-    {"fit_path": ..., "plot_path": ...}.
-    """
-    deck = deck if deck is not None else _load_deck()
-    config = get_carrying_cost_prior_config(name, deck)
-    latent_fit = get_growth_fit(config["latent"], deck)
-    extra_log_variance = np.log(1 + config["level_cv"] ** 2)
-
-    report_quantiles = get_report_quantiles(deck)
-    ci = (report_quantiles[0], report_quantiles[-1])
-
-    projection = project_term_structure(
-        latent_fit, p0=config["level_median"], horizon_months=horizon_months, ci=ci, extra_log_variance=extra_log_variance
-    )
-    outer_projection = project_term_structure(
-        latent_fit,
-        p0=config["level_median"],
-        horizon_months=horizon_months,
-        ci=_CARRYING_COST_PRIOR_OUTER_CI,
-        extra_log_variance=extra_log_variance,
-    )
-
-    fit_path = model_fit_path(f"carrying_cost_priors/{name}")
-    with fit_path.open("w", encoding="utf-8") as f:
-        json.dump({"level_median": config["level_median"], "level_cv": config["level_cv"], "latent": config["latent"]}, f, indent=2)
-
-    plot_path = model_plots_dir(f"carrying_cost_priors/{name}") / "model.png"
-    plot_price_level_projection(
-        projection,
-        outer_projection,
-        title=f"{name} — carrying-cost prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% band)",
-        save_path=plot_path,
-        ylabel=ylabel,
-    )
-    return {"fit_path": fit_path, "plot_path": plot_path}
-
-
-def build_special_assessment_prior_model(
-    deck: dict[str, Any] | None = None, horizon_months: int = 120
-) -> dict[str, Path]:
-    """Builds carrying_costs.special_assessment's own projection: SAME mechanism as
-    build_carrying_cost_prior_model, applied to the mixture's severity.median/cv (p, the annual
-    probability, is NOT grown -- see that field's own deck comment -- so it's just echoed into
-    fit.json as-is for carrying_costs.py to read). Saves models/carrying_cost_priors/
-    special_assessment/fit.json + plot."""
-    deck = deck if deck is not None else _load_deck()
-    config = get_special_assessment_config(deck)
-    latent_fit = get_growth_fit(config["latent"], deck)
-    extra_log_variance = np.log(1 + config["severity_cv"] ** 2)
-
-    report_quantiles = get_report_quantiles(deck)
-    ci = (report_quantiles[0], report_quantiles[-1])
-
-    projection = project_term_structure(
-        latent_fit,
-        p0=config["severity_median"],
-        horizon_months=horizon_months,
-        ci=ci,
-        extra_log_variance=extra_log_variance,
-    )
-    outer_projection = project_term_structure(
-        latent_fit,
-        p0=config["severity_median"],
-        horizon_months=horizon_months,
-        ci=_CARRYING_COST_PRIOR_OUTER_CI,
-        extra_log_variance=extra_log_variance,
-    )
-
-    fit_path = model_fit_path("carrying_cost_priors/special_assessment")
-    with fit_path.open("w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "annual_probability": config["annual_probability"],
-                "severity_median": config["severity_median"],
-                "severity_cv": config["severity_cv"],
-                "latent": config["latent"],
-            },
-            f,
-            indent=2,
-        )
-
-    plot_path = model_plots_dir("carrying_cost_priors/special_assessment") / "model.png"
-    plot_price_level_projection(
-        projection,
-        outer_projection,
-        title=f"special_assessment severity — carrying-cost prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% band)",
-        save_path=plot_path,
-        ylabel="USD (if it occurs)",
-    )
-    return {"fit_path": fit_path, "plot_path": plot_path}
-
-
-def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Path]:
-    """Builds carrying_costs.utilities' own projection. Unlike the other four entries, utilities
-    has 12 separate monthly levels (its seasonal shape), not one -- fit.json keeps all 12 medians/
-    cvs as given (carrying_costs.py projects each month independently at USE time, via
-    ou_fitting.project_term_structure with that month's own median as p0 -- h_months=0 is "now," so
-    h_months=12*n correctly lands on that same calendar month n years out).
-
-    The saved PLOT is a sanity check only, on the ANNUAL TOTAL (sum of all 12 months' medians,
-    projected using a weighted-average cv across months as one representative extra_log_variance --
-    an approximation ONLY for this plot; carrying_costs.py's real per-scenario computation always
-    uses each month's own exact projection, never this blended approximation).
-    """
-    deck = deck if deck is not None else _load_deck()
-    config = get_utilities_prior_config(deck)
-    latent_fit = get_growth_fit(config["latent"], deck)
-    medians_by_month = config["level_medians_by_month"]
-    cvs_by_month = config["level_cvs_by_month"]
-
-    report_quantiles = get_report_quantiles(deck)
-    ci = (report_quantiles[0], report_quantiles[-1])
-
-    annual_total_year0 = sum(medians_by_month.values())
-    weighted_cv = sum(medians_by_month[m] * cvs_by_month[m] for m in medians_by_month) / annual_total_year0
-    extra_log_variance = np.log(1 + weighted_cv**2)
-
-    annual_projection = project_term_structure(
-        latent_fit, p0=annual_total_year0, horizon_months=horizon_months, ci=ci, extra_log_variance=extra_log_variance
-    )
-    annual_outer_projection = project_term_structure(
-        latent_fit,
-        p0=annual_total_year0,
-        horizon_months=horizon_months,
-        ci=_CARRYING_COST_PRIOR_OUTER_CI,
-        extra_log_variance=extra_log_variance,
-    )
-
-    fit_path = model_fit_path("carrying_cost_priors/utilities")
-    with fit_path.open("w", encoding="utf-8") as f:
-        json.dump(
-            {"level_medians_by_month": medians_by_month, "level_cvs_by_month": cvs_by_month, "latent": config["latent"]},
-            f,
-            indent=2,
-        )
-
-    plot_path = model_plots_dir("carrying_cost_priors/utilities") / "model.png"
-    plot_price_level_projection(
-        annual_projection,
-        annual_outer_projection,
-        title=f"utilities (annual total) — carrying-cost prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% band)",
-        save_path=plot_path,
-        ylabel="USD/year",
-    )
-    return {"fit_path": fit_path, "plot_path": plot_path}
-
-
-def build_market_value_prior_model(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Path]:
-    """Builds carrying_costs.property_tax.market_value's own CHANGE-MAGNITUDE model (see
-    carrying_costs.build_market_value_change_magnitude for the actual computation -- real historical
-    data + OU projections + the pre-closing/projected averaging blend, done ONCE here) and a
-    sanity-check plot. Unlike the other four LEVEL+GROWTH entries, this fit.json is genuinely a
-    MODEL that needs real computation to produce (not just an echo of deck config) -- but it's still
-    UNSCALED (price=1.0 basis, see that function's own docstring), so a scenario run still never
-    repeats this work, just scales the saved periods by its own live initial_price.
-
-    The saved plot draws each reassessment period as its OWN independent object (see
-    plotting.forecast_plots.plot_market_value_periods) -- a clean vertical break at each
-    reassessment instead of a diagonal line connecting periods, since the value doesn't actually
-    move between reassessments. Saves models/carrying_cost_priors/market_value/fit.json +
-    plots/model.png.
-    """
-    deck = deck if deck is not None else _load_deck()
-    change_magnitude = build_market_value_change_magnitude(deck, horizon_months)
-    initial_price = get_market_value_config(deck)["initial_price"]
-    report_quantiles = get_report_quantiles(deck)
-    ci = (report_quantiles[0], report_quantiles[-1])
-
-    fit_path = model_fit_path("carrying_cost_priors/market_value")
-    with fit_path.open("w", encoding="utf-8") as f:
-        json.dump(change_magnitude, f, indent=2)
-
-    plot_path = model_plots_dir("carrying_cost_priors/market_value") / "model.png"
-    plot_market_value_periods(
-        change_magnitude["periods"],
-        initial_price,
-        ci,
-        _CARRYING_COST_PRIOR_OUTER_CI,
-        horizon_months=horizon_months,
-        title=f"market_value (stair-stepped) — carrying-cost prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% band)",
-        save_path=plot_path,
-    )
-    return {"fit_path": fit_path, "plot_path": plot_path}
-
-
-def build_all_carrying_cost_prior_models(
-    deck: dict[str, Any] | None = None, horizon_months: int = 120
-) -> dict[str, dict[str, Path]]:
-    """Builds every carrying_costs LEVEL+GROWTH entry's projection (hoa_dues_annual,
-    insurance_annual, maintenance_annual, special_assessment, utilities), plus property_tax.
-    market_value's own (differently-shaped, see build_market_value_prior_model) projection. Returns
-    {name: {"fit_path": ..., "plot_path": ...}}."""
-    deck = deck if deck is not None else _load_deck()
-    results = {
-        name: build_carrying_cost_prior_model(name, deck, horizon_months)
-        for name in ("hoa_dues_annual", "insurance_annual", "maintenance_annual")
-    }
-    results["market_value"] = build_market_value_prior_model(deck, horizon_months)
-    results["special_assessment"] = build_special_assessment_prior_model(deck, horizon_months)
-    results["utilities"] = build_utilities_prior_model(deck, horizon_months)
-    return results

@@ -65,6 +65,19 @@ def _sweep(entry: dict[str, Any]) -> list[Any]:
     return entry["values"]
 
 
+def _expect_kind(entry: dict[str, Any], expected: str, where: str) -> None:
+    """Validates a COMPOUND deck entry's own `kind` label (market_value, hoa_dues_annual, etc. --
+    a whole multi-field sub-object, not a single scalar leaf the way _constant/_sweep's own `kind`
+    is) actually matches the shape its own getter is about to read. Before 2026-09-29 these
+    block-level `kind` tags were pure, UNCHECKED documentation -- and wrong at least once
+    (market_value was labeled `kind: constant` despite being a multi-field stair-step config, not a
+    single value, which is exactly the kind of mistake this catches going forward instead of
+    silently reading a mislabeled block)."""
+    actual = entry.get("kind")
+    if actual != expected:
+        raise ValueError(f"{where}: expected kind: {expected!r}, got {actual!r} -- deck entry shape looks wrong")
+
+
 def get_scenarios(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Expands `scenario`'s sweeps -- alternatives x horizon_years x residency_state x
     purchase_price, see the deck's "SWEEPS ARE DELIBERATELY MINIMAL" note -- into the full
@@ -221,8 +234,8 @@ def get_property_tax_inputs(deck: dict[str, Any] | None = None) -> dict[str, flo
     assessment rate are NOT here -- HARDCODED in carrying_costs.py (see that module's
     PROPERTY_TAX_CLASSIFICATION/LODGING_ASSESSMENT_RATE constants and their own comments for why),
     not deck fields, since 2026-09-26. Returns {"assessment_rate_local", "mill_levy_local",
-    "assessment_rate_school", "mill_levy_school"}. market_value has its own LEVEL+GROWTH shape --
-    see get_carrying_cost_prior_config(\"market_value\", deck)."""
+    "assessment_rate_school", "mill_levy_school"}. market_value has its own dedicated shape -- see
+    get_market_value_config."""
     deck = deck if deck is not None else load_deck()
     assessment_rate = deck["carrying_costs"]["property_tax"]["assessment_rate"]
     return {
@@ -233,43 +246,94 @@ def get_property_tax_inputs(deck: dict[str, Any] | None = None) -> dict[str, flo
     }
 
 
-def get_carrying_cost_prior_config(name: str, deck: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Unwraps the LEVEL+GROWTH shape shared by carrying_costs.hoa_dues_annual/insurance_annual/
-    maintenance_annual (see that section's own header comment) for name in {"hoa_dues_annual",
-    "insurance_annual", "maintenance_annual"}. Returns {"level_median", "level_cv", "latent"}
-    (growth.latent) -- used by manual_utils.build_carrying_cost_prior_model. NOT
-    carrying_costs.property_tax.market_value (REDESIGNED 2026-09-26 -- no longer this shape at all,
-    see get_market_value_config), special_assessment (a mixture, see get_special_assessment_config),
-    or utilities (monthly resolution, see get_utilities_prior_config) -- those have their own
-    shapes."""
+def get_hoa_dues_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps carrying_costs.hoa_dues_annual's KNOWN-VALUE+GROWTH shape (REDESIGNED 2026-09-30 --
+    see that field's own deck comment for the full reasoning). Two separate REAL truth inputs --
+    `initial_annual_dues` (the regular monthly-billed dues, annualized) and
+    `initial_annual_association_dues` (a separate once-a-year special charge) -- are COMBINED into
+    ONE value (utils.prior_utils.build_hoa_dues_prior_model) that gets grown/uncertain TOGETHER via
+    `latent` (construction_cost)'s own fitted OU process: the user's own explicit call, so the
+    association charge shares in the same growth and uncertainty as the rest instead of being frozen
+    at today's dollar amount forever. No hand-elicited cv (0% uncertain at h=0, same role as
+    market_value.initial_price) and NO floor/clamp of any kind (an earlier version of this design
+    clipped the whole band at the initial value to enforce "dues only go up" -- the user correctly
+    called this out as producing a mixed/censored shape, not a real lognormal one; removed entirely --
+    a real lognormal, driven purely by construction_cost's own fitted drift, is trusted as-is).
+    Returns {"initial_annual_dues", "initial_annual_association_dues", "latent"}."""
     deck = deck if deck is not None else load_deck()
-    entry = deck["carrying_costs"][name]
-    return {"level_median": entry["median"], "level_cv": entry["cv"], "latent": entry["growth"]["latent"]}
+    entry = deck["carrying_costs"]["hoa_dues_annual"]
+    _expect_kind(entry, "known_plus_growth", "carrying_costs.hoa_dues_annual")
+    return {
+        "initial_annual_dues": entry["initial_annual_dues"],
+        "initial_annual_association_dues": entry["initial_annual_association_dues"],
+        "latent": entry["growth"]["latent"],
+    }
+
+
+def get_insurance_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps carrying_costs.insurance_annual's GUESS+GROWTH shape (REDESIGNED 2026-09-30: moved
+    from a KNOWN-VALUE shape to the same shape maintenance_annual uses, per the user's own
+    correction -- a real current insurance premium isn't actually known truth data the way
+    hoa_dues_annual's dues are; it's an ESTIMATE, so there should be real point-in-time uncertainty
+    about it too). `initial_guess_premium` is a genuine hand-elicited guess; its own point-uncertainty
+    is DERIVED from `latent`'s own fitted process rather than a separately hand-picked cv -- see
+    get_maintenance_config's own docstring for the exact reasoning, shared identically here (both
+    built by utils.prior_utils's shared _build_guess_plus_growth_model). Returns
+    {"initial_guess_premium", "latent"}."""
+    deck = deck if deck is not None else load_deck()
+    entry = deck["carrying_costs"]["insurance_annual"]
+    _expect_kind(entry, "guess_plus_growth", "carrying_costs.insurance_annual")
+    return {"initial_guess_premium": entry["initial_guess_premium"], "latent": entry["growth"]["latent"]}
+
+
+def get_maintenance_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps carrying_costs.maintenance_annual's GUESS+GROWTH shape: there's no real truth data for
+    TODAY's maintenance cost -- `initial_guess_mean` is a genuine hand-elicited guess, so there IS
+    real point-in-time uncertainty about it. Rather than a separately hand-picked cv, that
+    point-uncertainty is DERIVED from `latent`'s own fitted process (see utils.prior_utils.
+    _build_guess_plus_growth_model for the exact formula: the OU process's own marginal/stationary
+    rate variance, sig^2*tau/2, applied as a CONSTANT extra_log_variance -- i.e. "how uncertain is a
+    plausible guess about the level right now," not "how much does this compound over a 10-year
+    horizon," which is what a naively-large cv would otherwise smuggle in). Returns
+    {"initial_guess_mean", "latent"}."""
+    deck = deck if deck is not None else load_deck()
+    entry = deck["carrying_costs"]["maintenance_annual"]
+    _expect_kind(entry, "guess_plus_growth", "carrying_costs.maintenance_annual")
+    return {"initial_guess_mean": entry["initial_guess_mean"], "latent": entry["growth"]["latent"]}
 
 
 def get_market_value_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
     """Unwraps carrying_costs.property_tax.market_value's OWN shape (see that field's own deck
     comment for why it's not the generic LEVEL+GROWTH pattern -- a closing-date-anchored,
-    averaged-window stair-step instead). Returns {"initial_price", "reassessment_frequency_years",
+    averaged-window stair-step instead, and for the "reassessment means the EFFECTIVE DATE, not the
+    averaging window" clarification). Returns {"initial_price", "reassessment_frequency_years",
     "first_reassessment_year" (an int -- 1 = the January immediately after closing_year, see that
-    field's own deck comment), "latent"}. Used by carrying_costs.project_market_value_schedule and
-    manual_utils.build_market_value_prior_model."""
+    field's own deck comment), "latent", "validation_data_source" (a filename under data/manual/, or
+    None if the field is absent/blank -- see that field's own deck comment; used by
+    utils.prior_utils.load_market_value_history)}. Used by carrying_costs.project_market_value_schedule
+    and utils.prior_utils.build_market_value_change_magnitude."""
     deck = deck if deck is not None else load_deck()
     entry = deck["carrying_costs"]["property_tax"]["market_value"]
+    _expect_kind(entry, "market_value_schedule", "carrying_costs.property_tax.market_value")
     return {
         "initial_price": entry["initial_price"],
         "reassessment_frequency_years": entry["reassessment_frequency_years"],
         "first_reassessment_year": entry["first_reassessment_year"],
         "latent": entry["latent"],
+        "validation_data_source": entry.get("validation_data_source") or None,
     }
 
 
 def get_special_assessment_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
     """Unwraps carrying_costs.special_assessment's mixture shape. Returns {"annual_probability" (p,
     NOT grown -- see that field's own deck comment), "severity_median", "severity_cv" (grown via
-    "latent"), "latent"}."""
+    "latent"), "latent"}. UNCHANGED as of 2026-09-29 -- how to model this rare-event tail risk
+    without polluting the normal confidence bands is a separate, larger design question the user
+    deliberately deferred (see [[project-fit-json-standardization]] or its own follow-up memory for
+    the actuarial-practice options discussed)."""
     deck = deck if deck is not None else load_deck()
     entry = deck["carrying_costs"]["special_assessment"]
+    _expect_kind(entry, "prior", "carrying_costs.special_assessment")
     return {
         "annual_probability": entry["p"],
         "severity_median": entry["severity"]["median"],
@@ -279,16 +343,19 @@ def get_special_assessment_config(deck: dict[str, Any] | None = None) -> dict[st
 
 
 def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Unwraps carrying_costs.utilities' monthly-resolution shape. Returns {"level_medians_by_month"
-    ({"jan": 320.0, ...}), "level_cvs_by_month" ({"jan": 0.2, ...}), "latent"} -- see
-    manual_utils.build_utilities_prior_model for how growth scales every month's own median by the
-    same year's growth factor, preserving the seasonal shape."""
+    """Unwraps carrying_costs.utilities' SEASONAL+GROWTH shape (redesigned 2026-09-29): no more
+    12 hand-typed monthly median/cv pairs -- `initial_annual_average_monthly_cost` (a single known
+    truth number, this property's own real average monthly utility bill) is spread across the year
+    via a temperature-derived seasonal SHAPE (see utils.prior_utils.build_utilities_prior_model and
+    fit_temperature_seasonal_shape for the sine-fit mechanism), then grown via `latent` exactly like
+    every other entry. Returns {"initial_annual_average_monthly_cost", "seasonal_data_source" (a
+    filename under data/manual/, monthly average temperatures), "latent"}."""
     deck = deck if deck is not None else load_deck()
     entry = deck["carrying_costs"]["utilities"]
-    months = entry["months"]
+    _expect_kind(entry, "seasonal_plus_growth", "carrying_costs.utilities")
     return {
-        "level_medians_by_month": {month: values["median"] for month, values in months.items()},
-        "level_cvs_by_month": {month: values["cv"] for month, values in months.items()},
+        "initial_annual_average_monthly_cost": entry["initial_annual_average_monthly_cost"],
+        "seasonal_data_source": entry["seasonal_data_source"],
         "latent": entry["growth"]["latent"],
     }
 
@@ -443,8 +510,7 @@ def get_growth_fit(name: str, deck: dict[str, Any] | None = None) -> dict[str, f
     get_fitted_forecast_model) or a derived_latents entry (construction_cost/insurance/maintenance/
     adr/utilities -- e.g. hoa_dues_annual's, via get_derived_latent_fit). Prefer this over calling
     either directly when the caller doesn't already know which kind a given `growth.latent` name is
-    -- manual_utils.build_carrying_cost_prior_model and carrying_costs.py's own per-scenario
-    projections both do."""
+    -- every utils.prior_utils.build_* carrying-cost-prior function does."""
     deck = deck if deck is not None else load_deck()
     if name in DERIVED_LATENT_COMPONENTS:
         return get_fitted_forecast_model(name, deck)

@@ -97,7 +97,7 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         scenario["carrying_costs"] = carrying_costs
         print_carrying_costs_report(carrying_costs)
 
-        result_plots = save_carrying_cost_result_plots(scenario, carrying_costs, deck)
+        result_plots = save_carrying_cost_result_plots(scenario, deck)
         print_carrying_cost_result_plots_report(result_plots)
 
         owner_taxes = compute_owner_taxes(scenario, deck)
