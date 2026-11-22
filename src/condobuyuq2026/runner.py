@@ -43,6 +43,7 @@ from condobuyuq2026.reporting import (
     print_reference_report,
     print_renter_taxes_report,
     print_scenario_comparison_placeholder,
+    print_special_assessment_report,
     print_taxes_report,
 )
 from condobuyuq2026.results import save_carrying_cost_result_plots
@@ -96,6 +97,7 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         carrying_costs = compute_carrying_costs(scenario, deck)
         scenario["carrying_costs"] = carrying_costs
         print_carrying_costs_report(carrying_costs)
+        print_special_assessment_report(carrying_costs["special_assessment"])
 
         result_plots = save_carrying_cost_result_plots(scenario, deck)
         print_carrying_cost_result_plots_report(result_plots)

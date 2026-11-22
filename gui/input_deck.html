@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Condo Input Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
+   One narrow column: sticky section nav, then one panel per deck section (1-5 built, 6-13 placeholders).
+   Every section is rendered from the SECTIONS schema in the script below, and all values live in one
+   `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
+:root {
+  --bg: #f3f6f5;
+  --surface: #ffffff;
+  --sunk: #e9eeec;
+  --fg: #16201e;
+  --muted: #586964;
+  --line: #d6dfdc;
+  --accent: #0d6b61;
+  --accent-ink: #ffffff;
+  --ok: #24724a;
+  --ok-bg: #dcefe4;
+  --warn: #9a5b00;
+  --warn-bg: #f8ead2;
+  --bad: #a3271f;
+  --bad-bg: #f7dcd9;
+  --s-market: #0d6b61;
+  --s-home: #b8670e;
+  --s-general: #4a5fb5;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1413; --surface: #162120; --sunk: #111a19; --fg: #e3ebe9; --muted: #95a8a3; --line: #283634;
+    --accent: #4dc3b2; --accent-ink: #052019;
+    --ok: #74d39c; --ok-bg: #173226; --warn: #f0b552; --warn-bg: #3a2a10; --bad: #ff8f85; --bad-bg: #3c1a17;
+    --s-market: #4dc3b2; --s-home: #f0a54a; --s-general: #8fa2f0;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1413; --surface: #162120; --sunk: #111a19; --fg: #e3ebe9; --muted: #95a8a3; --line: #283634;
+  --accent: #4dc3b2; --accent-ink: #052019;
+  --ok: #74d39c; --ok-bg: #173226; --warn: #f0b552; --warn-bg: #3a2a10; --bad: #ff8f85; --bad-bg: #3c1a17;
+  --s-market: #4dc3b2; --s-home: #f0a54a; --s-general: #8fa2f0;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: 72px; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 32px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: 2rem; line-height: 1.1; }
+h2 { font-size: 1.3rem; }
+h3 { font-size: 1rem; }
+p { margin: 0; }
+code, .key { font-family: var(--f-mono); font-size: 0.8rem; }
+.lede { color: var(--muted); max-width: 64ch; margin-top: 6px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+/* sticky section nav */
+.nav { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); margin-inline: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); padding: 10px max(16px, env(safe-area-inset-left, 0px)); }
+.nav ol { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
+.nav a { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; text-decoration: none; color: var(--fg); font-size: 0.85rem; font-weight: 500; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.nav a b { font-family: var(--f-mono); font-weight: 500; font-size: 0.75rem; color: var(--muted); }
+.nav a:hover { border-color: var(--accent); }
+.nav a.soon { color: var(--muted); background: transparent; border-style: dashed; }
+
+/* sections */
+section { display: grid; gap: 14px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sec-head h2 .n { font-family: var(--f-mono); font-weight: 500; color: var(--muted); margin-right: 8px; }
+.sec-intro { color: var(--muted); font-size: 0.9rem; max-width: 70ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 18px; }
+.group-title { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding-bottom: 6px; border-bottom: 1px dashed var(--line); }
+
+/* fields */
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px 16px; }
+.field { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.f-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
+.f-top label, .f-top .lbl { font-weight: 600; font-size: 0.9rem; }
+.f-key { color: var(--muted); }
+.hint { color: var(--muted); font-size: 0.82rem; }
+.kind { font-family: var(--f-mono); font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.kind.sweep { border-color: var(--accent); color: var(--accent); }
+.kind.fitted { border-color: var(--s-general); color: var(--s-general); }
+input[type="number"], input[type="text"], select {
+  width: 100%; font: inherit; color: var(--fg); background: var(--sunk);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-width: 0;
+}
+input[readonly] { color: var(--muted); }
+.affix { display: flex; align-items: stretch; }
+.affix input { border-radius: 0; }
+.affix input:first-child { border-radius: 8px 0 0 8px; }
+.affix input:last-child { border-radius: 0 8px 8px 0; }
+.affix span { display: grid; place-items: center; padding: 0 10px; font-family: var(--f-mono); font-size: 0.85rem; color: var(--muted); background: var(--sunk); border: 1px solid var(--line); }
+.affix span:first-child { border-right: 0; border-radius: 8px 0 0 8px; }
+.affix span:last-child { border-left: 0; border-radius: 0 8px 8px 0; }
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, .chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* chips: categorical sweep toggles + numeric sweep value lists */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; }
+.chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.chip span { display: inline-grid; place-items: center; min-width: 52px; height: 38px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--sunk); font-family: var(--f-mono); font-weight: 500; cursor: pointer; }
+.chip input:checked + span { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.vals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.val { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 4px 0 11px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-family: var(--f-mono); font-size: 0.88rem; font-weight: 500; }
+.val button { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: inherit; font-size: 1rem; cursor: pointer; line-height: 1; }
+.val button:hover { background: color-mix(in srgb, var(--accent-ink) 20%, transparent); }
+.add { display: flex; gap: 6px; }
+.add input { max-width: 160px; }
+.btn { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.f-err { font-size: 0.82rem; color: var(--bad); min-height: 0; }
+.f-err:empty { display: none; }
+
+/* derived latent weight cards */
+.latents { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.latent { background: var(--sunk); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; }
+.latent .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.w { display: grid; grid-template-columns: 88px 1fr 44px; align-items: center; gap: 8px; font-size: 0.85rem; }
+.w .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.w output { font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; }
+input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+.stack { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--line); }
+.stack i { display: block; height: 100%; }
+.stack .idio { background: repeating-linear-gradient(45deg, var(--line) 0 4px, var(--surface) 4px 8px); }
+.drives { font-size: 0.8rem; color: var(--muted); }
+
+/* fitted model cards */
+.models { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.model { background: var(--sunk); border-radius: 10px; padding: 14px; display: grid; gap: 8px; align-content: start; }
+.model select { background: var(--surface); }
+
+/* derived preview */
+.preview { border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 10px; }
+.preview .sec-head h3 { font-size: 0.95rem; }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.stat { background: var(--sunk); border-radius: 8px; padding: 10px 12px; }
+.stat b { display: block; font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 1.2rem; font-weight: 500; }
+.stat small { color: var(--muted); font-size: 0.78rem; }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; background: var(--sunk); }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+td.dim { color: var(--muted); }
+.ids { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; font-family: var(--f-body); white-space: nowrap; }
+.pill.mono { font-family: var(--f-mono); font-weight: 500; }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.pill.neutral { background: var(--sunk); color: var(--muted); }
+
+/* placeholders 6+ */
+.placeholder { border: 1px dashed var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 8px; background: transparent; }
+.placeholder .keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.placeholder .keys span { font-family: var(--f-mono); font-size: 0.76rem; padding: 2px 8px; border-radius: 6px; background: var(--sunk); color: var(--muted); }
+.next { border-left: 3px solid var(--warn); background: var(--warn-bg); border-radius: 0 10px 10px 0; }
+
+details.debug { font-size: 0.85rem; }
+details.debug summary { cursor: pointer; color: var(--muted); font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; }
+details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; }
+
+@media (max-width: 480px) {
+  h1 { font-size: 1.6rem; }
+  .panel { padding: 14px; }
+  .w { grid-template-columns: 78px 1fr 40px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
+    <h1>Buy vs. Rent Input Deck</h1>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–5 are editable here. Sections 6–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+  </header>
+
+  <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
+
+  <div id="sections" style="display:grid;gap:36px"></div>
+
+  <details class="debug">
+    <summary>Current values as a deck object (debug)</summary>
+    <pre id="debug"></pre>
+  </details>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s, r) => (r || document).querySelector(s);
+
+  // ---------------------------------------------------------------------------
+  // State: mirrors input_deck.yaml's nesting (kind wrappers dropped; sweeps are arrays).
+  // Initial values are the deck's current example values.
+  // ---------------------------------------------------------------------------
+  const deck = {
+    scenario: {
+      reference: "rent",
+      alternatives: ["buy"],
+      horizon_years: [1, 5, 10],
+      residency_state: ["FL"],
+      property_state: "CO",
+      purchase_price: [375000, 400000],
+      closing_month: 10,
+      closing_year: 2026
+    },
+    forecast_models: {
+      general: "bls_cpi_all_nsa_1984_1_2026_8",
+      home_price: "fred_denver_homes_1987_1_2026_8",
+      market: "yfinance_spx_1984_1_2026_9"
+    },
+    derived_latents: {
+      construction_cost: { market: 0.0, home_price: 0.6, general: 0.4 },
+      insurance: { market: 0.0, home_price: 0.9, general: 0.1 },
+      maintenance: { market: 0.0, home_price: 0.5, general: 0.5 },
+      adr: { market: 0.2, home_price: 0.5, general: 0.3 },
+      utilities: { market: 0.3, home_price: 0.0, general: 0.7 }
+    },
+    acquisition: {
+      purchase_closing_costs: { fixed_fees: 2500, percent_of_price: 0.0 },
+      land_fraction: 0.0,
+      personal_cash_at_closing: 200000,
+      family_loan: 100000,
+      initial_furnishing: 0
+    },
+    financing: {
+      mortgage_rate: { primary_residence: 0.0625, second_home: 0.065, investment: 0.0725 },
+      non_warrantable_premium: 0.0,
+      loan_term_years: 30
+    }
+  };
+
+  const get = (path) => path.split(".").reduce((o, k) => o[k], deck);
+  const set = (path, v) => { const ks = path.split("."); const last = ks.pop(); ks.reduce((o, k) => o[k], deck)[last] = v; };
+
+  const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  const usdK = (v) => v >= 1e6 ? "$" + (v / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M" : "$" + Math.round(v / 1000) + "k";
+  const pct = (f, d = 2) => (f * 100).toFixed(d).replace(/\.?0+$/, "") + "%";
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Schema. Hints are condensed from input_deck.yaml's own comments.
+  // ---------------------------------------------------------------------------
+  const SECTIONS = [
+    {
+      n: 1, id: "scenario", title: "Scenario",
+      intro: "Every sweep in the deck lives here. The full run is alternatives × horizon_years × residency_state × purchase_price, so the count grows quickly as you add values.",
+      groups: [
+        { title: "Sweeps", fields: [
+          { path: "scenario.alternatives", label: "Alternatives", kind: "sweep", type: "sweep-cat", options: ["buy"], hint: "Compared against the reference below." },
+          { path: "scenario.residency_state", label: "Residency state", kind: "sweep", type: "sweep-cat", options: ["FL", "CO"], hint: "Tax domicile. Applies to both branches symmetrically." },
+          { path: "scenario.horizon_years", label: "Horizon", kind: "sweep", type: "sweep-num", unit: "yr", min: 1, max: 30, step: 1, hint: "Years held. Both branches always sell or liquidate at the horizon, and both are taxed." },
+          { path: "scenario.purchase_price", label: "Purchase price", kind: "sweep", type: "sweep-num", money: true, min: 1, step: 5000, wide: true, hint: "This is the real input. acquisition.purchase_price is only a stub that points here." }
+        ]},
+        { title: "Fixed", fields: [
+          { path: "scenario.reference", label: "Reference", kind: "constant", type: "fixed", hint: "The baseline being compared against. Fixed to rent." },
+          { path: "scenario.property_state", label: "Property state", kind: "constant", type: "select", options: ["CO", "FL"], hint: "Where the condo, or the rent branch's comparable place, is located." },
+          { path: "scenario.closing_month", label: "Closing month", kind: "constant", type: "month", hint: "With closing year, this is timestep 0 for month-indexed models." },
+          { path: "scenario.closing_year", label: "Closing year", kind: "constant", type: "number", min: 2000, max: 2100, step: 1 }
+        ]}
+      ],
+      preview: previewScenario
+    },
+    {
+      n: 2, id: "forecast_models", title: "Forecast models",
+      intro: "The three founding processes. Each one is fitted from real data as an annualized growth rate on a monthly AR(1) path. These are ground truth: nothing else in the deck feeds back into them.",
+      custom: renderForecastModels
+    },
+    {
+      n: 3, id: "derived_latents", title: "Derived latents",
+      intro: "Each latent X is a weighted mix of the three founding processes plus its own idiosyncratic share: X = a·market + b·home_price + c·general + √(1 − a² − b² − c²)·shock. The weights are hand-set placeholders for now.",
+      custom: renderLatents
+    },
+    {
+      n: 4, id: "acquisition", title: "Acquisition",
+      intro: "Purchase closing costs and the cash put in at closing. The loan amount is derived from these, not entered.",
+      groups: [
+        { title: "Price", fields: [
+          { path: "scenario.purchase_price", label: "Purchase price", kind: "sweep", type: "stub", hint: "Stub only. Set it in section 1.", wide: true }
+        ]},
+        { title: "Purchase closing costs · total = fixed_fees + percent_of_price × price", fields: [
+          { path: "acquisition.purchase_closing_costs.fixed_fees", label: "Fixed fees", kind: "constant", type: "money", step: 100, hint: "Title, escrow, recording, attorney. These don't scale with price." },
+          { path: "acquisition.purchase_closing_costs.percent_of_price", label: "Percent of price", kind: "constant", type: "percent", step: 0.05, max: 10, hint: "Origination points, transfer tax. These scale with price." }
+        ]},
+        { title: "Cash at closing", fields: [
+          { path: "acquisition.personal_cash_at_closing", label: "Personal cash at closing", kind: "constant", type: "money", step: 1000, hint: "Your own money. This is also the rent branch's invested capital." },
+          { path: "acquisition.family_loan", label: "Family loan", kind: "constant", type: "money", step: 1000, hint: "Not invested in the rent branch, because it wouldn't exist there." },
+          { path: "acquisition.initial_furnishing", label: "Initial furnishing", kind: "constant", type: "money", step: 500, hint: "One-time STR setup cost. Kept separate from total cash outlay and not depreciated." }
+        ]},
+        { title: "Tax basis", fields: [
+          { path: "acquisition.land_fraction", label: "Land fraction", kind: "constant", type: "percent", step: 1, max: 100, hint: "The assessor's land ÷ (land + improvements). Land is not depreciable." }
+        ]}
+      ],
+      preview: previewAcquisition
+    },
+    {
+      n: 5, id: "financing", title: "Financing",
+      intro: "One mortgage rate per loan occupancy class. The class is derived: primary residence only when residency state equals property state. Otherwise it's second home or investment, depending on rental_operations.managed_by (section 7).",
+      groups: [
+        { title: "Mortgage rate by loan occupancy class", fields: [
+          { path: "financing.mortgage_rate.primary_residence", label: "Primary residence", kind: "constant", type: "percent", step: 0.125, max: 20 },
+          { path: "financing.mortgage_rate.second_home", label: "Second home", kind: "constant", type: "percent", step: 0.125, max: 20 },
+          { path: "financing.mortgage_rate.investment", label: "Investment", kind: "constant", type: "percent", step: 0.125, max: 20, hint: "Typically 0.5–1 point over second home for a managed STR." }
+        ]},
+        { title: "Loan terms", fields: [
+          { path: "financing.non_warrantable_premium", label: "Non-warrantable premium", kind: "constant", type: "percent", step: 0.125, max: 5, hint: "Added on top of the applicable rate. Use 0 if the project is warrantable." },
+          { path: "financing.loan_term_years", label: "Loan term", kind: "constant", type: "number", unit: "yr", min: 1, max: 40, step: 1 }
+        ]}
+      ],
+      preview: previewFinancing
+    },
+    { n: 6, id: "carrying_costs", title: "Carrying costs", soon: true,
+      desc: "Starting values grown forward by a derived latent's fitted process, plus the closing-anchored property tax stair-step.",
+      keys: ["property_tax", "hoa_dues_annual", "special_assessment", "insurance_annual", "utilities", "maintenance_annual"] },
+    { n: 7, id: "rental_operations", title: "Rental operations", soon: true,
+      desc: "STR revenue side. managed_by also decides the loan occupancy class used in section 5.",
+      keys: ["managed_by", "occupancy", "adr", "mgmt_fee_fraction", "lodging_tax_rate"] },
+    { n: 8, id: "personal_use", title: "Personal use", soon: true,
+      desc: "Nights you use the condo yourself, and what you'd otherwise pay to stay nearby.",
+      keys: ["personal_use_days_by_month", "alternate_lodging_cost_by_month"] },
+    { n: 9, id: "taxes", title: "Taxes", soon: true,
+      desc: "Federal and state tax treatment of both branches, depreciation, recapture, and passive-loss rules.",
+      keys: ["filing_status", "federal_marginal_rate", "niit_applies", "niit_rate", "itemizes_deductions", "state_tax_profiles", "salt_cap", "depreciation_years_building", "recapture_rate", "ltcg_rate", "passive_loss_treatment"] },
+    { n: 10, id: "rent_reference", title: "Rent reference", soon: true,
+      desc: "What renting a comparable place costs in the reference branch.",
+      keys: ["seasonal_lease_cost"] },
+    { n: 11, id: "capital_markets", title: "Capital markets", soon: true,
+      desc: "How the rent branch invests personal_cash_at_closing.",
+      keys: ["initial_investment", "cash_allocation_fraction", "cash_yield", "portfolio_tax_drag"] },
+    { n: 12, id: "exit", title: "Exit", soon: true,
+      desc: "Sell-side closing costs at the horizon.",
+      keys: ["selling_costs"] },
+    { n: 13, id: "run", title: "Run", soon: true,
+      desc: "Run settings and reporting.",
+      keys: ["report_quantiles"] }
+  ];
+
+  // ---------------------------------------------------------------------------
+  // Field renderers
+  // ---------------------------------------------------------------------------
+  let uid = 0;
+  function fieldShell(f) {
+    const wrap = el("div", "field" + (f.wide ? " wide" : ""));
+    const id = "f" + (++uid);
+    const top = el("div", "f-top");
+    const lab = el(f.type.startsWith("sweep") || f.type === "stub" ? "span" : "label", "lbl", f.label);
+    if (lab.tagName === "LABEL") lab.htmlFor = id; else lab.id = id + "-l";
+    top.append(lab, el("span", "kind " + f.kind, f.kind), el("code", "f-key", f.path));
+    wrap.append(top);
+    return { wrap, id };
+  }
+
+  function renderField(f, onChange) {
+    const { wrap, id } = fieldShell(f);
+    const err = el("div", "f-err");
+    const commit = (v) => { set(f.path, v); onChange(); };
+
+    if (f.type === "fixed") {
+      const i = el("input"); i.type = "text"; i.id = id; i.readOnly = true; i.value = get(f.path);
+      wrap.append(i);
+    } else if (f.type === "stub") {
+      const box = el("div", "vals"); box.setAttribute("aria-labelledby", id + "-l");
+      const paint = () => { box.textContent = ""; get(f.path).forEach((v) => box.append(el("span", "pill neutral mono", usd.format(v)))); };
+      paint(); wrap._repaint = paint;
+      wrap.append(box);
+    } else if (f.type === "select" || f.type === "month") {
+      const s = el("select"); s.id = id;
+      const opts = f.type === "month" ? MONTHS.map((m, i) => [i + 1, (i + 1) + " · " + m]) : f.options.map((o) => [o, o]);
+      opts.forEach(([v, t]) => { const o = el("option", null, t); o.value = v; s.append(o); });
+      s.value = get(f.path);
+      s.addEventListener("change", () => commit(f.type === "month" ? +s.value : s.value));
+      wrap.append(s);
+    } else if (f.type === "number" || f.type === "money" || f.type === "percent") {
+      const i = el("input"); i.type = "number"; i.id = id; i.inputMode = "decimal";
+      const isPct = f.type === "percent";
+      i.min = f.min != null ? f.min : 0;
+      if (f.max != null) i.max = f.max;
+      i.step = f.step || 1;
+      const raw = get(f.path);
+      i.value = isPct ? +(raw * 100).toFixed(4) : raw;
+      i.addEventListener("input", () => {
+        const v = parseFloat(i.value);
+        if (!Number.isFinite(v)) { err.textContent = "Enter a number."; return; }
+        if (v < +i.min || (f.max != null && v > f.max)) { err.textContent = "Must be between " + i.min + " and " + f.max + "."; return; }
+        err.textContent = "";
+        commit(isPct ? v / 100 : v);
+      });
+      const pre = f.type === "money" ? "$" : null;
+      const post = isPct ? "%" : f.unit || null;
+      if (pre || post) {
+        const a = el("div", "affix");
+        if (pre) a.append(el("span", null, pre));
+        a.append(i);
+        if (post) a.append(el("span", null, post));
+        wrap.append(a);
+      } else wrap.append(i);
+    } else if (f.type === "sweep-cat") {
+      const box = el("div", "chips"); box.setAttribute("role", "group"); box.setAttribute("aria-labelledby", id + "-l");
+      f.options.forEach((o) => {
+        const c = el("label", "chip");
+        const i = el("input"); i.type = "checkbox"; i.value = o; i.checked = get(f.path).includes(o);
+        i.addEventListener("change", () => {
+          const cur = f.options.filter((x) => box.querySelector('input[value="' + x + '"]').checked);
+          if (!cur.length) { i.checked = true; err.textContent = "A sweep needs at least one value."; return; }
+          err.textContent = "";
+          commit(cur);
+        });
+        c.append(i, el("span", null, o));
+        box.append(c);
+      });
+      wrap.append(box);
+    } else if (f.type === "sweep-num") {
+      const box = el("div", "vals"); box.setAttribute("aria-labelledby", id + "-l");
+      const fmt = (v) => f.money ? usd.format(v) : v + (f.unit ? " " + f.unit : "");
+      const add = el("div", "add");
+      const inp = el("input"); inp.type = "number"; inp.inputMode = "numeric"; inp.min = f.min; if (f.max) inp.max = f.max; inp.step = f.step;
+      inp.placeholder = f.money ? "e.g. 425000" : "add value"; inp.setAttribute("aria-label", "Add a " + f.label.toLowerCase() + " value");
+      const btn = el("button", "btn ghost", "Add"); btn.type = "button";
+      const paint = () => {
+        box.textContent = "";
+        get(f.path).forEach((v) => {
+          const chip = el("span", "val", fmt(v));
+          const x = el("button", null, "×"); x.type = "button"; x.setAttribute("aria-label", "Remove " + fmt(v));
+          x.addEventListener("click", () => {
+            const cur = get(f.path);
+            if (cur.length === 1) { err.textContent = "A sweep needs at least one value."; return; }
+            err.textContent = "";
+            commit(cur.filter((y) => y !== v)); paint();
+          });
+          chip.append(x); box.append(chip);
+        });
+      };
+      const doAdd = () => {
+        const v = parseFloat(inp.value);
+        if (!Number.isFinite(v) || v < f.min || (f.max && v > f.max)) { err.textContent = "Enter a number" + (f.max ? " from " + f.min + " to " + f.max : " of at least " + f.min) + "."; return; }
+        const cur = get(f.path);
+        if (cur.includes(v)) { err.textContent = fmt(v) + " is already in the sweep."; return; }
+        err.textContent = ""; inp.value = "";
+        commit([...cur, v].sort((a, b) => a - b)); paint();
+      };
+      btn.addEventListener("click", doAdd);
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doAdd(); } });
+      add.append(inp, btn);
+      paint();
+      wrap.append(box, add);
+    }
+    if (f.hint) wrap.append(el("p", "hint", f.hint));
+    wrap.append(err);
+    return wrap;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Custom sections
+  // ---------------------------------------------------------------------------
+  function renderForecastModels(panel) {
+    const MODELS = [
+      { key: "general", label: "General inflation", src: "BLS CPI-U, all items, NSA", script: "run/manual/build_general_price_model.py", fits: ["bls_cpi_all_nsa_1984_1_2026_8"] },
+      { key: "home_price", label: "Home price", src: "S&P/Case-Shiller Denver-Metro HPI, NSA (FRED)", script: "run/manual/build_co_home_price_model.py", fits: ["fred_denver_homes_1987_1_2026_8"] },
+      { key: "market", label: "Market", src: "S&P 500 price return, ^GSPC (Yahoo Finance)", script: "run/manual/build_market_model.py", fits: ["yfinance_spx_1984_1_2026_9"] }
+    ];
+    const grid = el("div", "models");
+    MODELS.forEach((m) => {
+      const card = el("div", "model");
+      const id = "fm-" + m.key;
+      const top = el("div", "f-top");
+      const lab = el("label", "lbl", m.label); lab.htmlFor = id;
+      top.append(lab, el("span", "kind fitted", "fitted"));
+      const s = el("select"); s.id = id;
+      m.fits.forEach((f) => { const o = el("option", null, f); o.value = f; s.append(o); });
+      s.value = deck.forecast_models[m.key];
+      s.addEventListener("change", () => { deck.forecast_models[m.key] = s.value; refresh(); });
+      card.append(top, el("code", "f-key", "forecast_models." + m.key + ".model_name"), s,
+        el("p", "hint", m.src), el("p", "hint", "Built by " + m.script));
+      grid.append(card);
+    });
+    panel.append(grid);
+    panel.append(el("p", "hint", "The picker lists fits saved under src/condobuyuq2026/models/. Until the GUI is wired in, it only shows the fits the deck uses now."));
+  }
+
+  const LATENT_INFO = {
+    construction_cost: "Growth for hoa_dues_annual and special_assessment severity.",
+    insurance: "Growth for insurance_annual.",
+    maintenance: "Growth for maintenance_annual.",
+    adr: "Growth for adr, rent_reference.seasonal_lease_cost, and alternate lodging cost.",
+    utilities: "Growth for utilities."
+  };
+  const DRIVERS = [["market", "Market", "--s-market"], ["home_price", "Home price", "--s-home"], ["general", "General", "--s-general"]];
+
+  function renderLatents(panel) {
+    const grid = el("div", "latents");
+    Object.keys(deck.derived_latents).forEach((name) => {
+      const w = deck.derived_latents[name];
+      const card = el("div", "latent");
+      const top = el("div", "top");
+      const badge = el("span", "pill");
+      top.append(el("h3", null, name), badge);
+      card.append(top);
+      const stack = el("div", "stack"); stack.setAttribute("role", "img");
+      const segs = DRIVERS.map(([, , c]) => { const i = el("i"); i.style.background = "var(" + c + ")"; return i; });
+      const idio = el("i", "idio");
+      stack.append(...segs, idio);
+      const legend = el("p", "hint");
+      const paint = () => {
+        const sq = DRIVERS.map(([k]) => w[k] * w[k]);
+        const s = sq.reduce((a, b) => a + b, 0);
+        const over = s > 1 + 1e-9;
+        const norm = over ? s : 1;
+        sq.forEach((v, i) => { segs[i].style.width = (v / norm * 100) + "%"; });
+        idio.style.width = over ? "0%" : ((1 - s) * 100) + "%";
+        badge.className = "pill " + (over ? "bad" : "ok");
+        badge.textContent = over ? "Σw² = " + s.toFixed(2) + " > 1" : "Σw² = " + s.toFixed(2);
+        stack.setAttribute("aria-label", "Variance share: " + DRIVERS.map(([k], i) => k + " " + Math.round(sq[i] * 100) + "%").join(", ") + (over ? "" : ", idiosyncratic " + Math.round((1 - s) * 100) + "%"));
+        legend.textContent = over ? "The sum of squared weights must be ≤ 1. The deck loader rejects this." : "Idiosyncratic share " + Math.round((1 - s) * 100) + "% of variance (weight " + Math.sqrt(1 - s).toFixed(2) + ").";
+      };
+      DRIVERS.forEach(([k, label, c]) => {
+        const row = el("div", "w");
+        const id = "dl-" + name + "-" + k;
+        const lab = el("label"); lab.htmlFor = id;
+        const dot = el("span", "dot"); dot.style.background = "var(" + c + ")";
+        lab.append(dot, label);
+        const r = el("input"); r.type = "range"; r.id = id; r.min = 0; r.max = 1; r.step = 0.05; r.value = w[k];
+        const out = el("output", null, (+w[k]).toFixed(2)); out.htmlFor = id;
+        r.addEventListener("input", () => { w[k] = +r.value; out.textContent = (+r.value).toFixed(2); paint(); refresh(); });
+        row.append(lab, r, out);
+        card.append(row);
+      });
+      card.append(stack, legend, el("p", "drives", LATENT_INFO[name]));
+      paint();
+      grid.append(card);
+    });
+    panel.append(grid);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Derived previews (approximate, client-side only; the real math is in src/)
+  // ---------------------------------------------------------------------------
+  function acqFor(price) {
+    const a = deck.acquisition;
+    const closing = a.purchase_closing_costs.fixed_fees + a.purchase_closing_costs.percent_of_price * price;
+    const outlay = a.personal_cash_at_closing + a.family_loan;
+    return { closing, outlay, loan: price + closing - outlay };
+  }
+  function payment(loan, rate, years) {
+    const r = rate / 12, n = years * 12;
+    if (n <= 0) return NaN;
+    return r === 0 ? loan / n : loan * r / (1 - Math.pow(1 + r, -n));
+  }
+  function table(head, rows) {
+    const wrap = el("div", "tbl-wrap"); const t = el("table");
+    const tr = el("tr"); head.forEach(([h, num]) => { const th = el("th", num ? "num" : null, h); th.scope = "col"; tr.append(th); });
+    const thead = el("thead"); thead.append(tr); t.append(thead);
+    const tb = el("tbody"); rows.forEach((r) => tb.append(r)); t.append(tb);
+    wrap.append(t); return wrap;
+  }
+  function td(content, cls) { const c = el("td", cls); if (content instanceof Node) c.append(content); else c.textContent = content; return c; }
+
+  function previewScenario(box) {
+    const s = deck.scenario;
+    const n = s.alternatives.length * s.horizon_years.length * s.residency_state.length * s.purchase_price.length;
+    const stats = el("div", "stat-row");
+    [[n, "scenarios in the run"], [s.horizon_years.length + " × " + s.purchase_price.length + " × " + s.residency_state.length, "horizons × prices × states"], [MONTHS[s.closing_month - 1] + " " + s.closing_year, "timestep 0"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, String(v)), el("small", null, l)); stats.append(d); });
+    const ids = el("div", "ids");
+    s.alternatives.forEach((a) => s.horizon_years.forEach((h) => s.purchase_price.forEach((p) => s.residency_state.forEach((r) => {
+      ids.append(el("span", "pill neutral mono", a + "_h" + h + "y_p" + p + "_" + r));
+    }))));
+    box.append(stats, el("p", "hint", "Scenario IDs (same naming as the results/ folders):"), ids);
+  }
+
+  function previewAcquisition(box) {
+    const a = deck.acquisition;
+    const rows = deck.scenario.purchase_price.map((p) => {
+      const r = acqFor(p); const tr = el("tr");
+      const loanCell = r.loan < 0 ? (() => { const s = el("span", "pill bad", usd.format(r.loan) + " · invalid"); return s; })() : usd.format(r.loan);
+      tr.append(td(usd.format(p), "num"), td(usd.format(r.closing), "num"), td(usd.format(r.outlay), "num"), td(loanCell, "num"),
+        td(pct(r.loan / p, 1), "num dim"), td(usd.format(p * (1 - a.land_fraction)), "num dim"));
+      return tr;
+    });
+    box.append(table([["Price", 1], ["Closing costs", 1], ["Cash outlay", 1], ["Loan amount", 1], ["LTV", 1], ["Building basis", 1]], rows));
+    const bad = deck.scenario.purchase_price.some((p) => acqFor(p).loan < 0);
+    if (bad) box.append(el("p", "hint", "A negative loan amount means the cash outlay exceeds price plus closing costs. compute_acquisition_costs raises ValueError on this."));
+    box.append(el("p", "hint", "Cash outlay = personal cash + family loan. Initial furnishing (" + usd.format(a.initial_furnishing) + ") is a separate line item, not part of it."));
+  }
+
+  function previewFinancing(box) {
+    const f = deck.financing, s = deck.scenario;
+    const classes = [["primary_residence", "Primary"], ["second_home", "Second home"], ["investment", "Investment"]];
+    const reachable = {
+      primary_residence: s.residency_state.includes(s.property_state),
+      second_home: s.residency_state.some((r) => r !== s.property_state),
+      investment: s.residency_state.some((r) => r !== s.property_state)
+    };
+    const pills = el("div", "ids");
+    s.residency_state.forEach((r) => {
+      pills.append(el("span", "pill " + (r === s.property_state ? "ok" : "warn"),
+        r + " resident → " + (r === s.property_state ? "primary_residence" : "second_home or investment (§7 managed_by)")));
+    });
+    const rows = s.purchase_price.map((p) => {
+      const loan = acqFor(p).loan; const tr = el("tr");
+      tr.append(td(usd.format(p), "num"), td(usd.format(loan), "num"));
+      classes.forEach(([k]) => {
+        const rate = f.mortgage_rate[k] + f.non_warrantable_premium;
+        const pm = payment(loan, rate, f.loan_term_years);
+        tr.append(td(loan < 0 || !Number.isFinite(pm) ? "—" : usd.format(pm), "num" + (reachable[k] ? "" : " dim")));
+      });
+      return tr;
+    });
+    box.append(pills,
+      table([["Price", 1], ["Loan", 1]].concat(classes.map(([k, l]) => [l + " · " + pct(f.mortgage_rate[k] + f.non_warrantable_premium), 1])), rows),
+      el("p", "hint", "Monthly principal and interest over a " + f.loan_term_years + "-year term, with the non-warrantable premium included. Grayed-out columns can't occur with the current residency sweep."));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build page
+  // ---------------------------------------------------------------------------
+  const previews = [];
+  const repaints = [];
+  function refresh() {
+    previews.forEach(([fn, box]) => { box.textContent = ""; fn(box); });
+    repaints.forEach((fn) => fn());
+    $("#debug").textContent = JSON.stringify(deck, null, 2);
+  }
+
+  const nav = $("#nav"), host = $("#sections");
+  SECTIONS.forEach((sec) => {
+    const li = el("li"); const a = el("a", sec.soon ? "soon" : null); a.href = "#" + sec.id;
+    a.append(el("b", null, String(sec.n)), sec.title); li.append(a); nav.append(li);
+
+    const s = el("section"); s.id = sec.id; s.setAttribute("aria-labelledby", "h-" + sec.id);
+    const head = el("div", "sec-head");
+    const h = el("h2"); h.id = "h-" + sec.id; h.append(el("span", "n", String(sec.n)), sec.title);
+    head.append(h, el("code", "eyebrow", sec.id));
+    s.append(head);
+
+    if (sec.soon) {
+      const p = el("div", "placeholder" + (sec.n === 6 ? " next" : ""));
+      p.append(el("span", "eyebrow", sec.n === 6 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
+      s.append(p);
+      host.append(s);
+      return;
+    }
+
+    s.append(el("p", "sec-intro", sec.intro));
+    const panel = el("div", "panel");
+    if (sec.custom) sec.custom(panel);
+    (sec.groups || []).forEach((g) => {
+      panel.append(el("div", "group-title", g.title));
+      const fields = el("div", "fields");
+      g.fields.forEach((f) => {
+        const node = renderField(f, refresh);
+        if (node._repaint) repaints.push(node._repaint);
+        fields.append(node);
+      });
+      panel.append(fields);
+    });
+    if (sec.preview) {
+      const pv = el("div", "preview");
+      const ph = el("div", "sec-head"); ph.append(el("h3", null, "Derived preview"), el("span", "eyebrow", "approximate · not from src/"));
+      const box = el("div"); box.style.display = "grid"; box.style.gap = "10px";
+      pv.append(ph, box); panel.append(pv);
+      previews.push([sec.preview, box]);
+    }
+    s.append(panel);
+    host.append(s);
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>

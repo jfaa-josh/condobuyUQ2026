@@ -19,6 +19,7 @@ matplotlib.use("Agg")  # headless-safe: these scripts only ever save figures, ne
 import matplotlib.pyplot as plt
 
 from condobuyuq2026.carrying_costs import (
+    compute_special_assessment,
     compute_total_carrying_costs_schedule,
     load_carrying_cost_prior_fit,
     load_market_value_change_magnitude,
@@ -27,7 +28,11 @@ from condobuyuq2026.carrying_costs import (
 )
 from condobuyuq2026.input_deck import get_report_quantiles, load_deck
 from condobuyuq2026.paths import RESULTS_DIR
-from condobuyuq2026.plotting.forecast_plots import plot_periods_stairstep
+from condobuyuq2026.plotting.forecast_plots import (
+    plot_periods_stairstep,
+    plot_special_assessment_cost,
+    plot_special_assessment_count,
+)
 
 
 def scenario_results_dir(scenario: dict[str, Any]) -> Path:
@@ -44,7 +49,7 @@ def scenario_results_dir(scenario: dict[str, Any]) -> Path:
 def _year_band(periods: list[dict[str, Any]], year: int, z_lo: float, z_hi: float) -> tuple[float, float, float]:
     """(median, lo, hi) for one calendar YEAR, summed over however many saved periods actually fall
     in it -- works identically whether an entry has ONE period per year (insurance_annual/
-    maintenance_annual/special_assessment) or TWELVE (utilities' own monthly periods). Summing each
+    maintenance_annual) or TWELVE (utilities' own monthly periods). Summing each
     period's own lo/hi (not just summing medians and reconstructing a band separately) implicitly
     assumes every period within the year moves together -- reasonable here since they all share the
     SAME underlying latent draw for that stretch, not independent months."""
@@ -113,8 +118,8 @@ def _plot_annual_projection_with_final_distribution(
     RIGHT: a distribution snapshot of the FINAL year. `aggregate_final_year` MUST match what this
     prior's own periods actually represent -- get it wrong and the right panel silently shows a wildly
     wrong number (a real bug caught 2026-09-30: utilities' own genuine monthly BILLS need SUMMING
-    (_year_band) to get "how much do I pay this year," but insurance_annual/maintenance_annual/
-    special_assessment's periods each already hold a CONTINUOUS ANNUAL ESTIMATE sampled monthly --
+    (_year_band) to get "how much do I pay this year," but insurance_annual/maintenance_annual's
+    periods each already hold a CONTINUOUS ANNUAL ESTIMATE sampled monthly --
     summing 12 of those over-counts by ~12x, since it's the same annual figure re-evaluated 12 times,
     not 12 independent months' worth of cost). True (utilities/hoa-shaped monthly bills): sum the
     final year's own periods via _year_band. False (a continuously-evolving annual estimate): just
@@ -282,7 +287,12 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
     special_assessment/utilities, which looked visibly coarser than model.png's own dense curve even
     though the underlying numbers matched -- see utils.prior_utils.bake_monthly_periods).
 
-    insurance/maintenance/special_assessment_expected/utilities each get
+    special_assessment gets two plots of its own (special_assessment_count.png: P(N = k);
+    special_assessment_cost.png: the discrete total-cost distribution -- see carrying_costs.
+    compute_special_assessment), each subtitled as excluded from the totals; skipped entirely when
+    annual_rate is 0.
+
+    insurance/maintenance/utilities each get
     _plot_annual_projection_with_final_distribution (the full monthly curve on the left, a
     final-year distribution snapshot on the right -- every plot here shows a REAL distribution, not
     just a median, the user's own catch, 2026-09-30). hoa_dues gets `plotting.forecast_plots.
@@ -318,13 +328,6 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
     for result_name, prior_name, title, ylabel, aggregate_final_year in (
         ("insurance", "insurance_annual", "Insurance — Scenario Projection", "USD/year", False),
         ("maintenance", "maintenance_annual", "Maintenance — Scenario Projection", "USD/year", False),
-        (
-            "special_assessment_expected",
-            "special_assessment",
-            "Special Assessment (Expected) — Scenario Projection",
-            "USD/year",
-            False,
-        ),
         ("utilities", "utilities", "Utilities — Scenario Projection", "USD/month", True),
     ):
         periods = load_carrying_cost_prior_fit(prior_name)["periods"]
@@ -359,11 +362,29 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
         save_path=out_dir / "property_tax.png",
     )
 
+    special_assessment = (scenario.get("carrying_costs") or {}).get("special_assessment") or compute_special_assessment(
+        scenario, deck
+    )
+    if special_assessment["enabled"]:  # annual_rate: 0 is the deck's off switch -- nothing to plot
+        horizon_label = f"{horizon_years}-Year Horizon (λ = {special_assessment['annual_rate']:g}/yr)"
+        paths["special_assessment_count"] = plot_special_assessment_count(
+            special_assessment["count_probabilities"],
+            special_assessment["k_max"],
+            title=f"Special Assessments — Number Over the {horizon_label}",
+            save_path=out_dir / "special_assessment_count.png",
+        )
+        paths["special_assessment_cost"] = plot_special_assessment_cost(
+            special_assessment["outcomes"],
+            special_assessment["k_max"],
+            title=f"Special Assessments — Total Cost Distribution, {horizon_label}, timing: {special_assessment['timing']}",
+            save_path=out_dir / "special_assessment_cost.png",
+        )
+
     total_schedule = compute_total_carrying_costs_schedule(scenario, deck)
     paths["total_carrying_costs"] = _plot_total_carrying_costs(
         total_schedule,
         ci,
-        title="Total Carrying Costs — Scenario Projection\n(excludes special assessment -- see its own deferred rare-event treatment)",
+        title="Total Carrying Costs — Scenario Projection\n(excludes special assessments -- see their own tail-risk plots)",
         save_path=out_dir.parent / "total_carrying_costs.png",
     )
     return paths

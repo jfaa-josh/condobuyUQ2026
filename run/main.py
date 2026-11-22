@@ -1,9 +1,9 @@
 """Main entry point (as opposed to run/manual/'s one-off, source-specific build scripts).
 
 Stage 0: check every forecast_models entry's underlying raw data against its own expected
-reporting lag, re-running that entry's run/manual build script if it's behind (see
-condobuyuq2026.freshness.refresh_stale_forecast_models) -- so this always works off current data
-without a manual re-fetch, and without hitting a rate-limited API more than once a month.
+reporting lag. OFF by default: only with --refresh does a stale entry get its run/manual build
+script re-run (live API calls, see condobuyuq2026.freshness.refresh_stale_forecast_models). Without
+--refresh, stale entries just get a one-line warning and the run continues on the saved models.
 
 Stage 1: combine the three fitted forecast_models (general/home_price/market) into each
 derived_latents entry's model, per the deck's weights -- see
@@ -35,17 +35,47 @@ get built.
 *** taxes.py has ONE remaining PLACEHOLDER input (gross_rent) -- see that module's docstring and
 PLACEHOLDER_FIELDS constant before trusting any gross_rent-derived dollar figure it produces. ***
 
-Run with: uv run python run/main.py
+Run with: uv run python run/main.py            (offline; saved models only)
+          uv run python run/main.py --refresh  (also refreshes stale forecast_models)
 """
 
-from condobuyuq2026.freshness import refresh_stale_forecast_models
-from condobuyuq2026.reporting import print_carrying_cost_prior_build_report, print_derived_latent_build_report
+import argparse
+
+from condobuyuq2026.freshness import (
+    FORECAST_MODEL_BUILD_SCRIPTS,
+    is_forecast_model_stale,
+    refresh_stale_forecast_models,
+)
+from condobuyuq2026.input_deck import load_deck
+from condobuyuq2026.reporting import (
+    print_carrying_cost_prior_build_report,
+    print_derived_latent_build_report,
+    print_stale_forecast_models_warning,
+)
 from condobuyuq2026.runner import run_scenarios
 from condobuyuq2026.utils.manual_utils import build_all_derived_latent_models
 from condobuyuq2026.utils.prior_utils import build_all_carrying_cost_prior_models
 
 if __name__ == "__main__":
-    refresh_stale_forecast_models()
+    parser = argparse.ArgumentParser(description="Run the condobuyUQ2026 pipeline.")
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Re-run stale forecast_models' build scripts (live API calls). Off by default.",
+    )
+    args = parser.parse_args()
+
+    if args.refresh:
+        refresh_stale_forecast_models()
+    else:
+        deck = load_deck()
+        stale = [
+            name
+            for name in FORECAST_MODEL_BUILD_SCRIPTS
+            if is_forecast_model_stale(name, deck["forecast_models"][name]["model_name"])
+        ]
+        if stale:
+            print_stale_forecast_models_warning(stale)
 
     results = build_all_derived_latent_models()
     print_derived_latent_build_report(results)

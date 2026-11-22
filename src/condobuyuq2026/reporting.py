@@ -45,6 +45,43 @@ def print_carrying_cost_prior_build_report(results: dict[str, dict[str, Any]]) -
                     f"    {observation['effective_year']}: actual=${observation['keystone_actual']:,.0f}, "
                     f"fitted=${predicted:,.0f} (residual ${residual:+,.0f})"
                 )
+        if "utilities_report" in paths:
+            print_utilities_build_report(paths["utilities_report"])
+
+
+def print_utilities_build_report(report: dict[str, Any]) -> None:
+    """Prints utilities' three-category build details (utils.prior_utils.build_utilities_prior_model):
+    the RESOLVED heating type (so a wrong heating_type code is obvious on every run), the three
+    calibrated pools and their rates, year 1 excluding add-ons (which the build already checked equals
+    12 x the observed average) with the add-on total reported SEPARATELY (add-ons intentionally raise
+    the total above the previous owner's bill), and a WARNING per month whose occupied days had to be
+    capped at the days in that month."""
+    heating = report["heating"]
+    calibration = report["calibration"]
+    if heating["carrier"] is None:
+        heating_line = f"type {heating['heating_type']} = {heating['name']} (no heating on this bill)"
+    else:
+        shares = ", ".join(
+            f"{name} {fraction * 100:.1f}%" for name, fraction in heating["heating_fraction_by_component"].items() if fraction > 0
+        )
+        cop = f"COP {heating['cop']:g}" if heating["cop"] is not None else "COP n/a (gas)"
+        heating_line = (
+            f"type {heating['heating_type']} = {heating['name']}, carrier {heating['carrier']}, {cop}, "
+            f"heating_share {heating['heating_share']:g} -> effective heating share of bill: {shares}"
+        )
+    print(f"  utilities heating: {heating_line}")
+    print(
+        f"  utilities calibration ({report['calibration_source']}, observed ${calibration['annual_observed_total']:,.0f}/yr): "
+        f"flat ${calibration['flat_pool']:,.0f}/yr (${calibration['flat_monthly']:,.2f}/month), "
+        f"occupancy ${calibration['occupancy_pool']:,.0f}/yr (${calibration['cost_per_occupied_day']:,.2f}/occupied day), "
+        f"heating ${calibration['heating_pool']:,.0f}/yr (${calibration['cost_per_heating_degree_day']:,.4f}/heating degree-day)"
+    )
+    print(
+        f"  utilities year 1 (before growth): ${report['year_1_total_excluding_add_ons']:,.0f} excluding add-ons, "
+        f"+ ${report['year_1_add_ons_total']:,.0f} add-ons (new costs on top of the previous owner's bill)"
+    )
+    for warning in report["cap_warnings"]:
+        print(f"  WARNING: utilities {warning}")
 
 
 def print_acquisition_report(scenario: dict[str, Any], acquisition_costs: dict[str, float]) -> None:
@@ -98,7 +135,6 @@ def print_carrying_costs_report(carrying_costs: dict[str, Any]) -> None:
         f"total_carrying_costs=${carrying_costs['total_carrying_costs']:,.0f} over the horizon "
         f"(year 1: property_tax=${year_1['property_tax']:,.0f}, hoa_dues=${year_1['hoa_dues']:,.0f}, "
         f"insurance=${year_1['insurance']:,.0f}, maintenance=${year_1['maintenance']:,.0f}, "
-        f"special_assessment_expected=${year_1['special_assessment_expected']:,.0f}, "
         f"utilities=${year_1['utilities']:,.0f})"
     )
     print(
@@ -107,6 +143,38 @@ def print_carrying_costs_report(carrying_costs: dict[str, Any]) -> None:
         f"tax=${property_tax_year_1['tax_median']:,.0f} "
         f"(${property_tax_year_1['tax_lo']:,.0f}-${property_tax_year_1['tax_hi']:,.0f})"
     )
+
+
+SPECIAL_ASSESSMENT_FOLDED_TAIL_WARNING_THRESHOLD = 0.01  # warn when P(N > k_max) exceeds 1%
+
+
+def print_special_assessment_report(special_assessment: dict[str, Any]) -> None:
+    """Prints one buy scenario's special-assessment model (see carrying_costs.
+    compute_special_assessment) on its own line, labeled as EXCLUDED from the totals above so the
+    two are never read as one number. Adds a WARNING line when the chance of more than k_max
+    assessments -- which the model folds into the k_max outcome, slightly understating cost there
+    -- is above 1%, since that's the signal to raise k_max in the deck."""
+    sa = special_assessment
+    if not sa["enabled"]:
+        print("  special_assessment: off (annual_rate: 0) -- no tail-risk overlay")
+        return
+    k_max = sa["k_max"]
+    counts = ", ".join(
+        f"P(N{'>=' if int(k) == k_max else '='}{int(k)})={p * 100:.1f}%" for k, p in sa["count_probabilities"].items()
+    )
+    sizes = ", ".join(f"{label}=${size:,.0f}" for label, size in sa["sizes_nominal_usd"].items())
+    print(
+        # plain "delta-W", not the Greek letter: the Windows console's default encoding can't print it
+        f"  special_assessment (EXCLUDED from totals; tail-risk overlay on delta-W later): "
+        f"expected count={sa['expected_count']:.2f}, {counts}; sizes ({sa['timing']} timing): {sizes}; "
+        f"expected total=${sa['expected_total_cost_usd']:,.0f}"
+    )
+    if sa["folded_tail_probability"] > SPECIAL_ASSESSMENT_FOLDED_TAIL_WARNING_THRESHOLD:
+        print(
+            f"  WARNING: special_assessment P(more than k_max={k_max} assessments)="
+            f"{sa['folded_tail_probability'] * 100:.1f}% (> 1%) is folded into the N>={k_max} outcome, "
+            f"understating cost there -- raise carrying_costs.special_assessment.k_max"
+        )
 
 
 def print_carrying_cost_result_plots_report(result_plots: dict[str, Path]) -> None:
@@ -185,3 +253,12 @@ def print_forecast_model_up_to_date(name: str, model_name: str) -> None:
     """Prints that forecast_models.<name>'s data was checked and is already current -- see
     freshness.refresh_stale_forecast_models."""
     print(f"forecast_models.{name} ({model_name}) checked -- up to date")
+
+
+def print_stale_forecast_models_warning(stale: list[str]) -> None:
+    """One-line warning that these forecast_models entries are stale but were NOT refreshed (run/main.py
+    without --refresh) -- the run continues on their saved models."""
+    print(
+        f"WARNING: stale forecast_models not refreshed ({', '.join(stale)}) -- "
+        "using saved models; pass --refresh to update"
+    )

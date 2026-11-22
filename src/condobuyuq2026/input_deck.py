@@ -324,39 +324,196 @@ def get_market_value_config(deck: dict[str, Any] | None = None) -> dict[str, Any
     }
 
 
+SPECIAL_ASSESSMENT_TIMINGS = ("uniform", "worst_case_year1")
+SPECIAL_ASSESSMENT_NO_GROWTH = "none"
+
+
 def get_special_assessment_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Unwraps carrying_costs.special_assessment's mixture shape. Returns {"annual_probability" (p,
-    NOT grown -- see that field's own deck comment), "severity_median", "severity_cv" (grown via
-    "latent"), "latent"}. UNCHANGED as of 2026-09-29 -- how to model this rare-event tail risk
-    without polluting the normal confidence bands is a separate, larger design question the user
-    deliberately deferred (see [[project-fit-json-standardization]] or its own follow-up memory for
-    the actuarial-practice options discussed)."""
+    """Unwraps and VALIDATES carrying_costs.special_assessment's frequency_severity shape
+    (redesigned 2026-11-22 from the old p x lognormal-severity mixture -- see the deck comment).
+    Validated here, not later, because every bad value below would otherwise produce a silently
+    wrong probability table rather than a crash: probabilities that don't sum to 1 make the whole
+    cost distribution sum to something other than 100%, and a negative rate or amount has no
+    meaning. Same "raise on an invalid deck state rather than guess" convention as
+    get_derived_latents.
+
+    Returns {"annual_rate", "size_scenarios" (list of {"label", "amount_today_usd", "probability"}),
+    "latent" (a forecast_models/derived_latents key, or "none" for no size growth), "timing",
+    "k_max"}."""
     deck = deck if deck is not None else load_deck()
+    where = "carrying_costs.special_assessment"
     entry = deck["carrying_costs"]["special_assessment"]
-    _expect_kind(entry, "prior", "carrying_costs.special_assessment")
+    _expect_kind(entry, "frequency_severity", where)
+
+    annual_rate = entry["annual_rate"]
+    if isinstance(annual_rate, bool) or not isinstance(annual_rate, int | float) or not annual_rate >= 0:
+        raise ValueError(f"{where}.annual_rate must be a number >= 0, got {annual_rate!r}")
+
+    scenarios = entry["size_scenarios"]
+    if not isinstance(scenarios, list) or not scenarios:
+        raise ValueError(f"{where}.size_scenarios must be a non-empty list")
+    labels = [s.get("label") for s in scenarios]
+    if any(not isinstance(label, str) or not label for label in labels) or len(set(labels)) != len(labels):
+        raise ValueError(f"{where}.size_scenarios: every label must be a non-empty, unique string, got {labels!r}")
+    for s in scenarios:
+        for key in ("amount_today_usd", "probability"):
+            value = s.get(key)
+            if isinstance(value, bool) or not isinstance(value, int | float) or not value >= 0:
+                raise ValueError(f"{where}.size_scenarios[{s['label']}].{key} must be a number >= 0, got {value!r}")
+    probability_total = sum(s["probability"] for s in scenarios)
+    if abs(probability_total - 1.0) > 1e-6:
+        raise ValueError(
+            f"{where}.size_scenarios probabilities must sum to 1 (they're conditional on an assessment "
+            f"happening), got {probability_total}"
+        )
+
+    latent = entry["growth"]["latent"]
+    known_latents = set(deck["forecast_models"]) | set(deck["derived_latents"]) | {SPECIAL_ASSESSMENT_NO_GROWTH}
+    if latent not in known_latents:
+        raise ValueError(f"{where}.growth.latent must be one of {sorted(known_latents)}, got {latent!r}")
+
+    timing = entry["timing"]
+    if timing not in SPECIAL_ASSESSMENT_TIMINGS:
+        raise ValueError(f"{where}.timing must be one of {SPECIAL_ASSESSMENT_TIMINGS}, got {timing!r}")
+
+    k_max = entry["k_max"]
+    if isinstance(k_max, bool) or not isinstance(k_max, int) or k_max < 1:
+        raise ValueError(f"{where}.k_max must be an integer >= 1, got {k_max!r}")
+
     return {
-        "annual_probability": entry["p"],
-        "severity_median": entry["severity"]["median"],
-        "severity_cv": entry["severity"]["cv"],
-        "latent": entry["growth"]["latent"],
+        "annual_rate": float(annual_rate),
+        "size_scenarios": [
+            {"label": s["label"], "amount_today_usd": float(s["amount_today_usd"]), "probability": float(s["probability"])}
+            for s in scenarios
+        ],
+        "latent": latent,
+        "timing": timing,
+        "k_max": k_max,
     }
 
 
+MONTH_KEYS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+UTILITY_COMPONENTS = ("electric", "gas", "water", "sewer", "trash", "internet")
+UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK = "deck"
+
+
+def _is_number(value: Any) -> bool:
+    """True for a real int/float (YAML numbers), False for bools (which are ints in Python) and
+    anything else -- so `True` can never sneak through as a 1."""
+    return not isinstance(value, bool) and isinstance(value, int | float)
+
+
 def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Unwraps carrying_costs.utilities' SEASONAL+GROWTH shape (redesigned 2026-09-29): no more
-    12 hand-typed monthly median/cv pairs -- `initial_annual_average_monthly_cost` (a single known
-    truth number, this property's own real average monthly utility bill) is spread across the year
-    via a temperature-derived seasonal SHAPE (see utils.prior_utils.build_utilities_prior_model and
-    fit_temperature_seasonal_shape for the sine-fit mechanism), then grown via `latent` exactly like
-    every other entry. Returns {"initial_annual_average_monthly_cost", "seasonal_data_source" (a
-    filename under data/manual/, monthly average temperatures), "latent"}."""
+    """Unwraps and VALIDATES carrying_costs.utilities' THREE-CATEGORY shape (redesigned 2026-11-22,
+    replacing the temperature-sine seasonal shape -- see the deck comment and
+    utils.prior_utils.build_utilities_prior_model). Validated here because every bad value below
+    would otherwise yield a silently wrong calibration rather than a crash (e.g. weights not summing
+    to 1 would make year 1 no longer match the observed bill). heating_type itself is checked by
+    carrying_costs.resolve_heating_type, next to the HEATING_TYPES table it indexes (that table
+    can't live here: carrying_costs imports this module, not the other way around).
+
+    Returns {"initial_annual_average_monthly_cost", "calibration_occupied_days_by_month" ("deck" or a
+    {month: days} dict), "components" ({name: {"weight", "occupancy_fraction"}}, every name in
+    UTILITY_COMPONENTS, missing ones filled with zeros), "heating_type", "heating_share",
+    "vacant_setback_f", "hdd_base_temp_f", "additional_flat_monthly" (list of {"label",
+    "amount_usd"}), "seasonal_data_source", "latent"}."""
     deck = deck if deck is not None else load_deck()
+    where = "carrying_costs.utilities"
     entry = deck["carrying_costs"]["utilities"]
-    _expect_kind(entry, "seasonal_plus_growth", "carrying_costs.utilities")
+    _expect_kind(entry, "three_category", where)
+
+    average = entry["initial_annual_average_monthly_cost"]
+    if not _is_number(average) or not average > 0:
+        raise ValueError(f"{where}.initial_annual_average_monthly_cost must be a number > 0, got {average!r}")
+
+    calibration = entry["calibration_occupied_days_by_month"]
+    if calibration != UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK:
+        if not isinstance(calibration, dict) or set(calibration) != set(MONTH_KEYS):
+            raise ValueError(
+                f"{where}.calibration_occupied_days_by_month must be 'deck' or a map of all 12 months "
+                f"({', '.join(MONTH_KEYS)}), got {calibration!r}"
+            )
+        bad = {m: d for m, d in calibration.items() if not _is_number(d) or d < 0}
+        if bad:
+            raise ValueError(f"{where}.calibration_occupied_days_by_month: days must be numbers >= 0, got {bad}")
+        calibration = {month: float(calibration[month]) for month in MONTH_KEYS}
+
+    raw_components = entry["components"]
+    unknown = set(raw_components) - set(UTILITY_COMPONENTS)
+    if unknown:
+        raise ValueError(f"{where}.components: unknown component(s) {sorted(unknown)}; allowed: {UTILITY_COMPONENTS}")
+    components = {}
+    for name in UTILITY_COMPONENTS:
+        component = raw_components.get(name, {"weight": 0.0, "occupancy_fraction": 0.0})
+        weight, fraction = component.get("weight"), component.get("occupancy_fraction")
+        if not _is_number(weight) or weight < 0:
+            raise ValueError(f"{where}.components.{name}.weight must be a number >= 0, got {weight!r}")
+        if not _is_number(fraction) or not 0 <= fraction <= 1:
+            raise ValueError(f"{where}.components.{name}.occupancy_fraction must be between 0 and 1, got {fraction!r}")
+        components[name] = {"weight": float(weight), "occupancy_fraction": float(fraction)}
+    weight_total = sum(c["weight"] for c in components.values())
+    if abs(weight_total - 1.0) > 1e-6:
+        raise ValueError(f"{where}.components weights must sum to 1, got {weight_total}")
+
+    heating_share = entry["heating_share"]
+    if not _is_number(heating_share) or not 0 <= heating_share < 1:
+        raise ValueError(f"{where}.heating_share must be >= 0 and < 1, got {heating_share!r}")
+    setback = entry["vacant_setback_f"]
+    if not _is_number(setback) or setback < 0:
+        raise ValueError(f"{where}.vacant_setback_f must be a number >= 0, got {setback!r}")
+    base = entry["hdd_base_temp_f"]
+    if not _is_number(base):
+        raise ValueError(f"{where}.hdd_base_temp_f must be a number, got {base!r}")
+    heating_type = entry["heating_type"]
+    if not isinstance(heating_type, int) or isinstance(heating_type, bool):
+        raise ValueError(f"{where}.heating_type must be an integer code, got {heating_type!r}")
+
+    add_ons = entry.get("additional_flat_monthly") or []
+    if not isinstance(add_ons, list):
+        raise ValueError(f"{where}.additional_flat_monthly must be a list of {{label, amount_usd}}, got {add_ons!r}")
+    labels = [a.get("label") for a in add_ons]
+    if any(not isinstance(label, str) or not label for label in labels) or len(set(labels)) != len(labels):
+        raise ValueError(f"{where}.additional_flat_monthly: labels must be non-empty and unique, got {labels!r}")
+    for a in add_ons:
+        if not _is_number(a.get("amount_usd")) or a["amount_usd"] < 0:
+            raise ValueError(f"{where}.additional_flat_monthly[{a['label']}].amount_usd must be >= 0, got {a.get('amount_usd')!r}")
+
+    latent = entry["growth"]["latent"]
+    known_latents = set(deck["forecast_models"]) | set(deck["derived_latents"])
+    if latent not in known_latents:
+        raise ValueError(f"{where}.growth.latent must be one of {sorted(known_latents)}, got {latent!r}")
+
     return {
-        "initial_annual_average_monthly_cost": entry["initial_annual_average_monthly_cost"],
+        "initial_annual_average_monthly_cost": float(average),
+        "calibration_occupied_days_by_month": calibration,
+        "components": components,
+        "heating_type": heating_type,
+        "heating_share": float(heating_share),
+        "vacant_setback_f": float(setback),
+        "hdd_base_temp_f": float(base),
+        "additional_flat_monthly": [{"label": a["label"], "amount_usd": float(a["amount_usd"])} for a in add_ons],
         "seasonal_data_source": entry["seasonal_data_source"],
-        "latent": entry["growth"]["latent"],
+        "latent": latent,
+    }
+
+
+def get_expected_occupied_days_by_month(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """EXPECTED occupied days per calendar month = expected rented days + personal-use days, UNCAPPED
+    (utils.prior_utils.cap_occupied_days applies the days-in-month cap, with a warning).
+
+    Expected rented days is the lognormal MEAN, median x sqrt(1 + cv^2) (for a lognormal,
+    mean = median x exp(sigma^2/2) and cv^2 = exp(sigma^2) - 1), not the median: utilities cost is
+    LINEAR in occupied days, so its expected value needs expected days. (Tax classification
+    deliberately uses the median instead -- get_annual_rented_days -- since it's a threshold rule,
+    not an expectation.) The mean ignores occupancy's own rentable-days cap (days in month minus
+    personal use), which slightly overstates it in a month whose distribution presses against that
+    cap. Returns {"jan": days, ..., "dec": days}."""
+    deck = deck if deck is not None else load_deck()
+    occupancy = deck["rental_operations"]["occupancy"]["months"]
+    personal = _constant(deck["personal_use"]["personal_use_days_by_month"])
+    return {
+        month: occupancy[month]["median"] * (1 + occupancy[month]["cv"] ** 2) ** 0.5 + personal[month]
+        for month in MONTH_KEYS
     }
 
 

@@ -404,46 +404,59 @@ def plot_periods_projection(
     return save_path
 
 
-def plot_utilities_seasonal_shape(
-    temperatures: dict[str, float],
-    seasonal_fit: dict[str, Any],
-    monthly_costs: dict[str, float],
-    title: str,
-    save_path: Path,
-) -> Path:
-    """Two-panel plot: LEFT shows the raw monthly temperature data (scatter) against its own fitted
-    sinusoid (utils.prior_utils.fit_temperature_seasonal_shape -- drawn as a genuinely SMOOTH curve
-    from the fit's own a/b/c coefficients on a fine grid, not a 12-point connect-the-dots line), in
-    the data's own units (°F) -- the "derivation" step. RIGHT shows the resulting seasonal
-    utility-cost shape (utils.prior_utils.seasonal_cost_weights applied to utilities.
-    initial_annual_average_monthly_cost) at INITIAL levels (i.e. before any growth is applied), USD/
-    month -- so the temperature-to-cost inversion (cold month = high cost) is visible directly, not
-    just the end-result numbers."""
+def plot_utilities_year1_breakdown(year_1: pd.DataFrame, title: str, save_path: Path) -> Path:
+    """Two-panel view of utilities' three-category model (utils.prior_utils.build_utilities_prior_model),
+    year 1, calendar order Jan..Dec, before growth.
+    TOP: stacked monthly cost bars -- flat / occupancy-driven / heating / add-ons -- so it's visible
+    which category drives each month's bill.
+    BOTTOM: the two drivers -- occupied days (left axis) and occupied heating degree-days per day
+    (right axis). Kept in their own panel rather than a secondary axis on the cost chart (user
+    decision 2026-11-22): days and degree-days are different units, and stacking both onto the cost
+    chart's spare axis made it unreadable.
+    year_1: DataFrame indexed by month key with columns flat, occupancy, heating, add_ons,
+    occupied_days, hdd_occupied_per_day (see utils.prior_utils.apply_utilities)."""
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    months = list(temperatures.keys())
-    x = np.arange(len(months))
-    x_smooth = np.linspace(0, len(months), 200)
-    fitted_smooth = seasonal_fit["a"] + seasonal_fit["b"] * np.cos(2 * np.pi * x_smooth / 12) + seasonal_fit[
-        "c"
-    ] * np.sin(2 * np.pi * x_smooth / 12)
+    labels = [month.capitalize() for month in year_1.index]
+    x = np.arange(len(labels))
 
-    fig, (ax_temp, ax_cost) = plt.subplots(1, 2, figsize=(14, 5))
-    ax_temp.scatter(x, [temperatures[m] for m in months], color="C0", zorder=3, label="Observed average")
-    ax_temp.plot(x_smooth, fitted_smooth, color="C3", linestyle="--", label="Sine fit")
-    ax_temp.set_xticks(x)
-    ax_temp.set_xticklabels(months)
-    ax_temp.set_ylabel("°F")
-    ax_temp.set_title("Temperature Data and Sine Fit")
-    ax_temp.legend()
-
-    ax_cost.bar(x, [monthly_costs[m] for m in months], color="C1")
-    ax_cost.set_xticks(x)
-    ax_cost.set_xticklabels(months)
+    fig, (ax_cost, ax_driver) = plt.subplots(
+        2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 2]}
+    )
+    bottom = np.zeros(len(labels))
+    for column, label, color in (
+        ("flat", "Flat", "C7"),
+        ("occupancy", "Occupancy-driven", "C0"),
+        ("heating", "Heating", "C3"),
+        ("add_ons", "Add-ons (new costs)", "C2"),
+    ):
+        values = year_1[column].to_numpy(dtype=float)
+        if column == "add_ons" and not values.any():
+            continue
+        ax_cost.bar(x, values, bottom=bottom, color=color, label=label)
+        bottom += values
+    for xi, total in zip(x, bottom, strict=True):
+        ax_cost.annotate(f"\\${total:,.0f}", (xi, total), ha="center", va="bottom", fontsize=8)
+    ax_cost.set_title(title)
     ax_cost.set_ylabel("USD/month")
-    ax_cost.set_title("Seasonal Cost Shape (Initial Levels)")
+    ax_cost.set_ylim(0, bottom.max() * 1.12)
+    ax_cost.legend(fontsize="small", loc="upper center", ncol=4)
 
-    fig.suptitle(title)
+    days_line = ax_driver.plot(x, year_1["occupied_days"], marker="o", color="C0", label="Occupied days")
+    ax_driver.set_ylabel("Occupied days")
+    ax_driver.set_ylim(0, 31)
+    ax_hdd = ax_driver.twinx()
+    hdd_line = ax_hdd.plot(
+        x, year_1["hdd_occupied_per_day"], marker="s", color="C3", linestyle="--", label="Heating degree-days/day (occupied)"
+    )
+    ax_hdd.set_ylabel("HDD per day")
+    ax_hdd.set_ylim(0, max(1.0, float(year_1["hdd_occupied_per_day"].max()) * 1.15))
+    lines = days_line + hdd_line
+    ax_driver.legend(lines, [line.get_label() for line in lines], fontsize="small", loc="upper center", ncol=2)
+    ax_driver.set_xticks(x)
+    ax_driver.set_xticklabels(labels)
+    ax_driver.set_xlabel("Calendar month (year 1)")
+
     fig.tight_layout()
     fig.savefig(save_path)
     plt.close(fig)
@@ -468,6 +481,96 @@ def plot_monthly_rate(projection: pd.DataFrame, outer_projection: pd.DataFrame, 
     ax.set_xlabel("Months Ahead")
     ax.set_ylabel("Monthly Price Increase (Fraction)")
     ax.legend()
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
+
+
+# Shown under every special-assessment plot, so a reader never mistakes these for part of the
+# carrying-cost totals (see carrying_costs.compute_special_assessment for why they're kept apart).
+SPECIAL_ASSESSMENT_PLOT_SUBTITLE = "Excluded from total carrying costs — applied as tail-risk overlay on ΔW in final results."
+
+
+def _count_label(k: int, k_max: int) -> str:
+    """"2" for an ordinary count, "3+" for the k_max entry, which also holds the folded-in chance of
+    more than k_max assessments (see carrying_costs.special_assessment_count_probabilities)."""
+    return f"{k}+" if k == k_max else str(k)
+
+
+def plot_special_assessment_count_by_horizon(
+    count_table: pd.DataFrame, k_max: int, annual_rate: float, title: str, save_path: Path
+) -> Path:
+    """Build-time model.png for carrying_costs.special_assessment: P(N = k) against horizon length,
+    one line per k. The model itself doesn't depend on any one scenario (only annual_rate and k_max
+    from the deck), so this shows every horizon at once; each scenario's own single-horizon view is
+    saved by results.py. count_table: index = horizon years, columns = k (0..k_max), values = P(N=k)."""
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    for k in count_table.columns:
+        ax.plot(count_table.index, count_table[k], marker="o", label=f"N = {_count_label(int(k), k_max)}")
+    ax.set_title(f"{title}\n{SPECIAL_ASSESSMENT_PLOT_SUBTITLE}", fontsize=11)
+    ax.set_xlabel("Horizon (years)")
+    ax.set_ylabel("Probability")
+    ax.set_ylim(0, 1)
+    ax.set_xticks(list(count_table.index))
+    ax.legend(title=f"Assessments (λ = {annual_rate:g}/yr)", fontsize="small")
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
+
+
+def plot_special_assessment_count(count_probabilities: pd.Series, k_max: int, title: str, save_path: Path) -> Path:
+    """One scenario's P(N = k) as a bar chart, k = 0..k_max, each bar labeled with its percentage.
+    The last bar is "k_max+" (see _count_label)."""
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    labels = [_count_label(int(k), k_max) for k in count_probabilities.index]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar(labels, count_probabilities.to_numpy(), color="C1", alpha=0.8)
+    for bar, p in zip(bars, count_probabilities.to_numpy(), strict=True):
+        ax.annotate(f"{p * 100:.1f}%", (bar.get_x() + bar.get_width() / 2, bar.get_height()), ha="center", va="bottom", fontsize=9)
+    ax.set_title(f"{title}\n{SPECIAL_ASSESSMENT_PLOT_SUBTITLE}", fontsize=10)
+    ax.set_xlabel("Number of special assessments over the horizon (N)")
+    ax.set_ylabel("Probability")
+    ax.set_ylim(0, min(1.0, count_probabilities.max() * 1.15 + 0.02))
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
+
+
+def plot_special_assessment_cost(outcomes: pd.DataFrame, k_max: int, title: str, save_path: Path) -> Path:
+    """One scenario's total special-assessment cost distribution: a stem at each possible total cost
+    (USD, nominal at payment time), height = its probability, colored by how many assessments (k)
+    produced it and labeled with its size combination and percentage. A stem plot, not a smooth
+    density, because the distribution genuinely IS a short list of exact points (see
+    carrying_costs.compute_special_assessment). outcomes: DataFrame with k, combination,
+    total_cost_usd, probability."""
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    for k, group in outcomes.groupby("k"):
+        color = f"C{int(k)}"
+        ax.vlines(group["total_cost_usd"], 0, group["probability"], color=color, linewidth=2)
+        ax.scatter(group["total_cost_usd"], group["probability"], color=color, zorder=3, label=f"N = {_count_label(int(k), k_max)}")
+        for _, row in group.iterrows():
+            # escaped \$ -- an unescaped pair of $ would trigger matplotlib's mathtext parsing
+            ax.annotate(
+                f"{row['combination']}\n\\${row['total_cost_usd']:,.0f} · {row['probability'] * 100:.2f}%",
+                (row["total_cost_usd"], row["probability"]),
+                textcoords="offset points",
+                xytext=(0, 6),
+                ha="center",
+                fontsize=7,
+            )
+    ax.set_title(f"{title}\n{SPECIAL_ASSESSMENT_PLOT_SUBTITLE}", fontsize=10)
+    ax.set_xlabel("Total special-assessment cost over the horizon (USD, nominal at payment time)")
+    ax.set_ylabel("Probability")
+    ax.set_ylim(0, min(1.0, outcomes["probability"].max() * 1.2 + 0.03))
+    ax.legend(title="Assessments", fontsize="small")
     fig.tight_layout()
     fig.savefig(save_path)
     plt.close(fig)

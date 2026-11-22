@@ -12,6 +12,11 @@
   revert or "clean up" that change on your own initiative.** Treat it as deliberate. Build on it as the current
   state. If it looks wrong or inconsistent with something else, say so and ask — don't silently undo it.
 
+## Verifying changes
+- The check is a full run: `uv run python run/main.py` (offline by default, safe to run).
+- Never pass `--refresh`.
+- Ignore `run/tests/` entirely for now: don't run, update, or add tests there, and don't suggest writing tests unless I ask.
+
 ## Memory & Context Preservation
 
 **Save context proactively during every conversation.** Context compression is aggressive — do not wait until the end of a session, or a natural pause, to save important information. A compaction (or any other context loss) can happen between any two turns, with no warning, so treat every turn that contains something worth keeping as if it were the last turn you'll get: write the memory file **in that same turn**, before moving on to the next request, not batched up for "later."

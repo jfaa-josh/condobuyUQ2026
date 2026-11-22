@@ -28,8 +28,8 @@
 # get_forecast_model_home_price/get_forecast_model_market).
 #
 # DIST families: lognormal {median, cv} (positive quantities), normal {mean, sd} (can go
-# negative — used for monthly_change blocks), mixture {p, severity: {dist: lognormal, median, cv}}
-# (rare events).
+# negative — used for monthly_change blocks). (Rare events like special assessments don't use a
+# dist family -- see carrying_costs.special_assessment's own frequency_severity shape.)
 #
 # SWEEPS ARE DELIBERATELY MINIMAL: only `scenario.alternatives`, `scenario.horizon_years`,
 # `scenario.residency_state`, and `scenario.purchase_price` are swept. Everything else is a
@@ -214,7 +214,7 @@ forecast_models:
 # utilities data, and import the result here instead of hand-setting weights.
 derived_latents:
   construction_cost:
-    # Drives hoa_dues_annual's and special_assessment's (severity's) GROWTH -- their multi-year
+    # Drives hoa_dues_annual's and special_assessment's (size scenarios') GROWTH -- their multi-year
     # drift, not their own year-to-year LEVEL deviation (see carrying_costs section's own header
     # comment for why there's no longer a LEVEL-driving latent on either).
     weights:
@@ -533,26 +533,55 @@ carrying_costs:
       latent: construction_cost
 
   special_assessment:
-    # Rare-event mixture: p = annual probability, severity = dollar cost if it occurs. GROWTH grows
-    # severity's own median via construction_cost -- a special assessment years from now should
-    # cost more in nominal dollars, for the same reason HOA dues do. p itself is NOT grown (the
-    # chance of a bad year isn't modeled as trending).
+    # FREQUENCY x SIZE (redesigned 2026-11-22, replacing the old "annual probability x lognormal
+    # severity" expected-value model). A special assessment is a rare, lumpy, one-off bill (a new
+    # roof, siding, a reserve shortfall), so it is modeled as:
+    #   - HOW MANY happen over the horizon: N ~ Poisson(annual_rate x horizon_years).
+    #   - HOW BIG each one is: one of a few discrete size_scenarios, picked independently each time.
     #
-    # UNCHANGED as of 2026-09-29 -- modeling this as a smooth ever-present confidence band (like the
-    # other five entries) would either wash out a real, infrequent, spiky risk into a misleadingly
-    # calm-looking band, or blow up the whole model's own bands to reflect a risk that mostly doesn't
-    # apply in any given year. How to model this properly (a frequency-severity / actuarial reserve
-    # approach, kept OUT of the main confidence bands, likely as its own separate "what-if" result)
-    # is a real, larger design question -- deliberately deferred, not yet decided.
-    kind: prior
-    dist: mixture
-    p: 0.05                          # example — annual probability
-    severity:
-      dist: lognormal
-      median: 5000
-      cv: 0.5
+    # EXCLUDED FROM EVERY CARRYING-COST TOTAL (total_carrying_costs, the monthly total band, and the
+    # taxes stage's deductible expenses). Smearing a rare, large bill into a smooth yearly average
+    # would hide exactly the risk it represents. Instead it gets its own plots, and will later be
+    # applied as a TAIL-RISK OVERLAY on ΔW in final reporting (see .claude/implementation-plan.md's
+    # "Final reporting: special-assessment overlay").
+    #
+    # TURNING IT OFF: set annual_rate: 0. There is no separate on/off switch.
+    kind: frequency_severity
+    annual_rate: 0.05                # example -- expected number of assessments PER YEAR (λ). Source
+                                      #   it from the HOA's reserve study; it should be higher for older
+                                      #   buildings or an underfunded reserve. 0.05 = about one every 20
+                                      #   years on average. Must be >= 0.
+    size_scenarios:
+      # Possible sizes of ONE assessment, in TODAY's dollars. `probability` is the chance an assessment
+      # is that size GIVEN that one happens, so the probabilities must add up to exactly 1. Amounts
+      # must be >= 0 and labels must be unique.
+      - label: minor
+        amount_today_usd: 5000       # example
+        probability: 0.7             # example
+      - label: major
+        amount_today_usd: 20000      # example
+        probability: 0.3             # example
     growth:
+      # Grows each size from today's dollars to the dollars of the month it's paid, using this latent's
+      # MEDIAN growth path (construction_cost, the same driver hoa_dues_annual uses: assessments pay for
+      # construction work). Set `latent: none` to keep sizes in today's dollars.
       latent: construction_cost
+    timing: uniform                  # When assessments are assumed to be PAID. OPTIONS:
+                                      #   uniform -- any month of the horizon is equally likely; sizes use
+                                      #     the AVERAGE growth multiplier over the horizon.
+                                      #   worst_case_year1 -- all paid right at closing (month 0): no size
+                                      #     growth yet, but the longest time for that cash to have earned
+                                      #     market returns instead -- the worst case for the later ΔW
+                                      #     overlay.
+    k_max: 3                         # The most assessments counted over the horizon (an integer >= 1).
+                                      #   PLAIN-ENGLISH NOTE ON THE CUTOFF: the model only lists outcomes
+                                      #   0, 1, ..., k_max. The small chance of MORE than k_max assessments
+                                      #   is not thrown away -- it's FOLDED INTO the k_max outcome, so
+                                      #   "k_max assessments" really means "k_max OR MORE". That keeps the
+                                      #   probabilities adding up to 100%, but slightly UNDERSTATES the
+                                      #   cost in those rare cases (4 assessments get counted as 3). Every
+                                      #   run prints a WARNING if that folded-in chance is above 1% for a
+                                      #   scenario -- if you see it, raise k_max.
 
   insurance_annual:
     # GUESS+GROWTH (moved here 2026-09-30 from a known-value shape -- a current insurance premium
@@ -570,27 +599,82 @@ carrying_costs:
       latent: insurance
 
   utilities:
-    # SEASONAL+GROWTH (redesigned 2026-09-29, replacing 12 hand-typed monthly median/cv pairs).
-    # initial_annual_average_monthly_cost is this property's REAL current average monthly utility
-    # bill (0% uncertain) -- spread across the year via a TEMPERATURE-DERIVED seasonal shape (colder
-    # month = higher cost) fit to seasonal_data_source below, then each month grown independently via
-    # `latent`'s own fitted process exactly as before (see utils.prior_utils.
-    # build_utilities_prior_model for the exact sine-fit/rescale mechanism, and its own
-    # seasonal_shape.png for the derivation). No more per-month cv -- like hoa_dues_annual/
-    # insurance_annual, each month's current value is treated as KNOWN, all uncertainty coming from
-    # `latent`'s own growth process.
-    kind: seasonal_plus_growth
-    initial_annual_average_monthly_cost: 119  # example -- this property's ACTUAL average monthly
-                                               #   utility bill (annual total / 12), not any single
-                                               #   month's own bill
+    # THREE-CATEGORY MODEL (redesigned 2026-11-22, replacing the temperature-sine seasonal shape). The
+    # observed average bill below is split into three kinds of cost, each driven differently:
+    #   1. FLAT: independent of temperature and occupancy (service charges, trash, TV/internet).
+    #   2. OCCUPANCY-DRIVEN: scales with occupied days, not temperature (non-heating electric and gas,
+    #      water).
+    #   3. HEATING: scales with occupancy AND temperature (electric or gas space heat), via heating
+    #      degree-days (HDD = how far the day's average temperature sits below hdd_base_temp_f).
+    #      Vacant days still need some heat (freeze protection), at a thermostat setback.
+    #
+    # CALIBRATION: the three categories are sized so that, under calibration_occupied_days_by_month,
+    # one year of bills (before growth) adds up to EXACTLY 12 x initial_annual_average_monthly_cost.
+    # Then each month's cost = flat + (cost per occupied day x occupied days) + (cost per heating
+    # degree-day x that month's heating weight) + additional_flat_monthly, grown by `growth.latent`.
+    # See utils.prior_utils.build_utilities_prior_model for the exact formulas.
+    #
+    # MONTHS ARE REAL CALENDAR MONTHS, anchored to scenario.closing_month: scenario month 0 is the
+    # closing month (fixed 2026-11-22 -- utilities used to treat month 0 as January regardless).
+    #
+    # OCCUPANCY comes from other sections: occupied days per month = EXPECTED rented days
+    # (rental_operations.occupancy's lognormal mean, median x sqrt(1 + cv^2)) + personal_use.
+    # personal_use_days_by_month, capped at the days in that month (with a printed warning).
+    kind: three_category
+    initial_annual_average_monthly_cost: 119  # example -- the PREVIOUS OWNER's actual average monthly
+                                               #   bill (annual total / 12), not any single month's
+    calibration_occupied_days_by_month: deck   # The occupancy the bill above was measured under.
+                                               #   `deck` (default) = assume it was THIS deck's own
+                                               #   occupancy (rented + personal use, as above). If you
+                                               #   learn the previous owner's real occupancy, replace
+                                               #   with a 12-month map of occupied days, e.g.
+                                               #   {jan: 25, feb: 22, ..., dec: 24}.
+    components:
+      # Each utility's share of the observed bill and how its NON-heating cost behaves.
+      #   weight: share of the observed average bill (all weights must add up to 1). Set 0 for anything
+      #     the HOA covers or the previous owner didn't pay.
+      #   occupancy_fraction (0 to 1): share of this utility's NON-heating cost that scales with
+      #     occupied days (category 2); the rest is flat (category 1). 0 = fully flat (e.g. trash),
+      #     1 = fully occupancy-driven.
+      electric: {weight: 0.80, occupancy_fraction: 0.6}   # example
+      gas: {weight: 0.0, occupancy_fraction: 0.0}         # example
+      water: {weight: 0.10, occupancy_fraction: 0.8}      # example
+      sewer: {weight: 0.10, occupancy_fraction: 0.5}      # example
+      trash: {weight: 0.0, occupancy_fraction: 0.0}       # example
+      internet: {weight: 0.0, occupancy_fraction: 0.0}    # example
+    heating_type: 1                  # example. OPTIONS (see carrying_costs.HEATING_TYPES for sources):
+                                      #   0 = HOA/common heat (no heating cost on your bill)
+                                      #   1 = electric resistance (baseboard/wall/radiant), COP 1.0
+                                      #   2 = cold-climate heat pump, seasonal COP 2.0
+                                      #   3 = standard heat pump with resistance backup, COP 1.5
+                                      #   4 = gas furnace/boiler (+ 5% of the electric bill for the
+                                      #       blower fan)
+    heating_share: 0.55              # example -- fraction of the HEATING FUEL's own bill (electric for
+                                      #   codes 1-3, gas for code 4) that is space heating, stated AS IF
+                                      #   heated by electric resistance for codes 1-3 (heat-pump codes 2/3
+                                      #   scale it down by their COP automatically) or by the furnace
+                                      #   itself for code 4. 0.55 = engineering estimate for a resistance-
+                                      #   heated condo at ~9,000 ft; gas-heated units typically run higher
+                                      #   (~0.7-0.8). Best source: calibrate from a January and a July bill
+                                      #   (method in .claude/implementation-plan.md). Ignored for code 0.
+                                      #   Must be >= 0 and < 1.
+    vacant_setback_f: 10             # example -- degrees F the thermostat is turned down on vacant days
+                                      #   (freeze protection). 0 = no setback (vacant days heat like
+                                      #   occupied ones). A typical vacant STR setting is ~55°F.
+    hdd_base_temp_f: 65              # Temperature (F) below which a day counts as needing heat -- 65 is
+                                      #   the US standard for heating degree-days.
+    additional_flat_monthly: []      # NEW monthly costs (category 1, flat) that the previous owner did
+                                      #   NOT pay or that weren't in the observed bill, e.g.
+                                      #   [{label: guest_internet, amount_usd: 60}]. These are added ON
+                                      #   TOP of the calibrated bill, so they INTENTIONALLY raise the total
+                                      #   above the previous owner's average. Grown like everything else.
     seasonal_data_source: keystone_co_monthly_temperature_averages.csv
                                                # Filename under data/manual/ -- 12 rows (month,
-                                               # avg_temp_f), each month's own average of that
-                                               # month's average daily high and average daily low.
-                                               # See data/manual/README.md for the source and the
-                                               # exact sine-fit/inversion this drives.
+                                               # avg_temp_f), each month's average of its average daily
+                                               # high and low. Used directly for heating degree-days.
+                                               # See data/manual/README.md for the source.
     growth:
-      latent: utilities
+      latent: utilities              # applied to every category, add-ons included
 
   maintenance_annual:
     # GUESS+GROWTH (redesigned 2026-09-29): unlike hoa_dues_annual/insurance_annual/utilities, there

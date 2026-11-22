@@ -1,9 +1,10 @@
 """Computes one scenario's per-year carrying costs: property tax (REAL, using Colorado's actual
 two-step assessment_rate x mill_levy mechanic, local AND school components separately -- see
 input_deck.yaml's carrying_costs.property_tax comment for the research behind it), plus HOA dues,
-insurance, maintenance, special assessment (expected value), and utilities -- each projected from
-its own pre-built carrying_cost_prior model (see utils.prior_utils.build_all_carrying_cost_prior_models,
-wired into run/main.py's build stage, the same way derived_latents are).
+insurance, maintenance, and utilities -- each projected from its own pre-built carrying_cost_prior
+model (see utils.prior_utils.build_all_carrying_cost_prior_models, wired into run/main.py's build
+stage, the same way derived_latents are). Special assessments get their own separate frequency x
+size model (compute_special_assessment) that is NEVER part of any carrying-cost total.
 
 Also owns project_condo_value_schedule -- the condo's own CONTINUOUSLY appreciating value over the
 horizon (via forecast_models.home_price) -- since it's fundamentally a "what does this property
@@ -27,11 +28,13 @@ acquisition.py/financing.py established.
 
 from __future__ import annotations
 
+import math
+from itertools import combinations_with_replacement
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
+from scipy.stats import norm, poisson
 
 from condobuyuq2026.input_deck import (
     get_forecast_model_home_price,
@@ -58,6 +61,72 @@ LODGING_ASSESSMENT_RATE = 0.279  # example -- CO's ~2026 commercial/lodging rate
 # RESIDENCY_DAYS in taxes.py.
 LOCAL_ASSESSED_VALUE_FRACTION = 0.90
 SCHOOL_ASSESSED_VALUE_FRACTION = 1.00
+
+# Heating systems for carrying_costs.utilities.heating_type (2026-11-22). Hardcoded reference data, not
+# deck fields: these are equipment physics, not property-specific inputs. `carrier` is the utility
+# component whose bill holds the heating cost; `cop` (coefficient of performance: heat delivered per unit
+# of electricity) scales an electric-resistance-equivalent heating_share down for heat pumps.
+#   1: electric resistance converts electricity to heat 1:1 by definition (COP 1.0).
+#   2: cold-climate heat pumps: NEEP's ccASHP specification requires COP >= 1.75 at 5°F; 2.0 is a
+#      conservative SEASONAL average for a high-altitude Colorado winter (much of it far colder than the
+#      mild-climate ratings, ~3+).
+#   3: a standard heat pump leaning on resistance backup in deep cold averages well below its rating:
+#      1.5 sits between pure resistance (1.0) and the cold-climate unit above.
+#   4: gas furnace/boiler: the gas bill carries the heat (heating_share applies to it directly), plus
+#      the blower fan's electricity -- NYSERDA measured ~5-9 kWh of blower electricity per MMBtu of
+#      furnace heat; modeled simply as GAS_FURNACE_BLOWER_ELECTRIC_SHARE of the ELECTRIC bill (user
+#      decision 2026-11-22: avoids needing gas/electric prices to convert).
+#   0: heat supplied by the HOA/common system -- nothing on this unit's own bill.
+HEATING_TYPES: dict[int, dict[str, Any]] = {
+    0: {"name": "HOA/common heat", "carrier": None, "cop": None},
+    1: {"name": "electric resistance (baseboard/wall/radiant)", "carrier": "electric", "cop": 1.0},
+    2: {"name": "cold-climate heat pump", "carrier": "electric", "cop": 2.0},
+    3: {"name": "standard heat pump with resistance backup", "carrier": "electric", "cop": 1.5},
+    4: {"name": "gas furnace/boiler", "carrier": "gas", "cop": None},
+}
+GAS_FURNACE_BLOWER_ELECTRIC_SHARE = 0.05
+
+
+def resolve_heating_type(heating_type: int, heating_share: float, components: dict[str, dict[str, float]]) -> dict[str, Any]:
+    """Resolves carrying_costs.utilities' heating_type code + heating_share into how much of each
+    component's bill is space heating. Raises ValueError for an unknown code, or a heating carrier
+    whose weight is 0 (e.g. code 4 with gas weight 0 -- the heat would have nowhere to come from).
+
+    For electric codes (1-3), heating_share S is stated as if heated by electric RESISTANCE, so a heat
+    pump with coefficient of performance COP uses S/COP for the same heat while the non-heating
+    1 - S is unchanged. Re-expressed as a share of the (smaller) actual electric bill:
+        effective share s = (S/COP) / (S/COP + 1 - S)
+    For gas (code 4): s = S of the gas bill, plus GAS_FURNACE_BLOWER_ELECTRIC_SHARE of the electric bill.
+
+    Returns {"heating_type", "name", "carrier", "cop", "heating_share" (as entered),
+    "heating_fraction_by_component" ({component: share of THAT component's bill that is heating})}."""
+    if heating_type not in HEATING_TYPES:
+        raise ValueError(
+            f"carrying_costs.utilities.heating_type must be one of {sorted(HEATING_TYPES)}, got {heating_type!r}"
+        )
+    spec = HEATING_TYPES[heating_type]
+    carrier, cop = spec["carrier"], spec["cop"]
+    fractions = {name: 0.0 for name in components}
+    if carrier is not None:
+        if components[carrier]["weight"] == 0:
+            raise ValueError(
+                f"carrying_costs.utilities.heating_type {heating_type} ({spec['name']}) heats with {carrier}, "
+                f"but components.{carrier}.weight is 0 -- give {carrier} a weight or pick another heating_type"
+            )
+        if cop is None:  # gas furnace/boiler
+            fractions[carrier] = heating_share
+            fractions["electric"] = GAS_FURNACE_BLOWER_ELECTRIC_SHARE
+        else:
+            per_cop = heating_share / cop
+            fractions[carrier] = per_cop / (per_cop + 1 - heating_share)
+    return {
+        "heating_type": heating_type,
+        "name": spec["name"],
+        "carrier": carrier,
+        "cop": cop,
+        "heating_share": heating_share,
+        "heating_fraction_by_component": fractions,
+    }
 
 
 # Which carrying_cost_prior entries are "informed" (checked against REAL historical data for that
@@ -298,15 +367,134 @@ def _project_hoa_dues_annual(horizon_years: int, deck: dict[str, Any] | None = N
     return pd.Series(totals, index=pd.Index(range(1, horizon_years + 1)), name="hoa_dues")
 
 
-def _project_special_assessment_expected(horizon_years: int, deck: dict[str, Any] | None = None) -> pd.Series:
-    """Expected annual special-assessment cost -- a pure LOOKUP against its saved FULL-MONTHLY-
-    RESOLUTION `periods` (already annual_probability x projected severity median, see
-    utils.prior_utils.build_special_assessment_prior_model), same convention as
-    _project_carrying_cost_prior (a continuously-evolving estimate, not a real monthly bill)."""
-    config = _load_carrying_cost_prior_fit("special_assessment")
-    periods_by_year = [resolve_period(config["periods"], year * 12 - 1) for year in range(1, horizon_years + 1)]
-    values = [period["known_value"] + period["projected_value"] for period in periods_by_year]
-    return pd.Series(values, index=pd.Index(range(1, horizon_years + 1)), name="special_assessment_expected")
+def special_assessment_count_probabilities(annual_rate: float, horizon_years: int, k_max: int) -> pd.Series:
+    """P(N = k) for k = 0..k_max, where N ~ Poisson(annual_rate x horizon_years) is the number of
+    special assessments over the horizon.
+
+    THE CUTOFF, IN PLAIN ENGLISH: only the outcomes 0, 1, ..., k_max are listed. The small chance of
+    MORE than k_max assessments is not dropped -- it's FOLDED INTO the k_max entry, so the last entry
+    means "k_max OR MORE" (P(N >= k_max)). That keeps the probabilities summing to exactly 1, at the
+    cost of slightly understating the cost in those rare cases (e.g. 4 assessments get costed as 3).
+    See special_assessment_folded_tail_probability for how big that folded-in chance is, which
+    reporting.print_special_assessment_report warns about above 1%.
+
+    Shared by the per-scenario model (compute_special_assessment) and the build-time model.png
+    (utils.prior_utils.build_special_assessment_prior_model), so both always agree."""
+    expected_count = annual_rate * horizon_years
+    k = np.arange(k_max + 1)
+    if expected_count == 0:
+        probabilities = np.zeros(k_max + 1)
+        probabilities[0] = 1.0
+    else:
+        probabilities = poisson.pmf(k, expected_count)
+        probabilities[-1] = poisson.sf(k_max - 1, expected_count)  # P(N >= k_max): the fold-in
+    return pd.Series(probabilities, index=pd.Index(k, name="k"), name="probability")
+
+
+def special_assessment_folded_tail_probability(annual_rate: float, horizon_years: int, k_max: int) -> float:
+    """P(N > k_max): the chance of MORE assessments than the model lists separately -- the amount
+    folded into the k_max outcome (see special_assessment_count_probabilities)."""
+    expected_count = annual_rate * horizon_years
+    return 0.0 if expected_count == 0 else float(poisson.sf(k_max, expected_count))
+
+
+def _special_assessment_size_multiplier(size_growth_multiplier: list[float], timing: str, horizon_months: int) -> float:
+    """How much ONE assessment's today's-dollar size grows by the time it's paid, given `timing`:
+    - "worst_case_year1": paid right at closing (month 0), so no growth: 1.0.
+    - "uniform": any month 0..horizon_months-1 equally likely, so the AVERAGE of the saved monthly
+      growth multiplier over those months. APPROXIMATION (flagged here so it doesn't read as exact):
+      this replaces each assessment's random payment month with the average multiplier, so the cost
+      distribution stays a short list of exact points instead of becoming a continuous spread. The
+      growth over a 1-10 year horizon is small next to the size_scenarios' own spread, so the effect
+      on the distribution's shape is minor.
+    `size_growth_multiplier` is the latent's median growth path from today, one value per month
+    (see utils.prior_utils.build_special_assessment_prior_model)."""
+    if timing == "worst_case_year1":
+        return 1.0
+    if horizon_months > len(size_growth_multiplier):
+        raise ValueError(
+            f"horizon_months={horizon_months} exceeds the saved special_assessment growth path -- rebuild via "
+            "utils.prior_utils.build_all_carrying_cost_prior_models with a larger horizon_months."
+        )
+    return float(np.mean(size_growth_multiplier[:horizon_months]))
+
+
+def compute_special_assessment(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One scenario's special-assessment model: how many assessments (N ~ Poisson(annual_rate x
+    horizon_years), see special_assessment_count_probabilities) and the resulting EXACT discrete
+    distribution of their total cost, in nominal dollars at payment time (sizes grown per `timing`,
+    see _special_assessment_size_multiplier). Reads the saved build (fit.json), not the deck, same as
+    every other carrying cost here.
+
+    DELIBERATELY KEPT OUT OF EVERY CARRYING-COST TOTAL: compute_carrying_costs stores this under its
+    own "special_assessment" key, never in annual_schedule, so total_carrying_costs,
+    compute_total_carrying_costs_schedule and taxes.py's expenses never see it. A rare, large bill
+    averaged into a smooth yearly cost would hide exactly the risk it represents. It's applied later
+    as a tail-risk overlay on ΔW instead (see .claude/implementation-plan.md's "Final reporting:
+    special-assessment overlay").
+
+    NOT compounded to the horizon here -- the overlay does that (at expected market growth, for the
+    opportunity cost of the cash), since that's a ΔW-level question, not a carrying-cost one.
+
+    EXACT, no Monte Carlo: given k assessments, each independently one of the size_scenarios, every
+    possible combination is listed (itertools.combinations_with_replacement -- order doesn't change
+    the total) with its multinomial probability, times P(N = k). With k_max ~3 and a few sizes that's
+    a few dozen rows at most.
+
+    Returns {"enabled" (False when annual_rate == 0 -- the deck's off switch), "annual_rate", "k_max",
+    "timing", "latent", "expected_count" (annual_rate x horizon_years), "count_probabilities"
+    (Series, k -> P), "folded_tail_probability" (P(N > k_max), see the fold-in note above),
+    "size_multiplier", "sizes_nominal_usd" ({label: grown size}), "outcomes" (DataFrame: k,
+    combination, total_cost_usd, probability -- one row per distinct combination),
+    "cost_distribution" (DataFrame: total_cost_usd, probability -- outcomes merged by total),
+    "expected_total_cost_usd"}."""
+    fit = _load_carrying_cost_prior_fit("special_assessment")
+    horizon_years = scenario["horizon_years"]
+    annual_rate, k_max, scenarios = fit["annual_rate"], fit["k_max"], fit["size_scenarios"]
+
+    count_probabilities = special_assessment_count_probabilities(annual_rate, horizon_years, k_max)
+    size_multiplier = _special_assessment_size_multiplier(fit["size_growth_multiplier"], fit["timing"], horizon_years * 12)
+    sizes = [s["amount_today_usd"] * size_multiplier for s in scenarios]
+
+    rows = []
+    for k_raw, p_k in count_probabilities.items():
+        k = int(k_raw)
+        for combo in combinations_with_replacement(range(len(scenarios)), k):
+            counts = [combo.count(i) for i in range(len(scenarios))]
+            ways = math.factorial(k) // math.prod(math.factorial(c) for c in counts)
+            p_combo = ways * math.prod(s["probability"] ** c for s, c in zip(scenarios, counts, strict=True))
+            rows.append(
+                {
+                    "k": k,
+                    "combination": "+".join(scenarios[i]["label"] for i in combo) or "none",
+                    "total_cost_usd": sum(sizes[i] for i in combo),
+                    "probability": float(p_k) * p_combo,
+                }
+            )
+    outcomes = pd.DataFrame(rows)
+    outcomes = outcomes[outcomes["probability"] > 0].reset_index(drop=True)
+    cost_distribution = (
+        outcomes.groupby(outcomes["total_cost_usd"].round(2))["probability"]
+        .sum()
+        .reset_index()
+        .sort_values("total_cost_usd", ignore_index=True)
+    )
+
+    return {
+        "enabled": annual_rate > 0,
+        "annual_rate": annual_rate,
+        "k_max": k_max,
+        "timing": fit["timing"],
+        "latent": fit["latent"],
+        "expected_count": annual_rate * horizon_years,
+        "count_probabilities": count_probabilities,
+        "folded_tail_probability": special_assessment_folded_tail_probability(annual_rate, horizon_years, k_max),
+        "size_multiplier": size_multiplier,
+        "sizes_nominal_usd": {s["label"]: size for s, size in zip(scenarios, sizes, strict=True)},
+        "outcomes": outcomes,
+        "cost_distribution": cost_distribution,
+        "expected_total_cost_usd": float((outcomes["total_cost_usd"] * outcomes["probability"]).sum()),
+    }
 
 
 def _project_utilities_annual(horizon_years: int, deck: dict[str, Any] | None = None) -> pd.Series:
@@ -335,8 +523,10 @@ def compute_carrying_costs_schedule(
 
     Returns a DataFrame indexed by year (1..horizon_years) with columns: property_tax (the MEDIAN
     tax figure only -- see compute_carrying_costs' "property_tax_schedule" for the full band),
-    hoa_dues, insurance, maintenance, special_assessment_expected, utilities, total (the sum of the
-    other six, using property_tax's median)."""
+    hoa_dues, insurance, maintenance, utilities, total (the sum of the other five, using
+    property_tax's median). No special-assessment column: it's excluded from every total (see
+    compute_special_assessment) -- taxes.py sums this frame's columns, so adding one here would
+    silently pull it back in."""
     deck = deck if deck is not None else load_deck()
     horizon_years = scenario["horizon_years"]
     property_tax_schedule = (
@@ -349,7 +539,6 @@ def compute_carrying_costs_schedule(
             "hoa_dues": _project_hoa_dues_annual(horizon_years, deck),
             "insurance": _project_carrying_cost_prior("insurance_annual", horizon_years, deck),
             "maintenance": _project_carrying_cost_prior("maintenance_annual", horizon_years, deck),
-            "special_assessment_expected": _project_special_assessment_expected(horizon_years, deck),
             "utilities": _project_utilities_annual(horizon_years, deck),
         }
     )
@@ -362,7 +551,9 @@ def compute_carrying_costs(scenario: dict[str, Any], deck: dict[str, Any] | None
     compute_carrying_costs_schedule), "property_tax_schedule" (DataFrame, see
     compute_property_tax_schedule -- the FULL assessed_value/tax median/lo/hi band, not just the
     median folded into annual_schedule's own "property_tax" column), "total_carrying_costs"
-    (annual_schedule's "total" column summed over the horizon)}."""
+    (annual_schedule's "total" column summed over the horizon), "special_assessment" (see
+    compute_special_assessment -- kept as its own separate result, NOT part of annual_schedule or
+    total_carrying_costs)}."""
     deck = deck if deck is not None else load_deck()
     property_tax_schedule = compute_property_tax_schedule(scenario, deck)
     annual_schedule = compute_carrying_costs_schedule(scenario, deck, property_tax_schedule)
@@ -370,15 +561,16 @@ def compute_carrying_costs(scenario: dict[str, Any], deck: dict[str, Any] | None
         "annual_schedule": annual_schedule,
         "property_tax_schedule": property_tax_schedule,
         "total_carrying_costs": annual_schedule["total"].sum(),
+        "special_assessment": compute_special_assessment(scenario, deck),
     }
 
 
 def compute_total_carrying_costs_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
     """Combines property_tax + hoa_dues + insurance + maintenance + utilities into ONE MONTHLY total
     cost distribution (1..horizon_months). DELIBERATELY EXCLUDES special_assessment -- its own rare,
-    spiky risk is a separate, deferred "what-if" concern (see results.py's own module docstring and
-    the "carrying-costs-known-value-redesign" project notes): folding a small-probability,
-    large-severity mixture into this sum would misleadingly smear a spiky tail risk into an
+    spiky risk is modeled separately (compute_special_assessment) and applied later as a tail-risk
+    overlay on ΔW: folding a small-probability, large-size event into this sum would misleadingly
+    smear a spiky tail risk into an
     ordinary-looking smooth confidence band, which is exactly what the user asked NOT to do. If this
     exclusion is ever revisited, it must be a deliberate decision, not something silently reintroduced
     here.

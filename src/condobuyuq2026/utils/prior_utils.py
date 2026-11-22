@@ -13,7 +13,8 @@ path scheme) and FROM manual_utils.py (model_fit_path/model_plots_dir, generic f
 
 TWO CLASSES OF PRIOR, now distinguished explicitly (see carrying_costs.INFORMED_CARRYING_COST_PRIORS):
 - UNINFORMED (hoa_dues_annual/insurance_annual/maintenance_annual/special_assessment/utilities): a
-  purely PROJECTED distribution grown by a growth or derived-latent model, with no real historical
+  purely PROJECTED distribution grown by a growth or derived-latent model (special_assessment is the
+  odd one out: a count x discrete-size model, see build_special_assessment_prior_model), with no real historical
   data for the carrying cost itself feeding the fit. As of the 2026-09-29 redesign, three of these
   (hoa_dues_annual/insurance_annual/utilities) start from a REAL KNOWN current value (0% uncertain at
   h=0, same role as market_value.initial_price), not a hand-elicited level+cv -- only
@@ -43,10 +44,18 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-from condobuyuq2026.carrying_costs import carrying_cost_prior_path
+from condobuyuq2026.carrying_costs import (
+    carrying_cost_prior_path,
+    resolve_heating_type,
+    special_assessment_count_probabilities,
+)
 from condobuyuq2026.input_deck import (
     DERIVED_LATENT_COMPONENTS,
+    MONTH_KEYS,
+    SPECIAL_ASSESSMENT_NO_GROWTH,
+    UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK,
     get_closing_date,
+    get_expected_occupied_days_by_month,
     get_forecast_model_name,
     get_growth_fit,
     get_hoa_dues_config,
@@ -64,7 +73,8 @@ from condobuyuq2026.plotting.forecast_plots import (
     plot_market_value_correction_diagnostic,
     plot_periods_projection,
     plot_periods_stairstep,
-    plot_utilities_seasonal_shape,
+    plot_special_assessment_count_by_horizon,
+    plot_utilities_year1_breakdown,
 )
 from condobuyuq2026.raw_data import load_monthly_series
 from condobuyuq2026.utils.manual_utils import model_fit_path, model_plots_dir
@@ -742,65 +752,49 @@ def build_maintenance_prior_model(deck: dict[str, Any] | None = None, horizon_mo
 
 
 def build_special_assessment_prior_model(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Path]:
-    """Builds carrying_costs.special_assessment's own (UNINFORMED) projection: applies
-    ou_fitting.project_term_structure to the mixture's severity.median/cv (p, the annual probability,
-    is NOT grown -- see that field's own deck comment). fit.json holds the resolved deck config (kept
-    for diagnostics/reference) PLUS baked FULL-MONTHLY-RESOLUTION `periods` (see bake_monthly_periods)
-    of the EXPECTED annual cost (severity's own projected median x annual_probability -- scaling a
-    period's known/projected by a constant probability leaves growth_sigma untouched, same reasoning
-    carrying_costs.market_value_periods_to_tax_periods relies on for its own rate rescale). model.png
-    is drawn DIRECTLY from these SAME saved (expected-value) periods, not severity alone -- so it
-    shows exactly the quantity fit.json holds and results.py's own plot uses, not a different
-    (severity-only) view. Saves models/carrying_cost_priors/uninformed/special_assessment/fit.json +
-    plot. UNCHANGED in mechanism as of the other four entries' known-value redesign -- how to model
-    this rare, spiky tail risk without polluting the smooth confidence bands is a separate,
-    deliberately deferred design question (actuarial frequency-severity options discussed but not yet
-    decided)."""
+    """Builds carrying_costs.special_assessment's FREQUENCY x SIZE model (redesigned 2026-11-22 from
+    the old p x lognormal-severity expected-value projection -- see the deck comment).
+
+    Unlike the other carrying costs, fit.json deliberately does NOT hold the standardized `periods`
+    shape: a special assessment isn't a smooth cost with a confidence band, it's a count (Poisson)
+    times a few discrete sizes, and it's excluded from every carrying-cost total. fit.json holds the
+    validated deck config plus `size_growth_multiplier`: the growth latent's MEDIAN path from 1.0,
+    one value per month h = 0..horizon_months (all 1.0 for `latent: none`). Only the median is used,
+    not the latent's band: the size uncertainty is already carried by the discrete size_scenarios,
+    and the latent's own spread over a few years is small next to the gap between a minor and a
+    major assessment. carrying_costs.compute_special_assessment turns this into each scenario's own
+    count and cost distribution.
+
+    model.png shows P(N = k) against horizon length (1..horizon_months/12 years), via the SAME
+    carrying_costs.special_assessment_count_probabilities the per-scenario model uses."""
     deck = deck if deck is not None else _load_deck()
     config = get_special_assessment_config(deck)
-    latent_fit = get_growth_fit(config["latent"], deck)
-    extra_log_variance = np.log(1 + config["severity_cv"] ** 2)
 
-    report_quantiles = get_report_quantiles(deck)
-    ci = (report_quantiles[0], report_quantiles[-1])
-
-    projection = project_term_structure(
-        latent_fit,
-        p0=config["severity_median"],
-        horizon_months=horizon_months,
-        ci=ci,
-        extra_log_variance=extra_log_variance,
-    )
-    severity_periods = bake_monthly_periods(projection, ci, horizon_months)
-    periods = [
-        {**period, "projected_value": period["projected_value"] * config["annual_probability"]}
-        for period in severity_periods
-    ]
+    if config["latent"] == SPECIAL_ASSESSMENT_NO_GROWTH:
+        size_growth_multiplier = [1.0] * (horizon_months + 1)
+    else:
+        projection = project_term_structure(get_growth_fit(config["latent"], deck), p0=1.0, horizon_months=horizon_months)
+        size_growth_multiplier = [float(m) for m in projection["median"]]
 
     path_segment = carrying_cost_prior_path("special_assessment")
     fit_path = model_fit_path(path_segment)
     with fit_path.open("w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "annual_probability": config["annual_probability"],
-                "severity_median": config["severity_median"],
-                "severity_cv": config["severity_cv"],
-                "latent": config["latent"],
-                "periods": periods,
-            },
-            f,
-            indent=2,
-        )
+        json.dump({**config, "size_growth_multiplier": size_growth_multiplier}, f, indent=2)
 
+    horizons = range(1, horizon_months // 12 + 1)
+    count_table = pd.DataFrame(
+        {
+            years: special_assessment_count_probabilities(config["annual_rate"], years, config["k_max"])
+            for years in horizons
+        }
+    ).T
     plot_path = model_plots_dir(path_segment) / "model.png"
-    plot_periods_projection(
-        periods,
-        ci,
-        _CARRYING_COST_PRIOR_OUTER_CI,
-        horizon_months,
-        title=f"Special Assessment (Expected) — Uninformed Carrying-Cost Prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% Band)",
+    plot_special_assessment_count_by_horizon(
+        count_table,
+        config["k_max"],
+        config["annual_rate"],
+        title="Special Assessments — Number Over the Horizon, P(N = k)",
         save_path=plot_path,
-        ylabel="USD/year (expected)",
     )
     return {"fit_path": fit_path, "plot_path": plot_path}
 
@@ -810,23 +804,27 @@ def bake_calendar_month_periods(
     medians_by_month: dict[str, float],
     ci: tuple[float, float],
     horizon_months: int,
+    closing_month: int,
     extra_log_variance: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """Bakes utilities' own 12-calendar-month seasonal shape into MONTHLY periods, one period per
-    absolute month 0..horizon_months (each 1 month wide, `known_value` always 0.0) -- the standardized
-    periods shape (see bake_annual_periods), at MONTHLY rather than annual granularity since utilities
-    is the one entry with real seasonal (month-to-month) structure to preserve.
+    """Bakes utilities' own 12-calendar-month costs into MONTHLY periods, one period per absolute
+    month 0..horizon_months (each 1 month wide, `known_value` always 0.0) -- the standardized periods
+    shape (see bake_annual_periods), at MONTHLY rather than annual granularity since utilities is the
+    one entry with real seasonal (month-to-month) structure to preserve.
 
-    Each absolute month's own calendar month name cycles jan..dec (medians_by_month's own key order),
-    and is sampled from THAT month's own independent OU trajectory (h_months=0 is "now" for every
-    month, not tied to any real calendar date -- see build_utilities_prior_model's own docstring) at
-    h = the END of the absolute month's own YEAR (year*12) -- i.e. every one of the 12 months within a
-    given year is evaluated at the SAME year-end horizon. extra_log_variance defaults to 0.0
-    (REDESIGNED 2026-09-29 -- each month's own current value is now treated as KNOWN, same as
-    hoa_dues_annual/insurance_annual, since it derives from a single real initial_annual_average_
-    monthly_cost rather than a per-month hand-elicited cv).
+    CALENDAR ALIGNMENT (fixed 2026-11-22): absolute month h is calendar month
+    MONTH_KEYS[(closing_month - 1 + h) % 12] -- month 0 is the CLOSING month (scenario.closing_month,
+    TIMESTEP 0 for every month-indexed model), the same anchoring property tax already used (see
+    months_to_first_reassessment). Before this fix, month 0 was always treated as January, so e.g. an
+    October closing billed January's heating-season cost in October. medians_by_month must hold all
+    12 MONTH_KEYS.
+
+    Each absolute month is sampled from ITS calendar month's own independent OU trajectory (seeded at
+    that month's year-1 cost) at h = the END of the absolute month's own scenario YEAR (year*12) --
+    every month within a given year is evaluated at the SAME year-end horizon. extra_log_variance
+    defaults to 0.0: each month's current value is treated as KNOWN (it's calibrated from a single
+    real observed average bill), all uncertainty coming from the latent's own growth process.
     """
-    month_names = list(medians_by_month.keys())
     z_hi = norm.ppf(ci[1])
     month_projections = {
         month: project_term_structure(
@@ -836,11 +834,11 @@ def bake_calendar_month_periods(
             ci=ci,
             extra_log_variance=extra_log_variance,
         )
-        for month in month_names
+        for month in MONTH_KEYS
     }
     periods = []
     for absolute_month in range(horizon_months):
-        month_name = month_names[absolute_month % 12]
+        month_name = MONTH_KEYS[(closing_month - 1 + absolute_month) % 12]
         h = (absolute_month // 12 + 1) * 12
         projection = month_projections[month_name]
         median = projection.loc[h, "median"]
@@ -850,6 +848,7 @@ def bake_calendar_month_periods(
             {
                 "start_month": absolute_month,
                 "end_month": absolute_month + 1,
+                "calendar_month": month_name,
                 "known_value": 0.0,
                 "projected_value": float(median),
                 "growth_sigma": sigma,
@@ -860,101 +859,240 @@ def bake_calendar_month_periods(
 
 def load_temperature_seasonal_data(filename: str) -> dict[str, float]:
     """Loads data/manual/<filename> (columns "month","avg_temp_f" -- see that file's own README
-    entry) into {month: avg_temp_f}, preserving the CSV's own row order (must be jan..dec, matching
-    every other month-keyed dict in this codebase, e.g. carrying_costs.utilities.months' own key
-    order used to)."""
+    entry) into {month: avg_temp_f}. Raises ValueError unless the rows are exactly MONTH_KEYS, in
+    order -- every month-keyed dict here relies on that order."""
     df = pd.read_csv(DATA_MANUAL_DIR / filename)
-    return dict(zip(df["month"], df["avg_temp_f"].astype(float), strict=True))
+    temperatures = dict(zip(df["month"], df["avg_temp_f"].astype(float), strict=True))
+    if tuple(temperatures) != MONTH_KEYS:
+        raise ValueError(f"data/manual/{filename}: months must be exactly {MONTH_KEYS} in order, got {tuple(temperatures)}")
+    return temperatures
 
 
-def fit_temperature_seasonal_shape(temperatures: dict[str, float]) -> dict[str, Any]:
-    """Fits T(m) = a + b*cos(2*pi*m/12) + c*sin(2*pi*m/12) to 12 monthly average temperatures --
-    LINEAR in a/b/c (a simple change of basis), solved directly via np.linalg.lstsq, no nonlinear
-    optimizer needed. m is the calendar month's own 0-indexed position (temperatures' own key order,
-    jan=0 .. dec=11). Returns {"a", "b", "c", "fitted_by_month": {month: fitted_value, ...}} -- a/b/c
-    individually (amplitude/phase would be more interpretable) aren't used by anything downstream,
-    only the fitted curve itself is."""
-    months = list(temperatures.keys())
-    m = np.arange(len(months))
-    y = np.array([temperatures[month] for month in months])
-    design = np.column_stack([np.ones_like(m, dtype=float), np.cos(2 * np.pi * m / 12), np.sin(2 * np.pi * m / 12)])
-    a, b, c = np.linalg.lstsq(design, y, rcond=None)[0]
-    fitted = a + b * np.cos(2 * np.pi * m / 12) + c * np.sin(2 * np.pi * m / 12)
-    return {"a": float(a), "b": float(b), "c": float(c), "fitted_by_month": dict(zip(months, fitted.tolist(), strict=True))}
+# Non-leap days per calendar month. February uses 28: leap years add one day every 4 years, a ~0.1%
+# effect on an annual bill, not worth modeling for a cost calibrated to an observed average.
+DAYS_IN_MONTH = dict(zip(MONTH_KEYS, (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31), strict=True))
 
 
-def seasonal_cost_weights(fitted_by_month: dict[str, float], floor_fraction: float = 0.3) -> dict[str, float]:
-    """Converts a fitted temperature curve (fit_temperature_seasonal_shape) into a NORMALIZED
-    monthly cost-shape multiplier (mean 1 across all 12 months) -- colder months cost MORE
-    (heating-dominated utility bills), so this is the temperature curve's own INVERSE, rescaled into
-    [floor_fraction, 1] before normalizing: the coldest month gets weight 1 (pre-normalization), the
-    warmest gets floor_fraction (never literally 0 -- baseline electricity/water use doesn't
-    disappear just because there's no heating load).
-
-    floor_fraction=0.3 is a MODELING CHOICE, not derived from the temperature data itself (temperature
-    alone can't reveal a specific unit's $/degree sensitivity) -- chosen because it reproduces almost
-    exactly this deck's own PRE-2026-09-29 hand-tuned summer/winter ratio (min/max = 110/320 = 0.34),
-    a reasonable sanity anchor rather than an arbitrary pick.
-    """
-    months = list(fitted_by_month.keys())
-    temps = np.array([fitted_by_month[m] for m in months])
-    t_min, t_max = temps.min(), temps.max()
-    coldness_fraction = (t_max - temps) / (t_max - t_min)  # 1 = coldest month, 0 = warmest
-    raw_weight = floor_fraction + (1 - floor_fraction) * coldness_fraction
-    normalized = raw_weight / raw_weight.mean()
-    return dict(zip(months, normalized.tolist(), strict=True))
+def cap_occupied_days(occupied_days: dict[str, float]) -> tuple[dict[str, float], list[str]]:
+    """Caps each month's occupied days at the days in that month, so vacant days (days - occupied) can
+    never go negative. Expected rented days + personal use CAN exceed the month in principle (the
+    lognormal mean ignores occupancy's own rentable-days cap -- see
+    input_deck.get_expected_occupied_days_by_month). Returns (capped days, one warning string per
+    capped month), so the caller can print the warnings via reporting.py rather than silently
+    clipping."""
+    capped, warnings = {}, []
+    for month in MONTH_KEYS:
+        limit = DAYS_IN_MONTH[month]
+        days = float(occupied_days[month])
+        if days > limit:
+            warnings.append(f"{month}: {days:.1f} occupied days exceeds the month's {limit} days -- capped at {limit}")
+            days = float(limit)
+        capped[month] = days
+    return capped, warnings
 
 
-def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Path]:
-    """Builds carrying_costs.utilities' own SEASONAL+GROWTH projection (REDESIGNED 2026-09-29): the
-    12 hand-typed monthly median/cv pairs are replaced by a single known
-    initial_annual_average_monthly_cost, spread across the year via a REAL temperature-derived
-    seasonal shape (load_temperature_seasonal_data + fit_temperature_seasonal_shape +
-    seasonal_cost_weights), then each month grown independently via `latent`'s own fitted process
-    exactly as before (bake_calendar_month_periods's own sampling convention is unchanged). No more
-    per-month cv -- like hoa_dues_annual/insurance_annual, each month's current value is treated as
-    KNOWN (extra_log_variance=0), all uncertainty coming from `latent`'s own growth process.
+def heating_degree_days_per_day(temperatures: dict[str, float], base_f: float, setback_f: float) -> dict[str, dict[str, float]]:
+    """Heating degree-days PER DAY for each calendar month, from its MEAN temperature T:
+    occupied = max(0, base - T); vacant = max(0, base - setback - T) (the thermostat is turned down by
+    setback on vacant days, so heat only starts below a lower temperature).
 
-    fit.json holds the resolved config plus `seasonal_weights_by_month` (kept for diagnostics) and
-    baked MONTHLY `periods` (see bake_calendar_month_periods) that
-    carrying_costs._project_utilities_annual sums at scenario-run time.
+    APPROXIMATION (flagged so it doesn't read as exact): real HDD are summed DAY BY DAY, and a month
+    whose mean sits near the base still has cold days that need heat. Computing from the monthly mean
+    UNDERCOUNTS such shoulder months. At Keystone every month's mean is below 65°F, so the effect is
+    small (largest in summer); NOAA monthly HDD normals would remove it -- earmarked in the
+    implementation plan."""
+    return {
+        month: {
+            "occupied": max(0.0, base_f - temperature),
+            "vacant": max(0.0, base_f - setback_f - temperature),
+        }
+        for month, temperature in temperatures.items()
+    }
 
-    Saves model.png DIRECTLY from the saved MONTHLY periods (plotting.forecast_plots.
-    plot_periods_projection) -- fixed 2026-09-30: an earlier version instead plotted a SEPARATE
-    "annual total" projection (one continuous OU curve seeded from the sum of all 12 months' own
-    year-0 costs), which never showed any seasonal variation at all (by construction -- an annual
-    aggregate washes month-to-month structure out), making it look like the temperature-derived
-    seasonal shape wasn't actually influencing the saved model even though it genuinely was. Now
-    model.png shows the real monthly bill trajectory, oscillating exactly as the saved periods do.
-    ALSO saves seasonal_shape.png (plotting.forecast_plots.plot_utilities_seasonal_shape): left panel
-    shows the raw temperature data against its own sine fit (°F); right panel shows the resulting
-    scaled monthly cost shape (USD/month, at INITIAL levels) -- so the temperature -> cost derivation
-    is visible directly, not just the end-result numbers.
-    """
+
+def heating_weights(occupied_days: dict[str, float], hdd_per_day: dict[str, dict[str, float]]) -> dict[str, float]:
+    """Each month's heating weight w = occupied_days x occupied HDD/day + vacant_days x vacant HDD/day
+    -- the month's total degree-days of heating actually delivered, occupied and vacant (setback)
+    combined. Heating cost is proportional to w (cost per heating degree-day x w)."""
+    return {
+        month: days * hdd_per_day[month]["occupied"] + (DAYS_IN_MONTH[month] - days) * hdd_per_day[month]["vacant"]
+        for month, days in occupied_days.items()
+    }
+
+
+def calibrate_utilities(
+    config: dict[str, Any],
+    heating: dict[str, Any],
+    calibration_occupied_days: dict[str, float],
+    hdd_per_day: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    """CALIBRATION half of the three-category utilities model: sizes the three pools so that, under
+    calibration_occupied_days (the occupancy the observed bill was measured under), one year adds up
+    to exactly A = 12 x initial_annual_average_monthly_cost. Kept SEPARATE from apply_utilities so a
+    different occupancy profile can be applied to the same calibration (e.g. the previous owner's real
+    occupancy for calibration, this deck's for application).
+
+    Steps: split A by component weight; carve each component's heating fraction (carrying_costs.
+    resolve_heating_type) out into the HEATING pool H; split each component's non-heating remainder by
+    its occupancy_fraction into the OCCUPANCY pool U and the FLAT pool F. Then rates:
+        u = U / sum(occupied days)          (cost per occupied day)
+        k = H / sum(heating weights)        (cost per heating degree-day, see heating_weights)
+        flat per month = F / 12
+    Raises ValueError if a pool has cost but nothing to spread it over (H > 0 with zero heating
+    degree-days all year, or U > 0 with zero occupied days all year).
+
+    Returns {"annual_observed_total", "flat_pool", "occupancy_pool", "heating_pool", "flat_monthly",
+    "cost_per_occupied_day", "cost_per_heating_degree_day", "pools_by_component"}."""
+    annual = 12 * config["initial_annual_average_monthly_cost"]
+    pools_by_component = {}
+    for name, component in config["components"].items():
+        amount = component["weight"] * annual
+        heat = heating["heating_fraction_by_component"][name] * amount
+        rest = amount - heat
+        pools_by_component[name] = {
+            "heating": heat,
+            "occupancy": rest * component["occupancy_fraction"],
+            "flat": rest * (1 - component["occupancy_fraction"]),
+        }
+    heating_pool = sum(p["heating"] for p in pools_by_component.values())
+    occupancy_pool = sum(p["occupancy"] for p in pools_by_component.values())
+    flat_pool = sum(p["flat"] for p in pools_by_component.values())
+
+    total_days = sum(calibration_occupied_days.values())
+    total_weight = sum(heating_weights(calibration_occupied_days, hdd_per_day).values())
+    if occupancy_pool > 0 and total_days == 0:
+        raise ValueError("carrying_costs.utilities: occupancy-driven cost but zero occupied days all year to spread it over")
+    if heating_pool > 0 and total_weight == 0:
+        raise ValueError(
+            "carrying_costs.utilities: heating cost but zero heating degree-days all year -- check hdd_base_temp_f "
+            "against the temperature data"
+        )
+    return {
+        "annual_observed_total": annual,
+        "flat_pool": flat_pool,
+        "occupancy_pool": occupancy_pool,
+        "heating_pool": heating_pool,
+        "flat_monthly": flat_pool / 12,
+        "cost_per_occupied_day": occupancy_pool / total_days if total_days > 0 else 0.0,
+        "cost_per_heating_degree_day": heating_pool / total_weight if total_weight > 0 else 0.0,
+        "pools_by_component": pools_by_component,
+    }
+
+
+def apply_utilities(
+    calibration: dict[str, Any],
+    occupied_days: dict[str, float],
+    hdd_per_day: dict[str, dict[str, float]],
+    add_ons: list[dict[str, Any]],
+) -> pd.DataFrame:
+    """APPLICATION half of the three-category utilities model: one year of monthly costs (before
+    growth) for a given occupancy profile, using calibrate_utilities' rates:
+        cost_m = flat/12 + u x occupied_days_m + k x heating_weight_m + sum(add-ons)
+    Returns a DataFrame indexed by MONTH_KEYS (calendar order) with columns flat, occupancy, heating,
+    add_ons, total, plus the drivers occupied_days, hdd_occupied_per_day, heating_weight (kept for the
+    plot and fit.json)."""
+    weights = heating_weights(occupied_days, hdd_per_day)
+    add_on_monthly = sum(a["amount_usd"] for a in add_ons)
+    rows = {}
+    for month in MONTH_KEYS:
+        flat = calibration["flat_monthly"]
+        occupancy = calibration["cost_per_occupied_day"] * occupied_days[month]
+        heating = calibration["cost_per_heating_degree_day"] * weights[month]
+        rows[month] = {
+            "flat": flat,
+            "occupancy": occupancy,
+            "heating": heating,
+            "add_ons": add_on_monthly,
+            "total": flat + occupancy + heating + add_on_monthly,
+            "occupied_days": occupied_days[month],
+            "hdd_occupied_per_day": hdd_per_day[month]["occupied"],
+            "heating_weight": weights[month],
+        }
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Any]:
+    """Builds carrying_costs.utilities' THREE-CATEGORY model (redesigned 2026-11-22, replacing the
+    temperature-sine seasonal shape and its hand-picked 0.3 summer floor -- see the deck comment for the
+    three categories). The old shape spread the bill by temperature alone; this one separates what
+    actually drives each part of the bill (nothing, occupied days, or occupied days x cold), so a
+    different occupancy -- or, later, an uncertain one -- moves the right part of the bill.
+
+    1. Calibrate (calibrate_utilities) against calibration_occupied_days_by_month ("deck" = this deck's
+       own expected occupancy, see input_deck.get_expected_occupied_days_by_month), capped at days in
+       month (cap_occupied_days).
+    2. SELF-CHECK: applying the calibration to its own occupancy, without add-ons, must reproduce
+       12 x the observed average bill exactly. Raised as an explicit AssertionError (not `assert`, which
+       `python -O` strips) -- it guards the calibration algebra, not user input.
+    3. Apply (apply_utilities) to this deck's expected occupancy, with add-ons -> 12 calendar-month
+       year-1 costs.
+    4. Grow each calendar month via `latent` (bake_calendar_month_periods, anchored to
+       scenario.closing_month).
+
+    fit.json: the validated config, the resolved heating type, the calibration, the year-1 calendar-month
+    table, any cap warnings, closing_month, and the MONTHLY `periods` carrying_costs._project_utilities_annual
+    sums. Plots: model.png (the monthly periods, as before) and seasonal_shape.png (plotting.
+    forecast_plots.plot_utilities_year1_breakdown: year-1 stacked categories over occupied days and HDD).
+
+    Returns {"fit_path", "plot_path", "seasonal_shape_plot_path", "utilities_report"} -- the report is
+    printed by reporting.print_carrying_cost_prior_build_report."""
     deck = deck if deck is not None else _load_deck()
     config = get_utilities_prior_config(deck)
     latent_fit = get_growth_fit(config["latent"], deck)
+    closing_month = get_closing_date(deck)["closing_month"]
 
+    heating = resolve_heating_type(config["heating_type"], config["heating_share"], config["components"])
     temperatures = load_temperature_seasonal_data(config["seasonal_data_source"])
-    seasonal_fit = fit_temperature_seasonal_shape(temperatures)
-    weights = seasonal_cost_weights(seasonal_fit["fitted_by_month"])
-    monthly_costs = {
-        month: config["initial_annual_average_monthly_cost"] * weight for month, weight in weights.items()
-    }
+    hdd_per_day = heating_degree_days_per_day(temperatures, config["hdd_base_temp_f"], config["vacant_setback_f"])
+
+    deck_days, deck_warnings = cap_occupied_days(get_expected_occupied_days_by_month(deck))
+    calibration_warnings: list[str]
+    if config["calibration_occupied_days_by_month"] == UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK:
+        calibration_days, calibration_warnings = deck_days, []
+    else:
+        calibration_days, calibration_warnings = cap_occupied_days(config["calibration_occupied_days_by_month"])
+
+    calibration = calibrate_utilities(config, heating, calibration_days, hdd_per_day)
+    check = apply_utilities(calibration, calibration_days, hdd_per_day, add_ons=[])
+    check_total = float(check[["flat", "occupancy", "heating"]].to_numpy().sum())
+    if not math.isclose(check_total, calibration["annual_observed_total"], rel_tol=1e-9):
+        raise AssertionError(
+            f"utilities calibration self-check failed: year-1 total excluding add-ons {check_total:.6f} != "
+            f"12 x observed average {calibration['annual_observed_total']:.6f}"
+        )
+
+    year_1 = apply_utilities(calibration, deck_days, hdd_per_day, config["additional_flat_monthly"])
+    monthly_costs = year_1["total"].to_dict()
 
     report_quantiles = get_report_quantiles(deck)
     ci = (report_quantiles[0], report_quantiles[-1])
-    periods = bake_calendar_month_periods(latent_fit, monthly_costs, ci, horizon_months)
+    periods = bake_calendar_month_periods(latent_fit, monthly_costs, ci, horizon_months, closing_month)
+
+    year_1_excluding_add_ons = float(year_1[["flat", "occupancy", "heating"]].to_numpy().sum())
+    report = {
+        "heating": heating,
+        "calibration": calibration,
+        "calibration_source": "deck occupancy"
+        if config["calibration_occupied_days_by_month"] == UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK
+        else "calibration_occupied_days_by_month",
+        "year_1_total_excluding_add_ons": year_1_excluding_add_ons,
+        "year_1_add_ons_total": float(year_1["add_ons"].sum()),
+        "cap_warnings": [f"deck occupancy {w}" for w in deck_warnings]
+        + [f"calibration occupancy {w}" for w in calibration_warnings],
+    }
 
     path_segment = carrying_cost_prior_path("utilities")
     fit_path = model_fit_path(path_segment)
     with fit_path.open("w", encoding="utf-8") as f:
         json.dump(
             {
-                "initial_annual_average_monthly_cost": config["initial_annual_average_monthly_cost"],
-                "seasonal_data_source": config["seasonal_data_source"],
-                "latent": config["latent"],
-                "seasonal_weights_by_month": weights,
+                **config,
+                "closing_month": closing_month,
+                "heating": heating,
+                "calibration": calibration,
+                "calibration_occupied_days": calibration_days,
+                "year_1_by_calendar_month": year_1.to_dict(orient="index"),
+                "cap_warnings": report["cap_warnings"],
                 "periods": periods,
             },
             f,
@@ -967,20 +1105,29 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
         ci,
         _CARRYING_COST_PRIOR_OUTER_CI,
         horizon_months,
-        title=f"Utilities (Monthly) — Uninformed Carrying-Cost Prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% Band)",
+        title=(
+            f"Utilities (Monthly) — Uninformed Carrying-Cost Prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% Band)\n"
+            f"Month 0 = closing month ({MONTH_KEYS[closing_month - 1].capitalize()})"
+        ),
         save_path=plot_path,
         ylabel="USD/month",
     )
 
     seasonal_shape_plot_path = model_plots_dir(path_segment) / "seasonal_shape.png"
-    plot_utilities_seasonal_shape(
-        temperatures,
-        seasonal_fit,
-        monthly_costs,
-        title="Utilities — Temperature-Derived Seasonal Shape",
+    plot_utilities_year1_breakdown(
+        year_1,
+        title=(
+            f"Utilities — Year-1 Monthly Cost by Category (before growth)\n"
+            f"Heating: {heating['name']}; observed average \\${config['initial_annual_average_monthly_cost']:,.0f}/month"
+        ),
         save_path=seasonal_shape_plot_path,
     )
-    return {"fit_path": fit_path, "plot_path": plot_path, "seasonal_shape_plot_path": seasonal_shape_plot_path}
+    return {
+        "fit_path": fit_path,
+        "plot_path": plot_path,
+        "seasonal_shape_plot_path": seasonal_shape_plot_path,
+        "utilities_report": report,
+    }
 
 
 def build_market_value_informed_model(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Path]:
@@ -1082,7 +1229,8 @@ def build_all_carrying_cost_prior_models(deck: dict[str, Any] | None = None, hor
     insurance_annual/maintenance_annual each now their own dedicated build_* function since their
     2026-09-29 redesign gave each a genuinely different shape -- see build_hoa_dues_prior_model/
     build_insurance_prior_model/build_maintenance_prior_model's own docstrings; special_assessment
-    unchanged; utilities also uninformed, its own seasonal shape), and market_value's INFORMED build
+    its own frequency x size model, see build_special_assessment_prior_model; utilities also
+    uninformed, its own seasonal shape), and market_value's INFORMED build
     (see build_market_value_informed_model). See carrying_costs.INFORMED_CARRYING_COST_PRIORS for
     which is which. Returns {name: {"fit_path": ..., "plot_path": ..., ...}}."""
     deck = deck if deck is not None else _load_deck()

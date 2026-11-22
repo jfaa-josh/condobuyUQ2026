@@ -25,9 +25,10 @@ tax_use_class (personal_use/mixed_use/rental) is NEVER recomputed here -- it's r
 scenario["classification"] (classification.py already applies the exact same day-count rule this
 module's reference implementation used internally). Same for loan_occupancy_class, cost_basis
 (acquisition), mortgage_interest (financing's own amortization_schedule, resampled to annual), and
-property_tax/hoa_dues/insurance/maintenance/special_assessment/utilities (carrying_costs.py's own
-per-year schedule -- see carrying_costs.compute_carrying_costs_schedule; property_tax uses
-Colorado's REAL two-step assessment/mill-levy mechanic, and the other five are each projected from
+property_tax/hoa_dues/insurance/maintenance/utilities (carrying_costs.py's own per-year schedule --
+see carrying_costs.compute_carrying_costs_schedule; special assessments are deliberately excluded,
+see compute_owner_tax_schedule's own comment; property_tax uses
+Colorado's REAL two-step assessment/mill-levy mechanic, and the other four are each projected from
 their own pre-built carrying_cost_prior model, both real, not placeholders, as of 2026-09-26).
 
 ===========================================================================================
@@ -154,9 +155,13 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
     carrying_costs = scenario.get("carrying_costs")
     carrying_costs_schedule = carrying_costs["annual_schedule"] if carrying_costs else compute_carrying_costs_schedule(scenario, deck)
     property_tax_by_year = carrying_costs_schedule["property_tax"]
-    shared_expenses_by_year = carrying_costs_schedule[
-        ["hoa_dues", "insurance", "maintenance", "special_assessment_expected", "utilities"]
-    ].sum(axis=1)
+    # Special assessments are deliberately NOT here (2026-11-22): they're excluded from every
+    # carrying-cost total and applied later as a tail-risk overlay on ΔW, using PRE-TAX amounts.
+    # OPEN QUESTION, to revisit when finalizing that model: the IRS generally ADDS an assessment for
+    # improvements (roof, siding) to the property's cost basis (reducing the taxable gain at sale)
+    # rather than deducting it as a yearly expense -- see .claude/implementation-plan.md's "Final
+    # reporting: special-assessment overlay".
+    shared_expenses_by_year = carrying_costs_schedule[["hoa_dues", "insurance", "maintenance", "utilities"]].sum(axis=1)
 
     mortgage_interest_by_year = _annual_mortgage_interest(scenario, horizon_years)
     gross_rent = placeholder_gross_rent(deck)  # PLACEHOLDER -- flat every year, see module docstring
