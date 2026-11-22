@@ -457,8 +457,9 @@ def compute_special_assessment(scenario: dict[str, Any], deck: dict[str, Any] | 
     sizes = [s["amount_today_usd"] * size_multiplier for s in scenarios]
 
     rows = []
-    for k_raw, p_k in count_probabilities.items():
-        k = int(k_raw)
+    # The index is exactly 0..k_max (special_assessment_count_probabilities builds it that way), so the
+    # position IS k -- enumerate avoids Series.items()' untyped Hashable labels.
+    for k, p_k in enumerate(count_probabilities.to_numpy()):
         for combo in combinations_with_replacement(range(len(scenarios)), k):
             counts = [combo.count(i) for i in range(len(scenarios))]
             ways = math.factorial(k) // math.prod(math.factorial(c) for c in counts)
@@ -565,7 +566,9 @@ def compute_carrying_costs(scenario: dict[str, Any], deck: dict[str, Any] | None
     }
 
 
-def compute_total_carrying_costs_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
+def compute_total_carrying_costs_schedule(
+    scenario: dict[str, Any], deck: dict[str, Any] | None = None, outer_ci: tuple[float, float] = (0.01, 0.99)
+) -> pd.DataFrame:
     """Combines property_tax + hoa_dues + insurance + maintenance + utilities into ONE MONTHLY total
     cost distribution (1..horizon_months). DELIBERATELY EXCLUDES special_assessment -- its own rare,
     spiky risk is modeled separately (compute_special_assessment) and applied later as a tail-risk
@@ -590,12 +593,15 @@ def compute_total_carrying_costs_schedule(scenario: dict[str, Any], deck: dict[s
     MEAN and VARIANCE in closed form, then approximate the total as a single lognormal with that same
     mean/variance (solving for the equivalent median/sigma) -- closed-form throughout, no Monte Carlo.
 
-    Returns a DataFrame indexed by month (1..horizon_months) with columns "median", "lo", "hi".
+    Returns a DataFrame indexed by month (1..horizon_months) with columns "median", "lo", "hi" (the
+    deck's report quantiles) and "lo_outer", "hi_outer" (outer_ci, default 1-99% -- the wide reference
+    band the results plots show alongside the main one).
     """
     deck = deck if deck is not None else load_deck()
     horizon_months = scenario["horizon_years"] * 12
     report_quantiles = get_report_quantiles(deck)
     z_lo, z_hi = norm.ppf((report_quantiles[0], report_quantiles[-1]))
+    z_lo_outer, z_hi_outer = norm.ppf(outer_ci)
 
     tax_periods = market_value_periods_to_tax_periods(load_market_value_change_magnitude()["periods"], deck)
     contributions = [
@@ -606,7 +612,7 @@ def compute_total_carrying_costs_schedule(scenario: dict[str, Any], deck: dict[s
         (_load_carrying_cost_prior_fit("utilities")["periods"], 1.0),
     ]
 
-    medians, los, his = [], [], []
+    medians, los, his, los_outer, his_outer = [], [], [], [], []
     for month in range(horizon_months):
         combined_mean = 0.0
         combined_var = 0.0
@@ -622,6 +628,8 @@ def compute_total_carrying_costs_schedule(scenario: dict[str, Any], deck: dict[s
             medians.append(combined_mean)
             los.append(combined_mean)
             his.append(combined_mean)
+            los_outer.append(combined_mean)
+            his_outer.append(combined_mean)
             continue
         cv_sq = combined_var / combined_mean**2
         sigma_eff = float(np.sqrt(np.log(1 + cv_sq)))
@@ -629,5 +637,10 @@ def compute_total_carrying_costs_schedule(scenario: dict[str, Any], deck: dict[s
         medians.append(median_eff)
         los.append(median_eff * np.exp(z_lo * sigma_eff))
         his.append(median_eff * np.exp(z_hi * sigma_eff))
+        los_outer.append(median_eff * np.exp(z_lo_outer * sigma_eff))
+        his_outer.append(median_eff * np.exp(z_hi_outer * sigma_eff))
 
-    return pd.DataFrame({"median": medians, "lo": los, "hi": his}, index=pd.Index(range(1, horizon_months + 1), name="month"))
+    return pd.DataFrame(
+        {"median": medians, "lo": los, "hi": his, "lo_outer": los_outer, "hi_outer": his_outer},
+        index=pd.Index(range(1, horizon_months + 1), name="month"),
+    )

@@ -363,6 +363,7 @@ def plot_periods_projection(
     title: str,
     save_path: Path,
     ylabel: str = "USD",
+    zoom_months: int | None = None,
 ) -> Path:
     """Plots a prior's own saved MONTHLY periods (see utils.prior_utils.bake_monthly_periods/
     bake_calendar_month_periods) as a CONTINUOUS median+confidence-band line, one point per saved
@@ -371,7 +372,12 @@ def plot_periods_projection(
     seasonal structure (utilities), this shows the genuine month-to-month oscillation; for a smoothly
     -evolving continuous estimate (insurance_annual/maintenance_annual/special_assessment), it looks
     like a normal drifting-and-widening band, just sampled at full monthly resolution instead of only
-    at year marks."""
+    at year marks.
+
+    zoom_months (optional, used for utilities -- user request 2026-11-22): adds a LOWER panel showing
+    only the first zoom_months months as a monthly stair-step (each month's own bill as a flat box,
+    _draw_periods_stairstep), so the seasonal variation is readable; labeled with each period's
+    calendar_month when the periods carry one."""
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     z_lo, z_hi = norm.ppf(ci)
@@ -389,7 +395,10 @@ def plot_periods_projection(
         los_outer.append(known + projected * np.exp(z_lo_outer * sigma))
         his_outer.append(known + projected * np.exp(z_hi_outer * sigma))
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+    if zoom_months:
+        fig, (ax, ax_zoom) = plt.subplots(2, 1, figsize=(12, 9), gridspec_kw={"height_ratios": [1, 1]})
+    else:
+        fig, ax = plt.subplots(figsize=(12, 5))
     ax.plot(months, medians, color="C1", label="Projected Median")
     ax.fill_between(months, los, his, color="C1", alpha=0.2, label="Confidence Band")
     ax.plot(months, los_outer, linestyle="--", color="C1", alpha=0.6, linewidth=1, label="1-99% Band")
@@ -398,23 +407,38 @@ def plot_periods_projection(
     ax.set_xlabel("Months Ahead")
     ax.set_ylabel(ylabel)
     ax.legend()
+    if zoom_months:
+        _draw_periods_stairstep(ax_zoom, periods, ci, outer_ci, zoom_months)
+        zoomed = [p for p in periods if p["start_month"] < zoom_months]
+        ax_zoom.set_xticks([p["start_month"] + 0.5 for p in zoomed])
+        ax_zoom.set_xticklabels(
+            [f"{p['start_month']}\n{p['calendar_month'].capitalize()}" if "calendar_month" in p else str(p["start_month"]) for p in zoomed]
+        )
+        ax_zoom.set_xlim(0, zoom_months)
+        ax_zoom.set_title(f"First {zoom_months} months (each month's bill as a flat box)")
+        ax_zoom.set_xlabel("Months Ahead (calendar month below)" if zoomed and "calendar_month" in zoomed[0] else "Months Ahead")
+        ax_zoom.set_ylabel(ylabel)
+        ax_zoom.legend(fontsize="small")
     fig.tight_layout()
     fig.savefig(save_path)
     plt.close(fig)
     return save_path
 
 
-def plot_utilities_year1_breakdown(year_1: pd.DataFrame, title: str, save_path: Path) -> Path:
+def plot_utilities_year1_breakdown(year_1: pd.DataFrame, title: str, save_path: Path, driver_title: str | None = None) -> Path:
     """Two-panel view of utilities' three-category model (utils.prior_utils.build_utilities_prior_model),
     year 1, calendar order Jan..Dec, before growth.
-    TOP: stacked monthly cost bars -- flat / occupancy-driven / heating / add-ons -- so it's visible
-    which category drives each month's bill.
-    BOTTOM: the two drivers -- occupied days (left axis) and occupied heating degree-days per day
-    (right axis). Kept in their own panel rather than a secondary axis on the cost chart (user
+    TOP: stacked monthly cost bars -- flat / occupancy-driven / heating (occupied days) / heating
+    (vacant days, thermostat setback) / add-ons -- so it's visible which category drives each month's
+    bill. Heating is split by occupied vs. vacant days at the user's request (2026-11-22).
+    BOTTOM: the drivers -- occupied days (left axis) and heating degree-days per day, occupied and
+    vacant (right axis). Kept in their own panel rather than a secondary axis on the cost chart (user
     decision 2026-11-22): days and degree-days are different units, and stacking both onto the cost
     chart's spare axis made it unreadable.
-    year_1: DataFrame indexed by month key with columns flat, occupancy, heating, add_ons,
-    occupied_days, hdd_occupied_per_day (see utils.prior_utils.apply_utilities)."""
+    year_1: DataFrame indexed by month key with columns flat, occupancy, heating_occupied,
+    heating_vacant, add_ons, occupied_days, hdd_occupied_per_day, hdd_vacant_per_day (see
+    utils.prior_utils.apply_utilities). driver_title (optional): caption over the BOTTOM panel -- used
+    for the calibrated balance points, which explain the HDD lines drawn there."""
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     labels = [month.capitalize() for month in year_1.index]
@@ -427,7 +451,8 @@ def plot_utilities_year1_breakdown(year_1: pd.DataFrame, title: str, save_path: 
     for column, label, color in (
         ("flat", "Flat", "C7"),
         ("occupancy", "Occupancy-driven", "C0"),
-        ("heating", "Heating", "C3"),
+        ("heating_occupied", "Heating - occupied", "C3"),
+        ("heating_vacant", "Heating - vacant", "C1"),
         ("add_ons", "Add-ons (new costs)", "C2"),
     ):
         values = year_1[column].to_numpy(dtype=float)
@@ -440,22 +465,27 @@ def plot_utilities_year1_breakdown(year_1: pd.DataFrame, title: str, save_path: 
     ax_cost.set_title(title)
     ax_cost.set_ylabel("USD/month")
     ax_cost.set_ylim(0, bottom.max() * 1.12)
-    ax_cost.legend(fontsize="small", loc="upper center", ncol=4)
+    ax_cost.legend(fontsize="small", loc="upper center", ncol=5)
 
     days_line = ax_driver.plot(x, year_1["occupied_days"], marker="o", color="C0", label="Occupied days")
     ax_driver.set_ylabel("Occupied days")
     ax_driver.set_ylim(0, 31)
     ax_hdd = ax_driver.twinx()
-    hdd_line = ax_hdd.plot(
+    hdd_occupied_line = ax_hdd.plot(
         x, year_1["hdd_occupied_per_day"], marker="s", color="C3", linestyle="--", label="Heating degree-days/day (occupied)"
+    )
+    hdd_vacant_line = ax_hdd.plot(
+        x, year_1["hdd_vacant_per_day"], marker="^", color="C1", linestyle=":", label="Heating degree-days/day (vacant)"
     )
     ax_hdd.set_ylabel("HDD per day")
     ax_hdd.set_ylim(0, max(1.0, float(year_1["hdd_occupied_per_day"].max()) * 1.15))
-    lines = days_line + hdd_line
-    ax_driver.legend(lines, [line.get_label() for line in lines], fontsize="small", loc="upper center", ncol=2)
+    lines = days_line + hdd_occupied_line + hdd_vacant_line
+    ax_driver.legend(lines, [line.get_label() for line in lines], fontsize="small", loc="upper center", ncol=3)
     ax_driver.set_xticks(x)
     ax_driver.set_xticklabels(labels)
     ax_driver.set_xlabel("Calendar month (year 1)")
+    if driver_title:
+        ax_driver.set_title(driver_title, fontsize=9)
 
     fig.tight_layout()
     fig.savefig(save_path)
@@ -516,26 +546,6 @@ def plot_special_assessment_count_by_horizon(
     ax.set_ylim(0, 1)
     ax.set_xticks(list(count_table.index))
     ax.legend(title=f"Assessments (λ = {annual_rate:g}/yr)", fontsize="small")
-    fig.tight_layout()
-    fig.savefig(save_path)
-    plt.close(fig)
-    return save_path
-
-
-def plot_special_assessment_count(count_probabilities: pd.Series, k_max: int, title: str, save_path: Path) -> Path:
-    """One scenario's P(N = k) as a bar chart, k = 0..k_max, each bar labeled with its percentage.
-    The last bar is "k_max+" (see _count_label)."""
-    save_path = Path(save_path)
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    labels = [_count_label(int(k), k_max) for k in count_probabilities.index]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar(labels, count_probabilities.to_numpy(), color="C1", alpha=0.8)
-    for bar, p in zip(bars, count_probabilities.to_numpy(), strict=True):
-        ax.annotate(f"{p * 100:.1f}%", (bar.get_x() + bar.get_width() / 2, bar.get_height()), ha="center", va="bottom", fontsize=9)
-    ax.set_title(f"{title}\n{SPECIAL_ASSESSMENT_PLOT_SUBTITLE}", fontsize=10)
-    ax.set_xlabel("Number of special assessments over the horizon (N)")
-    ax.set_ylabel("Probability")
-    ax.set_ylim(0, min(1.0, count_probabilities.max() * 1.15 + 0.02))
     fig.tight_layout()
     fig.savefig(save_path)
     plt.close(fig)

@@ -31,7 +31,6 @@ from condobuyuq2026.paths import RESULTS_DIR
 from condobuyuq2026.plotting.forecast_plots import (
     plot_periods_stairstep,
     plot_special_assessment_cost,
-    plot_special_assessment_count,
 )
 
 
@@ -130,7 +129,8 @@ def _plot_annual_projection_with_final_distribution(
     z_lo, z_hi = norm.ppf(ci)
     z_hi_outer = norm.ppf(outer_ci[1])
 
-    months, medians, los, his = [], [], [], []
+    z_lo_outer = norm.ppf(outer_ci[0])
+    months, medians, los, his, los_outer, his_outer = [], [], [], [], [], []
     for period in periods:
         if period["start_month"] >= horizon_months:
             break
@@ -139,10 +139,15 @@ def _plot_annual_projection_with_final_distribution(
         medians.append(known + projected)
         los.append(known + projected * np.exp(z_lo * sigma))
         his.append(known + projected * np.exp(z_hi * sigma))
+        los_outer.append(known + projected * np.exp(z_lo_outer * sigma))
+        his_outer.append(known + projected * np.exp(z_hi_outer * sigma))
 
     fig, (ax_line, ax_dist) = plt.subplots(1, 2, figsize=(12, 4.5), gridspec_kw={"width_ratios": [3, 1]})
     ax_line.plot(months, medians, color="C1", label="Projected Median")
-    ax_line.fill_between(months, los, his, color="C1", alpha=0.2, label="Confidence Band")
+    ax_line.fill_between(months, los, his, color="C1", alpha=0.2, label=f"{ci[0] * 100:.0f}-{ci[1] * 100:.0f}% Band")
+    outer_label = f"{outer_ci[0] * 100:.0f}-{outer_ci[1] * 100:.0f}% Band"
+    ax_line.plot(months, los_outer, linestyle="--", color="C1", alpha=0.6, linewidth=1, label=outer_label)
+    ax_line.plot(months, his_outer, linestyle="--", color="C1", alpha=0.6, linewidth=1)
     ax_line.set_title(title)
     ax_line.set_xlabel("Months Ahead")
     ax_line.set_ylabel(ylabel)
@@ -250,23 +255,34 @@ def _plot_period_distributions(
     return save_path
 
 
-def _plot_total_carrying_costs(schedule: pd.DataFrame, ci: tuple[float, float], title: str, save_path: Path) -> Path:
-    """Simple monthly median+confidence-band plot of
-    carrying_costs.compute_total_carrying_costs_schedule's own combined total -- saved in the
-    PARENT results/<scenario>/ folder, not the carrying_costs/ subfolder (the user's own explicit
-    call: every per-variable plot lives in the subfolder, this one total summary lives one level up)."""
+def _plot_total_carrying_costs(
+    schedule: pd.DataFrame, ci: tuple[float, float], outer_ci: tuple[float, float], title: str, save_path: Path
+) -> Path:
+    """Monthly STAIR-STEP plot of carrying_costs.compute_total_carrying_costs_schedule's combined
+    total: each month drawn as its own flat box (confidence band) with a flat median bar, like
+    hoa_dues.png -- redesigned 2026-11-22 at the user's request. The old continuous line joined
+    consecutive months with diagonals, so the one-month January HOA association charge read as a sharp
+    spike in a continuous (daily-looking) cost, when every value here is one month's total. Schedule
+    row m (1..horizon_months) is scenario month m - 1, drawn over [m - 1, m].
+
+    Saved in the PARENT results/<scenario>/ folder, not the carrying_costs/ subfolder (the user's own
+    explicit call: every per-variable plot lives in the subfolder, this one total summary lives one
+    level up)."""
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
+    starts = schedule.index.to_numpy() - 1
+    ends = schedule.index.to_numpy()
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(schedule.index, schedule["median"], color="C1", label="Projected Median")
-    ax.fill_between(
-        schedule.index,
-        schedule["lo"],
-        schedule["hi"],
-        color="C1",
-        alpha=0.2,
-        label=f"{ci[0] * 100:.0f}-{ci[1] * 100:.0f}% Band",
-    )
+    for i, (start, end, lo, hi) in enumerate(zip(starts, ends, schedule["lo"], schedule["hi"], strict=True)):
+        ax.fill_between(
+            [start, end], [lo, lo], [hi, hi], color="C1", alpha=0.2,
+            label=f"{ci[0] * 100:.0f}-{ci[1] * 100:.0f}% Band" if i == 0 else None,
+        )
+    ax.hlines(schedule["median"], starts, ends, color="C1", linewidth=2, label="Projected Median")
+    outer_label = f"{outer_ci[0] * 100:.0f}-{outer_ci[1] * 100:.0f}% Band"
+    # "_"-prefixed labels are matplotlib's convention for "leave out of the legend" (one entry per band).
+    for column, label in (("lo_outer", outer_label), ("hi_outer", "_hi_outer")):
+        ax.hlines(schedule[column], starts, ends, colors="C1", alpha=0.6, linewidth=1, linestyles="--", label=label)
     ax.set_title(title)
     ax.set_xlabel("Months from Closing")
     ax.set_ylabel("USD/month")
@@ -287,10 +303,11 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
     special_assessment/utilities, which looked visibly coarser than model.png's own dense curve even
     though the underlying numbers matched -- see utils.prior_utils.bake_monthly_periods).
 
-    special_assessment gets two plots of its own (special_assessment_count.png: P(N = k);
-    special_assessment_cost.png: the discrete total-cost distribution -- see carrying_costs.
-    compute_special_assessment), each subtitled as excluded from the totals; skipped entirely when
-    annual_rate is 0.
+    special_assessment gets ONE plot of its own, special_assessment_cost.png: the exact discrete
+    total-cost distribution over this scenario's horizon (carrying_costs.compute_special_assessment),
+    subtitled as excluded from the totals; skipped entirely when annual_rate is 0. The P(N = k) count
+    plot was REMOVED from results (2026-11-22, user decision): it was just one horizon's column of the
+    model folder's own special_assessment/plots/model.png.
 
     insurance/maintenance/utilities each get
     _plot_annual_projection_with_final_distribution (the full monthly curve on the left, a
@@ -367,12 +384,6 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
     )
     if special_assessment["enabled"]:  # annual_rate: 0 is the deck's off switch -- nothing to plot
         horizon_label = f"{horizon_years}-Year Horizon (λ = {special_assessment['annual_rate']:g}/yr)"
-        paths["special_assessment_count"] = plot_special_assessment_count(
-            special_assessment["count_probabilities"],
-            special_assessment["k_max"],
-            title=f"Special Assessments — Number Over the {horizon_label}",
-            save_path=out_dir / "special_assessment_count.png",
-        )
         paths["special_assessment_cost"] = plot_special_assessment_cost(
             special_assessment["outcomes"],
             special_assessment["k_max"],
@@ -380,10 +391,11 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
             save_path=out_dir / "special_assessment_cost.png",
         )
 
-    total_schedule = compute_total_carrying_costs_schedule(scenario, deck)
+    total_schedule = compute_total_carrying_costs_schedule(scenario, deck, outer_ci)
     paths["total_carrying_costs"] = _plot_total_carrying_costs(
         total_schedule,
         ci,
+        outer_ci,
         title="Total Carrying Costs — Scenario Projection\n(excludes special assessments -- see their own tail-risk plots)",
         save_path=out_dir.parent / "total_carrying_costs.png",
     )

@@ -28,8 +28,8 @@ data, gitignored, and cheap to regenerate by re-running a scraper).
   Spark's climate normals, https://weatherspark.com/y/3543/, fetched 2026-09-29 -- a representative
   external reference, not a live/scriptable API, so this is a one-time manual pull like the assessor
   data above, not something `raw_data.py`'s own fetch scripts re-derive). Named by
-  `carrying_costs.utilities.seasonal_data_source`. Since 2026-11-22 used DIRECTLY (no curve fit) to
-  compute each month's heating degree-days per day, `max(0, hdd_base_temp_f - avg_temp_f)` (and the
-  vacant-day version with the thermostat setback) -- see `utils.prior_utils.
-  heating_degree_days_per_day` and `build_utilities_prior_model`. Rows must be exactly jan..dec in
-  order (checked on load).
+  `carrying_costs.utilities.seasonal_data_source`. Since 2026-11-22 used DIRECTLY (no curve fit) as
+  each month's average temperature for expected heating degree-days per day below the calibrated
+  occupied and vacant balance points, with daily averages spread around it by
+  `daily_temperature_std_f` -- see `utils.prior_utils.heating_degree_days_per_day` and
+  `calibrate_gains_offset`. Rows must be exactly jan..dec in order (checked on load).

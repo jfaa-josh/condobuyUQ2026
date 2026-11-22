@@ -415,7 +415,7 @@ def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, 
     Returns {"initial_annual_average_monthly_cost", "calibration_occupied_days_by_month" ("deck" or a
     {month: days} dict), "components" ({name: {"weight", "occupancy_fraction"}}, every name in
     UTILITY_COMPONENTS, missing ones filled with zeros), "heating_type", "heating_share",
-    "vacant_setback_f", "hdd_base_temp_f", "additional_flat_monthly" (list of {"label",
+    "occupied_setpoint_f", "vacant_setpoint_f", "daily_temperature_std_f", "additional_flat_monthly" (list of {"label",
     "amount_usd"}), "seasonal_data_source", "latent"}."""
     deck = deck if deck is not None else load_deck()
     where = "carrying_costs.utilities"
@@ -458,12 +458,17 @@ def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, 
     heating_share = entry["heating_share"]
     if not _is_number(heating_share) or not 0 <= heating_share < 1:
         raise ValueError(f"{where}.heating_share must be >= 0 and < 1, got {heating_share!r}")
-    setback = entry["vacant_setback_f"]
-    if not _is_number(setback) or setback < 0:
-        raise ValueError(f"{where}.vacant_setback_f must be a number >= 0, got {setback!r}")
-    base = entry["hdd_base_temp_f"]
-    if not _is_number(base):
-        raise ValueError(f"{where}.hdd_base_temp_f must be a number, got {base!r}")
+    occupied_setpoint = entry["occupied_setpoint_f"]
+    if not _is_number(occupied_setpoint):
+        raise ValueError(f"{where}.occupied_setpoint_f must be a number, got {occupied_setpoint!r}")
+    vacant_setpoint = entry["vacant_setpoint_f"]
+    if not _is_number(vacant_setpoint) or vacant_setpoint > occupied_setpoint:
+        raise ValueError(
+            f"{where}.vacant_setpoint_f must be a number <= occupied_setpoint_f ({occupied_setpoint!r}), got {vacant_setpoint!r}"
+        )
+    temperature_std = entry["daily_temperature_std_f"]
+    if not _is_number(temperature_std) or not temperature_std > 0:
+        raise ValueError(f"{where}.daily_temperature_std_f must be a number > 0, got {temperature_std!r}")
     heating_type = entry["heating_type"]
     if not isinstance(heating_type, int) or isinstance(heating_type, bool):
         raise ValueError(f"{where}.heating_type must be an integer code, got {heating_type!r}")
@@ -489,8 +494,9 @@ def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, 
         "components": components,
         "heating_type": heating_type,
         "heating_share": float(heating_share),
-        "vacant_setback_f": float(setback),
-        "hdd_base_temp_f": float(base),
+        "occupied_setpoint_f": float(occupied_setpoint),
+        "vacant_setpoint_f": float(vacant_setpoint),
+        "daily_temperature_std_f": float(temperature_std),
         "additional_flat_monthly": [{"label": a["label"], "amount_usd": float(a["amount_usd"])} for a in add_ons],
         "seasonal_data_source": entry["seasonal_data_source"],
         "latent": latent,

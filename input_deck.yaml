@@ -605,8 +605,23 @@ carrying_costs:
     #   2. OCCUPANCY-DRIVEN: scales with occupied days, not temperature (non-heating electric and gas,
     #      water).
     #   3. HEATING: scales with occupancy AND temperature (electric or gas space heat), via heating
-    #      degree-days (HDD = how far the day's average temperature sits below hdd_base_temp_f).
-    #      Vacant days still need some heat (freeze protection), at a thermostat setback.
+    #      degree-days (HDD = how far the day's average outdoor temperature sits below the BALANCE
+    #      POINT, the outdoor temperature at which the heat actually comes on). Each day type has its
+    #      own thermostat setpoint (occupied_setpoint_f / vacant_setpoint_f, freeze protection when
+    #      vacant).
+    #
+    # BALANCE POINT = setpoint - GAINS OFFSET. The unit's own non-heating electricity (lights,
+    # appliances, fridge) ends up as heat indoors, so the heat comes on only below the setpoint minus
+    # that offset. The offset is NOT an input: the build CALIBRATES it from this section's own numbers
+    # (the electric bill's flat and occupancy-driven parts are the gains; the cost per heating degree-day
+    # gives the unit's heat loss), separately for occupied days (all electric gains) and vacant days
+    # (flat electric gains only). The calibrated values are saved in the utilities fit.json and shown on
+    # its seasonal_shape.png. Needs electric heating (codes 1-3); see heating_type.
+    #
+    # Months whose AVERAGE temperature sits near the balance point still have colder days that need
+    # heat, so expected HDD per day treats daily average temperatures as spread around the month's
+    # average (normal distribution, daily_temperature_std_f): a month averaging exactly the balance
+    # point heats on about half its days.
     #
     # CALIBRATION: the three categories are sized so that, under calibration_occupied_days_by_month,
     # one year of bills (before growth) adds up to EXACTLY 12 x initial_annual_average_monthly_cost.
@@ -648,7 +663,9 @@ carrying_costs:
                                       #   2 = cold-climate heat pump, seasonal COP 2.0
                                       #   3 = standard heat pump with resistance backup, COP 1.5
                                       #   4 = gas furnace/boiler (+ 5% of the electric bill for the
-                                      #       blower fan)
+                                      #       blower fan). NOT YET SUPPORTED by the gains-offset
+                                      #       calibration (it would need a gas-to-electric price ratio);
+                                      #       the build raises an error for code 4.
     heating_share: 0.55              # example -- fraction of the HEATING FUEL's own bill (electric for
                                       #   codes 1-3, gas for code 4) that is space heating, stated AS IF
                                       #   heated by electric resistance for codes 1-3 (heat-pump codes 2/3
@@ -658,11 +675,15 @@ carrying_costs:
                                       #   (~0.7-0.8). Best source: calibrate from a January and a July bill
                                       #   (method in .claude/implementation-plan.md). Ignored for code 0.
                                       #   Must be >= 0 and < 1.
-    vacant_setback_f: 10             # example -- degrees F the thermostat is turned down on vacant days
-                                      #   (freeze protection). 0 = no setback (vacant days heat like
-                                      #   occupied ones). A typical vacant STR setting is ~55°F.
-    hdd_base_temp_f: 65              # Temperature (F) below which a day counts as needing heat -- 65 is
-                                      #   the US standard for heating degree-days.
+    occupied_setpoint_f: 68          # example -- thermostat setting (F) on occupied days.
+    vacant_setpoint_f: 50            # example -- thermostat setting (F) on vacant days (freeze
+                                      #   protection). Must be <= occupied_setpoint_f.
+    daily_temperature_std_f: 7       # example ESTIMATE -- standard deviation (F) of daily AVERAGE
+                                      #   temperatures within a month (day-to-day weather swings, not
+                                      #   the day/night swing). Only shapes the shoulder months. To be
+                                      #   replaced by NOAA monthly heating degree-day normals (earmarked
+                                      #   in the implementation plan), which need no spread assumption.
+                                      #   Must be > 0.
     additional_flat_monthly: []      # NEW monthly costs (category 1, flat) that the previous owner did
                                       #   NOT pay or that weren't in the observed bill, e.g.
                                       #   [{label: guest_internet, amount_usd: 60}]. These are added ON
@@ -671,7 +692,8 @@ carrying_costs:
     seasonal_data_source: keystone_co_monthly_temperature_averages.csv
                                                # Filename under data/manual/ -- 12 rows (month,
                                                # avg_temp_f), each month's average of its average daily
-                                               # high and low. Used directly for heating degree-days.
+                                               # high and low. The month's average temperature for
+                                               # heating degree-days.
                                                # See data/manual/README.md for the source.
     growth:
       latent: utilities              # applied to every category, add-ons included

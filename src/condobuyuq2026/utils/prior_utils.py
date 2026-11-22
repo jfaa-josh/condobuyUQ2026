@@ -42,6 +42,7 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import brentq
 from scipy.stats import norm
 
 from condobuyuq2026.carrying_costs import (
@@ -575,7 +576,7 @@ def bake_monthly_periods(projection: pd.DataFrame, ci: tuple[float, float], hori
 
 
 def bake_hoa_monthly_periods(
-    annual_periods: list[dict[str, Any]], association_dues_fraction: float, horizon_months: int
+    annual_periods: list[dict[str, Any]], association_dues_fraction: float, horizon_months: int, closing_month: int
 ) -> list[dict[str, Any]]:
     """Expands hoa_dues_annual's own ANNUAL periods (bake_annual_periods -- one combined
     dues+association draw per year) into GENUINELY MONTHLY periods with the January association-fee
@@ -584,16 +585,25 @@ def bake_hoa_monthly_periods(
     be used to recreate "the correct model, which includes the January annual association fee" --
     that reconstruction required extra fraction-math no reader could see just from the periods list).
     Now every month's own period already holds its own correct payment (including January's) --
-    a plain lookup, exactly like every other entry, no separate fraction needed downstream at all."""
+    a plain lookup, exactly like every other entry, no separate fraction needed downstream at all.
+
+    CALENDAR ALIGNMENT (fixed 2026-11-22, same fix utilities got): scenario month h is calendar month
+    MONTH_KEYS[(closing_month - 1 + h) % 12] -- month 0 is the closing month -- so the association
+    charge lands in the REAL January (month 3 for an October closing). It used to land on h % 12 == 0,
+    i.e. the closing month. Each scenario year still contains exactly one January, so every scenario
+    year's total is unchanged; only which month carries the charge moved. Each period records its
+    `calendar_month`."""
     recurring_fraction = 1 - association_dues_fraction
     periods = []
     for month in range(horizon_months):
         year_period = next(p for p in annual_periods if p["start_month"] <= month < p["end_month"])
-        share = recurring_fraction / 12 + (association_dues_fraction if month % 12 == 0 else 0.0)
+        calendar_month = MONTH_KEYS[(closing_month - 1 + month) % 12]
+        share = recurring_fraction / 12 + (association_dues_fraction if calendar_month == "jan" else 0.0)
         periods.append(
             {
                 "start_month": month,
                 "end_month": month + 1,
+                "calendar_month": calendar_month,
                 "known_value": year_period["known_value"] * share,
                 "projected_value": year_period["projected_value"] * share,
                 "growth_sigma": year_period["growth_sigma"],
@@ -634,7 +644,8 @@ def build_hoa_dues_prior_model(deck: dict[str, Any] | None = None, horizon_month
 
     projection = project_term_structure(latent_fit, p0=initial_combined, horizon_months=horizon_months, ci=ci)
     annual_periods = bake_annual_periods(projection, ci, horizon_months)
-    periods = bake_hoa_monthly_periods(annual_periods, association_dues_fraction, horizon_months)
+    closing_month = get_closing_date(deck)["closing_month"]
+    periods = bake_hoa_monthly_periods(annual_periods, association_dues_fraction, horizon_months, closing_month)
 
     path_segment = carrying_cost_prior_path("hoa_dues_annual")
     fit_path = model_fit_path(path_segment)
@@ -645,6 +656,7 @@ def build_hoa_dues_prior_model(deck: dict[str, Any] | None = None, horizon_month
                 "initial_annual_association_dues": config["initial_annual_association_dues"],
                 "latent": config["latent"],
                 "association_dues_fraction": association_dues_fraction,
+                "closing_month": closing_month,
                 "periods": periods,
             },
             f,
@@ -657,7 +669,10 @@ def build_hoa_dues_prior_model(deck: dict[str, Any] | None = None, horizon_month
         ci,
         _CARRYING_COST_PRIOR_OUTER_CI,
         horizon_months,
-        title="HOA Dues (Monthly) — Uninformed Carrying-Cost Prior\nJanuary payments include the annual association charge",
+        title=(
+            "HOA Dues (Monthly) — Uninformed Carrying-Cost Prior\nJanuary payments include the annual association charge "
+            f"(month 0 = closing month, {MONTH_KEYS[closing_month - 1].capitalize()})"
+        ),
         save_path=plot_path,
     )
     return {"fit_path": fit_path, "plot_path": plot_path}
@@ -891,20 +906,32 @@ def cap_occupied_days(occupied_days: dict[str, float]) -> tuple[dict[str, float]
     return capped, warnings
 
 
-def heating_degree_days_per_day(temperatures: dict[str, float], base_f: float, setback_f: float) -> dict[str, dict[str, float]]:
-    """Heating degree-days PER DAY for each calendar month, from its MEAN temperature T:
-    occupied = max(0, base - T); vacant = max(0, base - setback - T) (the thermostat is turned down by
-    setback on vacant days, so heat only starts below a lower temperature).
+def expected_heating_degrees_per_day(balance_f: float, mean_f: float, std_f: float) -> float:
+    """Expected heating degrees per day, E[max(0, balance - T)], for daily average temperatures
+    T ~ Normal(mean_f, std_f) within a month: (balance - mean) x Phi(z) + std x phi(z), with
+    z = (balance - mean) / std. Unlike max(0, balance - mean) on the month's AVERAGE, this stays
+    positive for a month averaging at or just above the balance point, because some of its days are
+    still colder (at mean = balance it is 0.399 x std, with heat needed on about half the days), and
+    it falls smoothly toward 0 as the month warms."""
+    z = (balance_f - mean_f) / std_f
+    return float((balance_f - mean_f) * norm.cdf(z) + std_f * norm.pdf(z))
 
-    APPROXIMATION (flagged so it doesn't read as exact): real HDD are summed DAY BY DAY, and a month
-    whose mean sits near the base still has cold days that need heat. Computing from the monthly mean
-    UNDERCOUNTS such shoulder months. At Keystone every month's mean is below 65°F, so the effect is
-    small (largest in summer); NOAA monthly HDD normals would remove it -- earmarked in the
-    implementation plan."""
+
+def heating_degree_days_per_day(
+    temperatures: dict[str, float], occupied_balance_f: float, vacant_balance_f: float, std_f: float
+) -> dict[str, dict[str, float]]:
+    """Expected heating degree-days PER DAY for each calendar month (expected_heating_degrees_per_day),
+    for occupied and vacant days at their own BALANCE POINTS (setpoint minus the calibrated gains
+    offset, see calibrate_gains_offset).
+
+    APPROXIMATION (flagged so it doesn't read as exact): daily average temperatures are assumed
+    normally distributed around the month's average with one deck-supplied spread
+    (daily_temperature_std_f, an estimate). NOAA monthly heating degree-day normals at several base
+    temperatures would replace this assumption -- earmarked in the implementation plan."""
     return {
         month: {
-            "occupied": max(0.0, base_f - temperature),
-            "vacant": max(0.0, base_f - setback_f - temperature),
+            "occupied": expected_heating_degrees_per_day(occupied_balance_f, temperature, std_f),
+            "vacant": expected_heating_degrees_per_day(vacant_balance_f, temperature, std_f),
         }
         for month, temperature in temperatures.items()
     }
@@ -912,11 +939,69 @@ def heating_degree_days_per_day(temperatures: dict[str, float], base_f: float, s
 
 def heating_weights(occupied_days: dict[str, float], hdd_per_day: dict[str, dict[str, float]]) -> dict[str, float]:
     """Each month's heating weight w = occupied_days x occupied HDD/day + vacant_days x vacant HDD/day
-    -- the month's total degree-days of heating actually delivered, occupied and vacant (setback)
-    combined. Heating cost is proportional to w (cost per heating degree-day x w)."""
+    -- the month's total degree-days of heating actually delivered, occupied and vacant combined.
+    Heating cost is proportional to w (cost per heating degree-day x w)."""
     return {
         month: days * hdd_per_day[month]["occupied"] + (DAYS_IN_MONTH[month] - days) * hdd_per_day[month]["vacant"]
         for month, days in occupied_days.items()
+    }
+
+
+def calibrate_gains_offset(
+    config: dict[str, Any],
+    heating_pool: float,
+    cop: float,
+    gains_occupied_usd_per_day: float,
+    gains_vacant_usd_per_day: float,
+    calibration_occupied_days: dict[str, float],
+    temperatures: dict[str, float],
+) -> dict[str, float]:
+    """Solves for the GAINS OFFSET (degrees F the balance point sits below the thermostat setpoint)
+    from the deck's own utilities numbers -- user decision 2026-11-22: calibrate it rather than guess.
+
+    Physics: the unit's non-heating electricity all ends up as heat indoors, so heat comes on only
+    once losses exceed those gains, i.e. below balance = setpoint - offset, with
+        offset = gains / heat-loss rate.
+    Both are known in dollars: gains = non-heating electric cost per day (occupied days: flat +
+    occupancy-driven electric; vacant days: flat electric only); heat-loss rate per degree = cost per
+    heating degree-day k x COP (heat delivered per dollar of heating, relative to the gains' 1 kWh in
+    = 1 kWh of heat). The electricity price cancels, so no price input is needed:
+        offset_occupied = gains_occupied / (k x COP),   offset_vacant = gains_vacant / (k x COP).
+    k itself depends on the offset (k = heating pool / annual heating weight, and the weight shrinks
+    as the balance point drops), so the occupied offset x solves
+        x x COP x H - gains_occupied x sum(w(x)) = 0,
+    which increases monotonically in x -> exactly one root, found by brentq. The vacant offset is x
+    scaled by gains_vacant / gains_occupied (same k).
+
+    Caveats (roughly offsetting; documented, not modeled): the flat electric part includes fixed
+    service charges that produce no heat, and some water-heating energy goes down the drain (both
+    overstate gains); body heat, sun and heat from neighboring units are left out (understates).
+
+    Returns {"gains_offset_occupied_f", "gains_offset_vacant_f", "balance_point_occupied_f",
+    "balance_point_vacant_f"}."""
+    occupied_setpoint, vacant_setpoint = config["occupied_setpoint_f"], config["vacant_setpoint_f"]
+    std = config["daily_temperature_std_f"]
+    vacant_ratio = gains_vacant_usd_per_day / gains_occupied_usd_per_day if gains_occupied_usd_per_day > 0 else 0.0
+
+    def annual_weight(offset: float) -> float:
+        hdd = heating_degree_days_per_day(temperatures, occupied_setpoint - offset, vacant_setpoint - offset * vacant_ratio, std)
+        return sum(heating_weights(calibration_occupied_days, hdd).values())
+
+    def balance_equation(offset: float) -> float:
+        return offset * cop * heating_pool - gains_occupied_usd_per_day * annual_weight(offset)
+
+    if gains_occupied_usd_per_day > 0:
+        # Far enough below every month's temperature that the annual weight is ~0 -> equation > 0.
+        upper = occupied_setpoint - min(temperatures.values()) + 12 * std
+        offset = float(brentq(balance_equation, 0.0, upper))
+    else:
+        offset = 0.0
+    vacant_offset = offset * vacant_ratio
+    return {
+        "gains_offset_occupied_f": offset,
+        "gains_offset_vacant_f": vacant_offset,
+        "balance_point_occupied_f": occupied_setpoint - offset,
+        "balance_point_vacant_f": vacant_setpoint - vacant_offset,
     }
 
 
@@ -924,7 +1009,7 @@ def calibrate_utilities(
     config: dict[str, Any],
     heating: dict[str, Any],
     calibration_occupied_days: dict[str, float],
-    hdd_per_day: dict[str, dict[str, float]],
+    temperatures: dict[str, float],
 ) -> dict[str, Any]:
     """CALIBRATION half of the three-category utilities model: sizes the three pools so that, under
     calibration_occupied_days (the occupancy the observed bill was measured under), one year adds up
@@ -934,15 +1019,20 @@ def calibrate_utilities(
 
     Steps: split A by component weight; carve each component's heating fraction (carrying_costs.
     resolve_heating_type) out into the HEATING pool H; split each component's non-heating remainder by
-    its occupancy_fraction into the OCCUPANCY pool U and the FLAT pool F. Then rates:
+    its occupancy_fraction into the OCCUPANCY pool U and the FLAT pool F. The GAINS OFFSET
+    (calibrate_gains_offset) then sets the occupied and vacant balance points, which fix each month's
+    expected heating degree-days per day. Then rates:
         u = U / sum(occupied days)          (cost per occupied day)
         k = H / sum(heating weights)        (cost per heating degree-day, see heating_weights)
         flat per month = F / 12
-    Raises ValueError if a pool has cost but nothing to spread it over (H > 0 with zero heating
-    degree-days all year, or U > 0 with zero occupied days all year).
+    No heating pool (heating type 0): offsets are 0 and unused. Raises ValueError for gas heating
+    (type 4) -- the offset calibration needs electric heating (gas would need a gas-to-electric price
+    ratio; earmarked) -- and if a pool has cost but nothing to spread it over.
 
     Returns {"annual_observed_total", "flat_pool", "occupancy_pool", "heating_pool", "flat_monthly",
-    "cost_per_occupied_day", "cost_per_heating_degree_day", "pools_by_component"}."""
+    "cost_per_occupied_day", "cost_per_heating_degree_day", "internal_gains_usd_per_day" ({"occupied",
+    "vacant"}), the four calibrate_gains_offset keys, "hdd_per_day" ({month: {"occupied", "vacant"}},
+    what apply_utilities uses), "pools_by_component"}."""
     annual = 12 * config["initial_annual_average_monthly_cost"]
     pools_by_component = {}
     for name, component in config["components"].items():
@@ -959,13 +1049,36 @@ def calibrate_utilities(
     flat_pool = sum(p["flat"] for p in pools_by_component.values())
 
     total_days = sum(calibration_occupied_days.values())
-    total_weight = sum(heating_weights(calibration_occupied_days, hdd_per_day).values())
     if occupancy_pool > 0 and total_days == 0:
         raise ValueError("carrying_costs.utilities: occupancy-driven cost but zero occupied days all year to spread it over")
+
+    electric = pools_by_component["electric"]
+    gains_vacant = electric["flat"] / sum(DAYS_IN_MONTH.values())
+    gains_occupied = gains_vacant + (electric["occupancy"] / total_days if total_days > 0 else 0.0)
+    if heating_pool > 0:
+        if heating["carrier"] != "electric":
+            raise ValueError(
+                f"carrying_costs.utilities: heating_type {heating['heating_type']} ({heating['name']}) is not supported yet -- "
+                "the gains-offset calibration needs electric heating (types 1-3); gas would need a gas-to-electric price ratio"
+            )
+        offsets = calibrate_gains_offset(
+            config, heating_pool, heating["cop"], gains_occupied, gains_vacant, calibration_occupied_days, temperatures
+        )
+    else:
+        offsets = {
+            "gains_offset_occupied_f": 0.0,
+            "gains_offset_vacant_f": 0.0,
+            "balance_point_occupied_f": config["occupied_setpoint_f"],
+            "balance_point_vacant_f": config["vacant_setpoint_f"],
+        }
+    hdd_per_day = heating_degree_days_per_day(
+        temperatures, offsets["balance_point_occupied_f"], offsets["balance_point_vacant_f"], config["daily_temperature_std_f"]
+    )
+    total_weight = sum(heating_weights(calibration_occupied_days, hdd_per_day).values())
     if heating_pool > 0 and total_weight == 0:
         raise ValueError(
-            "carrying_costs.utilities: heating cost but zero heating degree-days all year -- check hdd_base_temp_f "
-            "against the temperature data"
+            "carrying_costs.utilities: heating cost but zero heating degree-days all year -- check the setpoints against "
+            "the temperature data"
         )
     return {
         "annual_observed_total": annual,
@@ -975,6 +1088,9 @@ def calibrate_utilities(
         "flat_monthly": flat_pool / 12,
         "cost_per_occupied_day": occupancy_pool / total_days if total_days > 0 else 0.0,
         "cost_per_heating_degree_day": heating_pool / total_weight if total_weight > 0 else 0.0,
+        "internal_gains_usd_per_day": {"occupied": gains_occupied, "vacant": gains_vacant},
+        **offsets,
+        "hdd_per_day": hdd_per_day,
         "pools_by_component": pools_by_component,
     }
 
@@ -982,33 +1098,56 @@ def calibrate_utilities(
 def apply_utilities(
     calibration: dict[str, Any],
     occupied_days: dict[str, float],
-    hdd_per_day: dict[str, dict[str, float]],
     add_ons: list[dict[str, Any]],
 ) -> pd.DataFrame:
     """APPLICATION half of the three-category utilities model: one year of monthly costs (before
-    growth) for a given occupancy profile, using calibrate_utilities' rates:
+    growth) for a given occupancy profile, using calibrate_utilities' rates AND its heating degree-days
+    per day (the calibrated balance points are part of the calibration, so application must use the
+    same ones):
         cost_m = flat/12 + u x occupied_days_m + k x heating_weight_m + sum(add-ons)
     Returns a DataFrame indexed by MONTH_KEYS (calendar order) with columns flat, occupancy, heating,
-    add_ons, total, plus the drivers occupied_days, hdd_occupied_per_day, heating_weight (kept for the
-    plot and fit.json)."""
+    add_ons, total, plus heating's own split into heating_occupied (k x occupied days x occupied
+    HDD/day) and heating_vacant (k x vacant days x vacant HDD/day, the thermostat-setback days) --
+    heating_occupied + heating_vacant = heating -- and the drivers occupied_days,
+    hdd_occupied_per_day, hdd_vacant_per_day, heating_weight (kept for the plot and fit.json)."""
+    hdd_per_day = calibration["hdd_per_day"]
     weights = heating_weights(occupied_days, hdd_per_day)
     add_on_monthly = sum(a["amount_usd"] for a in add_ons)
+    rate = calibration["cost_per_heating_degree_day"]
     rows = {}
     for month in MONTH_KEYS:
         flat = calibration["flat_monthly"]
         occupancy = calibration["cost_per_occupied_day"] * occupied_days[month]
-        heating = calibration["cost_per_heating_degree_day"] * weights[month]
+        heating = rate * weights[month]
+        heating_occupied = rate * occupied_days[month] * hdd_per_day[month]["occupied"]
         rows[month] = {
             "flat": flat,
             "occupancy": occupancy,
             "heating": heating,
+            "heating_occupied": heating_occupied,
+            "heating_vacant": heating - heating_occupied,
             "add_ons": add_on_monthly,
             "total": flat + occupancy + heating + add_on_monthly,
             "occupied_days": occupied_days[month],
             "hdd_occupied_per_day": hdd_per_day[month]["occupied"],
+            "hdd_vacant_per_day": hdd_per_day[month]["vacant"],
             "heating_weight": weights[month],
         }
     return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def _utilities_balance_point_note(config: dict[str, Any], heating: dict[str, Any], calibration: dict[str, Any]) -> str:
+    """One-line caption for seasonal_shape.png's driver panel: the CALIBRATED balance points (where the
+    heat actually comes on) as setpoint minus gains offset, occupied and vacant. Shown on the plot (and
+    saved in fit.json) rather than printed, per the user (2026-11-22)."""
+    if heating["carrier"] is None:
+        return "No heating on this bill (heating_type 0) -- balance points not used"
+    return (
+        f"Heat comes on below (calibrated): occupied {calibration['balance_point_occupied_f']:.1f}°F = "
+        f"{config['occupied_setpoint_f']:g}°F setpoint − {calibration['gains_offset_occupied_f']:.1f}°F gains offset;  "
+        f"vacant {calibration['balance_point_vacant_f']:.1f}°F = {config['vacant_setpoint_f']:g}°F − "
+        f"{calibration['gains_offset_vacant_f']:.1f}°F;  daily temperature spread σ = {config['daily_temperature_std_f']:g}°F"
+    )
 
 
 def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, Any]:
@@ -1020,7 +1159,8 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
 
     1. Calibrate (calibrate_utilities) against calibration_occupied_days_by_month ("deck" = this deck's
        own expected occupancy, see input_deck.get_expected_occupied_days_by_month), capped at days in
-       month (cap_occupied_days).
+       month (cap_occupied_days). This includes the GAINS OFFSET (calibrate_gains_offset), which sets
+       the occupied/vacant balance points below the thermostat setpoints.
     2. SELF-CHECK: applying the calibration to its own occupancy, without add-ons, must reproduce
        12 x the observed average bill exactly. Raised as an explicit AssertionError (not `assert`, which
        `python -O` strips) -- it guards the calibration algebra, not user input.
@@ -1029,10 +1169,12 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
     4. Grow each calendar month via `latent` (bake_calendar_month_periods, anchored to
        scenario.closing_month).
 
-    fit.json: the validated config, the resolved heating type, the calibration, the year-1 calendar-month
-    table, any cap warnings, closing_month, and the MONTHLY `periods` carrying_costs._project_utilities_annual
-    sums. Plots: model.png (the monthly periods, as before) and seasonal_shape.png (plotting.
-    forecast_plots.plot_utilities_year1_breakdown: year-1 stacked categories over occupied days and HDD).
+    fit.json: the validated config, the resolved heating type, the calibration (incl. the calibrated
+    gains offsets, balance points and monthly HDD/day), the year-1 calendar-month table, any cap
+    warnings, closing_month, and the MONTHLY `periods` carrying_costs._project_utilities_annual sums
+    (the only field read back). Plots: model.png (the monthly periods, as before) and seasonal_shape.png
+    (plotting.forecast_plots.plot_utilities_year1_breakdown: year-1 stacked categories over occupied
+    days and HDD, captioned with the calibrated balance points).
 
     Returns {"fit_path", "plot_path", "seasonal_shape_plot_path", "utilities_report"} -- the report is
     printed by reporting.print_carrying_cost_prior_build_report."""
@@ -1043,7 +1185,6 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
 
     heating = resolve_heating_type(config["heating_type"], config["heating_share"], config["components"])
     temperatures = load_temperature_seasonal_data(config["seasonal_data_source"])
-    hdd_per_day = heating_degree_days_per_day(temperatures, config["hdd_base_temp_f"], config["vacant_setback_f"])
 
     deck_days, deck_warnings = cap_occupied_days(get_expected_occupied_days_by_month(deck))
     calibration_warnings: list[str]
@@ -1052,8 +1193,8 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
     else:
         calibration_days, calibration_warnings = cap_occupied_days(config["calibration_occupied_days_by_month"])
 
-    calibration = calibrate_utilities(config, heating, calibration_days, hdd_per_day)
-    check = apply_utilities(calibration, calibration_days, hdd_per_day, add_ons=[])
+    calibration = calibrate_utilities(config, heating, calibration_days, temperatures)
+    check = apply_utilities(calibration, calibration_days, add_ons=[])
     check_total = float(check[["flat", "occupancy", "heating"]].to_numpy().sum())
     if not math.isclose(check_total, calibration["annual_observed_total"], rel_tol=1e-9):
         raise AssertionError(
@@ -1061,7 +1202,7 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
             f"12 x observed average {calibration['annual_observed_total']:.6f}"
         )
 
-    year_1 = apply_utilities(calibration, deck_days, hdd_per_day, config["additional_flat_monthly"])
+    year_1 = apply_utilities(calibration, deck_days, config["additional_flat_monthly"])
     monthly_costs = year_1["total"].to_dict()
 
     report_quantiles = get_report_quantiles(deck)
@@ -1111,6 +1252,7 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
         ),
         save_path=plot_path,
         ylabel="USD/month",
+        zoom_months=12,
     )
 
     seasonal_shape_plot_path = model_plots_dir(path_segment) / "seasonal_shape.png"
@@ -1121,6 +1263,7 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
             f"Heating: {heating['name']}; observed average \\${config['initial_annual_average_monthly_cost']:,.0f}/month"
         ),
         save_path=seasonal_shape_plot_path,
+        driver_title=_utilities_balance_point_note(config, heating, calibration),
     )
     return {
         "fit_path": fit_path,
