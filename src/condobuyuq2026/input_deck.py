@@ -30,7 +30,7 @@ of a list of intentions.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -180,52 +180,144 @@ def get_financing_inputs(deck: dict[str, Any] | None = None) -> dict[str, float 
     }
 
 
+RENTAL_SOURCE_KINDS = ("history", "estimate")
+RENTAL_SOURCE_RESOLUTIONS = ("annual", "monthly")
+
+
+def _fraction(value: Any, where: str, *, upper: float = 1.0, upper_inclusive: bool = True) -> float:
+    """Validates a fraction in [0, upper] (or [0, upper) if not upper_inclusive) and returns it as a float."""
+    if not _is_number(value):
+        raise ValueError(f"{where}: expected a number, got {value!r}")
+    ok = 0 <= value <= upper if upper_inclusive else 0 <= value < upper
+    if not ok:
+        bracket = "]" if upper_inclusive else ")"
+        raise ValueError(f"{where}: must be in [0, {upper}{bracket}, got {value}")
+    return float(value)
+
+
 def get_rental_operations_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Unwraps `rental_operations`'s own `kind: constant` fields. Returns {"managed_by"} (OPTIONS:
-    self | company -- see that field's own deck comment and
-    classification.get_loan_occupancy_class, the only thing that reads it) and
-    {"mgmt_fee_fraction"} (used by taxes.py's direct_rental_expenses -- a REAL formula,
-    mgmt_fee_fraction * gross_rent, even though gross_rent itself is a placeholder today)."""
+    """Unwraps and validates `rental_operations`'s `kind: constant` fields (everything except
+    `sources`, see get_rental_operations_sources). Returns:
+      managed_by: self | company (read by classification.get_loan_occupancy_class);
+      occupancy_adr_correlation: in [-1, 1];
+      adr_growth_latent: name of the derived latent that grows ADR;
+      channel_commission_fraction, mgmt_fee_fraction: in [0, 1). Net rental income =
+        gross x (1 - channel_commission_fraction) x (1 - mgmt_fee_fraction)."""
     deck = deck if deck is not None else load_deck()
     rental_operations = deck["rental_operations"]
+    where = "rental_operations"
+    managed_by = _constant(rental_operations["managed_by"])
+    if managed_by not in ("self", "company"):
+        raise ValueError(f"{where}.managed_by: must be self or company, got {managed_by!r}")
+    correlation = _constant(rental_operations["occupancy_adr_correlation"])
+    if not _is_number(correlation) or not -1 <= correlation <= 1:
+        raise ValueError(f"{where}.occupancy_adr_correlation: must be a number in [-1, 1], got {correlation!r}")
     return {
-        "managed_by": _constant(rental_operations["managed_by"]),
-        "mgmt_fee_fraction": _constant(rental_operations["mgmt_fee_fraction"]),
+        "managed_by": managed_by,
+        "occupancy_adr_correlation": float(correlation),
+        "adr_growth_latent": str(_constant(rental_operations["adr_growth_latent"])),
+        "channel_commission_fraction": _fraction(
+            _constant(rental_operations["channel_commission_fraction"]),
+            f"{where}.channel_commission_fraction",
+            upper_inclusive=False,
+        ),
+        "mgmt_fee_fraction": _fraction(
+            _constant(rental_operations["mgmt_fee_fraction"]), f"{where}.mgmt_fee_fraction", upper_inclusive=False
+        ),
     }
 
 
-def get_annual_rented_days(deck: dict[str, Any] | None = None) -> float:
-    """Sums rental_operations.occupancy's monthly medians (`kind: prior`, `resolution: monthly` --
-    not a `kind: constant`, so _constant doesn't apply) into an expected annual rented-days figure.
-    Used only for occupancy/tax classification (see classification.get_tax_use_class), never for
-    revenue itself (that still uses the full occupancy distribution, median AND cv, elsewhere)."""
+def _rental_observation(raw: Any, where: str) -> dict[str, float | None]:
+    """Validates one {occupancy, adr} pair: occupancy in [0, 1]; adr > 0 when occupancy > 0 (no
+    bookings -> no ADR, so adr must be null/omitted when occupancy is 0)."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: expected {{occupancy, adr}}, got {raw!r}")
+    occupancy = _fraction(raw.get("occupancy"), f"{where}.occupancy")
+    adr = raw.get("adr")
+    if occupancy == 0:
+        if adr is not None:
+            raise ValueError(f"{where}: occupancy is 0 (no bookings), so adr must be null, got {adr!r}")
+        return {"occupancy": 0.0, "adr": None}
+    if not _is_number(adr) or float(cast(float, adr)) <= 0:
+        raise ValueError(f"{where}.adr: occupancy is {occupancy}, so adr must be a number > 0, got {adr!r}")
+    return {"occupancy": occupancy, "adr": float(cast(float, adr))}
+
+
+def get_rental_operations_sources(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Validates and normalizes `rental_operations.sources` (see that field's deck comment for what
+    each field means). Returns EVERY source, included or not (the fit plots show excluded ones too),
+    each as {"label", "include", "kind", "year", "resolution", "occupancy"/"adr" (annual only),
+    "months" (monthly only: {month: {"occupancy", "adr" (None if no bookings)}}),
+    "owner_nights_by_month" (history only, None if not given)}. Raises if no source is included."""
     deck = deck if deck is not None else load_deck()
-    months = deck["rental_operations"]["occupancy"]["months"]
-    return sum(month["median"] for month in months.values())
+    raw_sources = deck["rental_operations"]["sources"]
+    if not isinstance(raw_sources, list) or not raw_sources:
+        raise ValueError("rental_operations.sources: must be a non-empty list (see its deck comment)")
+
+    sources = []
+    for index, raw in enumerate(raw_sources):
+        label = raw.get("label") or f"source {index + 1}"
+        where = f"rental_operations.sources[{index}] ({label})"
+        include = raw.get("include", True)
+        if not isinstance(include, bool):
+            raise ValueError(f"{where}.include: must be true or false, got {include!r}")
+        kind = raw.get("kind")
+        if kind not in RENTAL_SOURCE_KINDS:
+            raise ValueError(f"{where}.kind: must be one of {RENTAL_SOURCE_KINDS}, got {kind!r}")
+        year = raw.get("year")
+        if not isinstance(year, int) or isinstance(year, bool):
+            raise ValueError(f"{where}.year: must be a whole year (e.g. 2025), got {year!r}")
+        resolution = raw.get("resolution")
+        if resolution not in RENTAL_SOURCE_RESOLUTIONS:
+            raise ValueError(f"{where}.resolution: must be one of {RENTAL_SOURCE_RESOLUTIONS}, got {resolution!r}")
+
+        source: dict[str, Any] = {"label": label, "include": include, "kind": kind, "year": year, "resolution": resolution}
+        if resolution == "annual":
+            source.update(_rental_observation(raw, where))
+        else:
+            months = raw.get("months")
+            if not isinstance(months, dict) or set(months) != set(MONTH_KEYS):
+                raise ValueError(f"{where}.months: must list all 12 months ({', '.join(MONTH_KEYS)})")
+            source["months"] = {month: _rental_observation(months[month], f"{where}.months.{month}") for month in MONTH_KEYS}
+
+        owner_nights = raw.get("owner_nights_by_month")
+        if owner_nights is not None:
+            if kind != "history":
+                raise ValueError(f"{where}.owner_nights_by_month: only meaningful for kind: history")
+            if not isinstance(owner_nights, dict) or set(owner_nights) != set(MONTH_KEYS):
+                raise ValueError(f"{where}.owner_nights_by_month: must list all 12 months")
+            for month in MONTH_KEYS:
+                nights = owner_nights[month]
+                if not _is_number(nights) or not 0 <= nights <= DAYS_IN_MONTH[month]:
+                    raise ValueError(f"{where}.owner_nights_by_month.{month}: must be 0..{DAYS_IN_MONTH[month]}, got {nights!r}")
+            owner_nights = {month: float(owner_nights[month]) for month in MONTH_KEYS}
+        source["owner_nights_by_month"] = owner_nights
+        sources.append(source)
+
+    if not any(source["include"] for source in sources):
+        raise ValueError("rental_operations.sources: at least one source must have include: true")
+    return sources
+
+
+def get_personal_use_days_by_month(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """personal_use.personal_use_days_by_month as {month: days}, each checked to fit in its month
+    (no leap-day February)."""
+    deck = deck if deck is not None else load_deck()
+    days_by_month = _constant(deck["personal_use"]["personal_use_days_by_month"])
+    result = {}
+    for month in MONTH_KEYS:
+        days = days_by_month[month]
+        if not _is_number(days) or not 0 <= days <= DAYS_IN_MONTH[month]:
+            raise ValueError(f"personal_use.personal_use_days_by_month.{month}: must be 0..{DAYS_IN_MONTH[month]}, got {days!r}")
+        result[month] = float(days)
+    return result
 
 
 def get_annual_personal_days(deck: dict[str, Any] | None = None) -> float:
     """Sums personal_use.personal_use_days_by_month (`kind: constant`, a plain {month: days} dict)
     into an annual personal-use-days figure. Used only for occupancy/tax classification (see
     classification.get_tax_use_class)."""
-    deck = deck if deck is not None else load_deck()
-    days_by_month = _constant(deck["personal_use"]["personal_use_days_by_month"])
-    return sum(days_by_month.values())
-
-
-def get_rental_operations_monthly_medians(deck: dict[str, Any] | None = None) -> dict[str, dict[str, float]]:
-    """Unwraps rental_operations.occupancy/adr's own monthly medians (`kind: prior`,
-    `resolution: monthly` -- ignoring cv and growth entirely). Returns {"occupancy": {"jan": 22.0,
-    ...}, "adr": {"jan": 420.0, ...}}. Used by taxes.py's placeholder_gross_rent (multiplied month
-    by month, so the ADR/occupancy seasonal correlation -- e.g. ski season -- is at least
-    preserved) -- see that function's own docstring for why this is a PLACEHOLDER, not a real
-    revenue model."""
-    deck = deck if deck is not None else load_deck()
-    rental_operations = deck["rental_operations"]
-    return {
-        "occupancy": {month: values["median"] for month, values in rental_operations["occupancy"]["months"].items()},
-        "adr": {month: values["median"] for month, values in rental_operations["adr"]["months"].items()},
-    }
+    return sum(get_personal_use_days_by_month(deck).values())
 
 
 def get_property_tax_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
@@ -393,8 +485,12 @@ def get_special_assessment_config(deck: dict[str, Any] | None = None) -> dict[st
 
 
 MONTH_KEYS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+# Non-leap days per calendar month. February uses 28: leap years add one day every 4 years, a ~0.1%
+# effect on annual figures, not worth modeling.
+DAYS_IN_MONTH = dict(zip(MONTH_KEYS, (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31), strict=True))
 UTILITY_COMPONENTS = ("electric", "gas", "water", "sewer", "trash", "internet")
 UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK = "deck"
+UTILITIES_CALIBRATION_OCCUPANCY_FROM_HISTORY = "history"
 
 
 def _is_number(value: Any) -> bool:
@@ -412,8 +508,8 @@ def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, 
     carrying_costs.resolve_heating_type, next to the HEATING_TYPES table it indexes (that table
     can't live here: carrying_costs imports this module, not the other way around).
 
-    Returns {"initial_annual_average_monthly_cost", "calibration_occupied_days_by_month" ("deck" or a
-    {month: days} dict), "components" ({name: {"weight", "occupancy_fraction"}}, every name in
+    Returns {"initial_annual_average_monthly_cost", "calibration_occupied_days_by_month" ("deck",
+    "history" or a {month: days} dict), "components" ({name: {"weight", "occupancy_fraction"}}, every name in
     UTILITY_COMPONENTS, missing ones filled with zeros), "heating_type", "heating_share",
     "occupied_setpoint_f", "vacant_setpoint_f", "daily_temperature_std_f", "additional_flat_monthly" (list of {"label",
     "amount_usd"}), "seasonal_data_source", "latent"}."""
@@ -427,10 +523,10 @@ def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, 
         raise ValueError(f"{where}.initial_annual_average_monthly_cost must be a number > 0, got {average!r}")
 
     calibration = entry["calibration_occupied_days_by_month"]
-    if calibration != UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK:
+    if calibration not in (UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK, UTILITIES_CALIBRATION_OCCUPANCY_FROM_HISTORY):
         if not isinstance(calibration, dict) or set(calibration) != set(MONTH_KEYS):
             raise ValueError(
-                f"{where}.calibration_occupied_days_by_month must be 'deck' or a map of all 12 months "
+                f"{where}.calibration_occupied_days_by_month must be 'deck', 'history' or a map of all 12 months "
                 f"({', '.join(MONTH_KEYS)}), got {calibration!r}"
             )
         bad = {m: d for m, d in calibration.items() if not _is_number(d) or d < 0}
@@ -500,26 +596,6 @@ def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, 
         "additional_flat_monthly": [{"label": a["label"], "amount_usd": float(a["amount_usd"])} for a in add_ons],
         "seasonal_data_source": entry["seasonal_data_source"],
         "latent": latent,
-    }
-
-
-def get_expected_occupied_days_by_month(deck: dict[str, Any] | None = None) -> dict[str, float]:
-    """EXPECTED occupied days per calendar month = expected rented days + personal-use days, UNCAPPED
-    (utils.prior_utils.cap_occupied_days applies the days-in-month cap, with a warning).
-
-    Expected rented days is the lognormal MEAN, median x sqrt(1 + cv^2) (for a lognormal,
-    mean = median x exp(sigma^2/2) and cv^2 = exp(sigma^2) - 1), not the median: utilities cost is
-    LINEAR in occupied days, so its expected value needs expected days. (Tax classification
-    deliberately uses the median instead -- get_annual_rented_days -- since it's a threshold rule,
-    not an expectation.) The mean ignores occupancy's own rentable-days cap (days in month minus
-    personal use), which slightly overstates it in a month whose distribution presses against that
-    cap. Returns {"jan": days, ..., "dec": days}."""
-    deck = deck if deck is not None else load_deck()
-    occupancy = deck["rental_operations"]["occupancy"]["months"]
-    personal = _constant(deck["personal_use"]["personal_use_days_by_month"])
-    return {
-        month: occupancy[month]["median"] * (1 + occupancy[month]["cv"] ** 2) ** 0.5 + personal[month]
-        for month in MONTH_KEYS
     }
 
 

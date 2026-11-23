@@ -15,7 +15,8 @@
 ## Verifying changes
 - The check is a full run: `uv run python run/main.py` (offline by default, safe to run).
 - Never pass `--refresh`.
-- Ignore `run/tests/` entirely for now: don't run, update, or add tests there, and don't suggest writing tests unless I ask.
+- There are no tests in this repo (the old `run/tests/` folder and pytest were removed 2026-11-22 at my request):
+  don't add tests or suggest writing them unless I ask.
 
 ## Memory & Context Preservation
 

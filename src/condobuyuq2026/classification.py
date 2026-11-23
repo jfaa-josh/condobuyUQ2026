@@ -24,14 +24,22 @@ from typing import Any
 
 from condobuyuq2026.input_deck import (
     get_annual_personal_days,
-    get_annual_rented_days,
     get_rental_operations_inputs,
     load_deck,
 )
+from condobuyuq2026.rental_operations import rented_nights_by_month
 
 MIXED_USE_PERSONAL_DAYS_THRESHOLD = 14
 MIXED_USE_PERSONAL_DAYS_FRACTION_OF_RENTED = 0.10
 PERSONAL_USE_MAX_RENTED_DAYS = 14
+
+
+def get_annual_rented_days(deck: dict[str, Any] | None = None) -> float:
+    """Annual rented days for the day-count rules: the fitted MEDIAN rented nights per month (capped at
+    the nights you leave available), summed -- a threshold rule, so the median, not the mean (see
+    rental_operations.rented_nights_by_month). Uncertain occupancy could flip the class in a given year;
+    not modeled."""
+    return sum(rented_nights_by_month(deck, "median").values())
 
 
 def get_loan_occupancy_class(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> str:

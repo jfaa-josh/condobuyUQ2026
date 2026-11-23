@@ -7,16 +7,14 @@ STORAGE, not just printing: each stage's computed values are kept, not only prin
 A buy scenario dict gets a new key per stage as it's computed -- so far "acquisition"
 (acquisition.compute_acquisition_costs), "classification"
 (classification.compute_occupancy_classification), "financing" (financing.compute_financing),
-"carrying_costs" (carrying_costs.compute_carrying_costs), and "taxes" (taxes.compute_owner_taxes,
+"carrying_costs" (carrying_costs.compute_carrying_costs), "rental_operations"
+(rental_operations.compute_rental_operations), and "taxes" (taxes.compute_owner_taxes,
 which reuses "carrying_costs" for its own property_tax/shared_expenses -- see that module's own
 docstring) -- so by the time run_scenarios returns, every scenario in its "scenarios" list carries
 everything computed for it, not just what got printed along the way. reference_results[
 reference_id] is, symmetrically, a dict a future reference-side stage adds its own key to -- so far
 just "taxes" (taxes.compute_renter_taxes, a real confirmed $0 result, not a placeholder -- renting
 has no real-estate tax effect at all).
-
-*** taxes.py has ONE remaining PLACEHOLDER input (gross_rent) -- see that module's docstring and
-PLACEHOLDER_FIELDS constant before trusting any gross_rent-derived dollar figure it produces. ***
 
 The eventual buy-vs-reference comparison (ΔW = W_buy - W_rent, see .claude/implementation-plan.md's
 Goal) is still a PLACEHOLDER (see reporting.print_scenario_comparison_placeholder) -- as later
@@ -41,12 +39,15 @@ from condobuyuq2026.reporting import (
     print_financing_report,
     print_reference_cache_hit,
     print_reference_report,
+    print_rental_operations_report,
+    print_rental_operations_result_plots_report,
     print_renter_taxes_report,
     print_scenario_comparison_placeholder,
     print_special_assessment_report,
     print_taxes_report,
 )
-from condobuyuq2026.results import save_carrying_cost_result_plots
+from condobuyuq2026.rental_operations import compute_rental_operations
+from condobuyuq2026.results import save_carrying_cost_result_plots, save_rental_operations_result_plots
 from condobuyuq2026.scenarios import get_scenario_set
 from condobuyuq2026.taxes import compute_owner_taxes, compute_renter_taxes
 
@@ -101,6 +102,11 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
 
         result_plots = save_carrying_cost_result_plots(scenario, deck)
         print_carrying_cost_result_plots_report(result_plots)
+
+        rental_operations = compute_rental_operations(scenario, deck)
+        scenario["rental_operations"] = rental_operations
+        print_rental_operations_report(rental_operations)
+        print_rental_operations_result_plots_report(save_rental_operations_result_plots(scenario, deck))
 
         owner_taxes = compute_owner_taxes(scenario, deck)
         scenario["taxes"] = owner_taxes

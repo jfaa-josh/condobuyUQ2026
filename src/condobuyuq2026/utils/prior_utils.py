@@ -51,12 +51,13 @@ from condobuyuq2026.carrying_costs import (
     special_assessment_count_probabilities,
 )
 from condobuyuq2026.input_deck import (
+    DAYS_IN_MONTH,
     DERIVED_LATENT_COMPONENTS,
     MONTH_KEYS,
     SPECIAL_ASSESSMENT_NO_GROWTH,
     UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK,
+    UTILITIES_CALIBRATION_OCCUPANCY_FROM_HISTORY,
     get_closing_date,
-    get_expected_occupied_days_by_month,
     get_forecast_model_name,
     get_growth_fit,
     get_hoa_dues_config,
@@ -78,6 +79,7 @@ from condobuyuq2026.plotting.forecast_plots import (
     plot_utilities_year1_breakdown,
 )
 from condobuyuq2026.raw_data import load_monthly_series
+from condobuyuq2026.rental_operations import expected_occupied_days_by_month, load_history_occupied_days
 from condobuyuq2026.utils.manual_utils import model_fit_path, model_plots_dir
 from condobuyuq2026.utils.ou_fitting import project_term_structure
 
@@ -883,16 +885,13 @@ def load_temperature_seasonal_data(filename: str) -> dict[str, float]:
     return temperatures
 
 
-# Non-leap days per calendar month. February uses 28: leap years add one day every 4 years, a ~0.1%
-# effect on an annual bill, not worth modeling for a cost calibrated to an observed average.
-DAYS_IN_MONTH = dict(zip(MONTH_KEYS, (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31), strict=True))
 
 
 def cap_occupied_days(occupied_days: dict[str, float]) -> tuple[dict[str, float], list[str]]:
     """Caps each month's occupied days at the days in that month, so vacant days (days - occupied) can
-    never go negative. Expected rented days + personal use CAN exceed the month in principle (the
-    lognormal mean ignores occupancy's own rentable-days cap -- see
-    input_deck.get_expected_occupied_days_by_month). Returns (capped days, one warning string per
+    never go negative. Expected rented nights are already capped at the nights left available
+    (rental_operations.rented_nights_by_month), so for this deck's own occupancy it's a safety net; a
+    user-entered calibration map can still exceed a month. Returns (capped days, one warning string per
     capped month), so the caller can print the warnings via reporting.py rather than silently
     clipping."""
     capped, warnings = {}, []
@@ -1158,7 +1157,7 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
     different occupancy -- or, later, an uncertain one -- moves the right part of the bill.
 
     1. Calibrate (calibrate_utilities) against calibration_occupied_days_by_month ("deck" = this deck's
-       own expected occupancy, see input_deck.get_expected_occupied_days_by_month), capped at days in
+       own expected occupancy, see rental_operations.expected_occupied_days_by_month), capped at days in
        month (cap_occupied_days). This includes the GAINS OFFSET (calibrate_gains_offset), which sets
        the occupied/vacant balance points below the thermostat setpoints.
     2. SELF-CHECK: applying the calibration to its own occupancy, without add-ons, must reproduce
@@ -1186,12 +1185,24 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
     heating = resolve_heating_type(config["heating_type"], config["heating_share"], config["components"])
     temperatures = load_temperature_seasonal_data(config["seasonal_data_source"])
 
-    deck_days, deck_warnings = cap_occupied_days(get_expected_occupied_days_by_month(deck))
+    deck_days, deck_warnings = cap_occupied_days(expected_occupied_days_by_month(deck))
     calibration_warnings: list[str]
-    if config["calibration_occupied_days_by_month"] == UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK:
+    calibration_choice = config["calibration_occupied_days_by_month"]
+    if calibration_choice == UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK:
         calibration_days, calibration_warnings = deck_days, []
+        calibration_source = "deck occupancy (assumes the previous owner used the unit like you will)"
+    elif calibration_choice == UTILITIES_CALIBRATION_OCCUPANCY_FROM_HISTORY:
+        history = load_history_occupied_days()
+        if history is None:
+            raise ValueError(
+                "carrying_costs.utilities.calibration_occupied_days_by_month is 'history', but no included "
+                "rental_operations source is kind: history with owner_nights_by_month"
+            )
+        calibration_days, calibration_warnings = cap_occupied_days(history["days"])
+        calibration_source = f"previous owner's history ({', '.join(history['sources'])})"
     else:
-        calibration_days, calibration_warnings = cap_occupied_days(config["calibration_occupied_days_by_month"])
+        calibration_days, calibration_warnings = cap_occupied_days(calibration_choice)
+        calibration_source = "calibration_occupied_days_by_month map"
 
     calibration = calibrate_utilities(config, heating, calibration_days, temperatures)
     check = apply_utilities(calibration, calibration_days, add_ons=[])
@@ -1213,9 +1224,8 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
     report = {
         "heating": heating,
         "calibration": calibration,
-        "calibration_source": "deck occupancy"
-        if config["calibration_occupied_days_by_month"] == UTILITIES_CALIBRATION_OCCUPANCY_FROM_DECK
-        else "calibration_occupied_days_by_month",
+        "calibration_source": calibration_source,
+        "calibration_occupied_days": calibration_days,
         "year_1_total_excluding_add_ons": year_1_excluding_add_ons,
         "year_1_add_ons_total": float(year_1["add_ons"].sum()),
         "cap_warnings": [f"deck occupancy {w}" for w in deck_warnings]

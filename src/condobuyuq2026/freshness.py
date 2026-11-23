@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -97,18 +96,12 @@ def _run_build_script(script_path: Path) -> None:
     subprocess.run([sys.executable, str(script_path)], check=True, cwd=REPO_ROOT)
 
 
-def refresh_stale_forecast_models(
-    deck: dict[str, Any] | None = None,
-    today: date | None = None,
-    run_build_script: Callable[[Path], None] = _run_build_script,
-) -> list[str]:
+def refresh_stale_forecast_models(deck: dict[str, Any] | None = None, today: date | None = None) -> list[str]:
     """Checks every forecast_models entry (general/home_price/market) for staleness (see
     is_forecast_model_stale) and re-runs its build script (see FORECAST_MODEL_BUILD_SCRIPTS) for
     each one that is -- printing a message either way (see reporting.print_forecast_model_refresh/
     print_forecast_model_up_to_date) so it's visible whether or not a refresh happened.
-    run_build_script is injectable so a test can verify which entries WOULD be refreshed without
-    actually invoking the real script (see run/tests/test_freshness.py) -- this project's standing
-    rule is that only the user runs those scripts for real.
+    Only reached when run/main.py is given --refresh.
 
     Returns the list of forecast_models keys actually refreshed (empty if everything was already
     current).
@@ -121,6 +114,6 @@ def refresh_stale_forecast_models(
             print_forecast_model_up_to_date(name, model_name)
             continue
         print_forecast_model_refresh(name, model_name, script_path)
-        run_build_script(script_path)
+        _run_build_script(script_path)
         refreshed.append(name)
     return refreshed

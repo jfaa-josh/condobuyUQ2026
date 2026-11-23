@@ -1,6 +1,6 @@
 {
   "initial_annual_average_monthly_cost": 119.0,
-  "calibration_occupied_days_by_month": "deck",
+  "calibration_occupied_days_by_month": "history",
   "components": {
     "electric": {
       "weight": 0.8,
@@ -12,7 +12,7 @@
     },
     "water": {
       "weight": 0.1,
-      "occupancy_fraction": 0.8
+      "occupancy_fraction": 1.0
     },
     "sewer": {
       "weight": 0.1,
@@ -53,68 +53,68 @@
   },
   "calibration": {
     "annual_observed_total": 1428.0,
-    "flat_pool": 305.59200000000004,
-    "occupancy_pool": 494.0880000000001,
+    "flat_pool": 277.03200000000004,
+    "occupancy_pool": 522.648,
     "heating_pool": 628.32,
-    "flat_monthly": 25.466000000000005,
-    "cost_per_occupied_day": 2.349154321244109,
-    "cost_per_heating_degree_day": 0.12666568351293656,
+    "flat_monthly": 23.086000000000002,
+    "cost_per_occupied_day": 4.3934767989240076,
+    "cost_per_heating_degree_day": 0.1491326655894874,
     "internal_gains_usd_per_day": {
-      "occupied": 2.0298994274042723,
+      "occupied": 3.156246895929103,
       "vacant": 0.5633753424657535
     },
-    "gains_offset_occupied_f": 16.025646182195473,
-    "gains_offset_vacant_f": 4.447734594257449,
-    "balance_point_occupied_f": 51.97435381780453,
-    "balance_point_vacant_f": 45.55226540574255,
+    "gains_offset_occupied_f": 21.164021198529383,
+    "gains_offset_vacant_f": 3.7776790231627637,
+    "balance_point_occupied_f": 46.83597880147062,
+    "balance_point_vacant_f": 46.22232097683724,
     "hdd_per_day": {
       "jan": {
-        "occupied": 32.47435625454882,
-        "vacant": 26.052431125303247
+        "occupied": 27.336054647375885,
+        "vacant": 26.722431602881855
       },
       "feb": {
-        "occupied": 29.974367630626045,
-        "vacant": 23.552961116900143
+        "occupied": 24.836316666655847,
+        "vacant": 24.222799975513098
       },
       "mar": {
-        "occupied": 24.474769191456033,
-        "vacant": 18.063222754319614
+        "occupied": 19.342021848198588,
+        "vacant": 18.730381768098788
       },
       "apr": {
-        "occupied": 17.488542858273686,
-        "vacant": 11.223229810684886
+        "occupied": 12.44579635475971,
+        "vacant": 11.858469011064644
       },
       "may": {
-        "occupied": 8.858591460592692,
-        "vacant": 3.937895059264601
+        "occupied": 4.771840561490981,
+        "vacant": 4.362318296698308
       },
       "jun": {
-        "occupied": 1.8958892050611986,
-        "vacant": 0.387255869895598
+        "occupied": 0.5576468181757186,
+        "vacant": 0.46989167577315105
       },
       "jul": {
-        "occupied": 0.5791507465819847,
-        "vacant": 0.07323896391595974
+        "occupied": 0.11670668269663853,
+        "vacant": 0.09372036499180986
       },
       "aug": {
-        "occupied": 1.0938999437070973,
-        "vacant": 0.1770317141639245
+        "occupied": 0.26785774098823334,
+        "vacant": 0.22046476596814213
       },
       "sep": {
-        "occupied": 3.591486930892218,
-        "vacant": 0.9886563413140166
+        "occupied": 1.334643082474079,
+        "vacant": 1.159548712249673
       },
       "oct": {
-        "occupied": 12.099091656675533,
-        "vacant": 6.403876109364573
+        "occupied": 7.445678532544708,
+        "vacant": 6.939751612072744
       },
       "nov": {
-        "occupied": 22.97530742439769,
-        "vacant": 16.57344032816824
+        "occupied": 17.848057263669155,
+        "vacant": 17.23817402734542
       },
       "dec": {
-        "occupied": 31.474358765181258,
-        "vacant": 25.052563667146245
+        "occupied": 26.336118598849758,
+        "vacant": 25.722522567909554
       }
     },
     "pools_by_component": {
@@ -130,8 +130,8 @@
       },
       "water": {
         "heating": 0.0,
-        "occupancy": 114.24000000000001,
-        "flat": 28.559999999999995
+        "occupancy": 142.8,
+        "flat": 0.0
       },
       "sewer": {
         "heating": 0.0,
@@ -151,175 +151,175 @@
     }
   },
   "calibration_occupied_days": {
-    "jan": 29.246123257772354,
-    "feb": 20.223748416156685,
-    "mar": 20.223748416156685,
-    "apr": 10.307764064044152,
-    "may": 9.276987657639737,
-    "jun": 18.297058540778355,
-    "jul": 25.356470248934027,
-    "aug": 17.33666634621547,
-    "sep": 10.307764064044152,
-    "oct": 9.276987657639737,
-    "nov": 12.237646832622683,
-    "dec": 28.234935836964517
+    "jan": 7.998,
+    "feb": 18.004,
+    "mar": 11.994,
+    "apr": 0.0,
+    "may": 4.0,
+    "jun": 7.989,
+    "jul": 16.0,
+    "aug": 14.0,
+    "sep": 6.99,
+    "oct": 7.99,
+    "nov": 12.99,
+    "dec": 11.004999999999999
   },
   "year_1_by_calendar_month": {
     "jan": {
-      "flat": 25.466000000000005,
-      "occupancy": 68.70365683063376,
-      "heating": 126.0883133047924,
-      "heating_occupied": 120.30060951076644,
-      "heating_vacant": 5.787703794025958,
+      "flat": 23.086000000000002,
+      "occupancy": 70.12020083332068,
+      "heating": 125.00133701049108,
+      "heating_occupied": 65.06439988232354,
+      "heating_vacant": 59.93693712816754,
       "add_ons": 0,
-      "total": 220.25797013542615,
-      "occupied_days": 29.246123257772354,
-      "hdd_occupied_per_day": 32.47435625454882,
-      "hdd_vacant_per_day": 26.052431125303247,
-      "heating_weight": 995.4417787665024
+      "total": 218.20753784381176,
+      "occupied_days": 15.960070814643563,
+      "hdd_occupied_per_day": 27.336054647375885,
+      "hdd_vacant_per_day": 26.722431602881855,
+      "heating_weight": 838.1888469329594
     },
     "feb": {
-      "flat": 25.466000000000005,
-      "occupancy": 47.508705983568184,
-      "heating": 99.98328128713642,
-      "heating_occupied": 76.78398620476075,
-      "heating_vacant": 23.19929508237567,
+      "flat": 23.086000000000002,
+      "occupancy": 78.66789714469806,
+      "heating": 102.78578129082597,
+      "heating_occupied": 66.32071092376452,
+      "heating_vacant": 36.46507036706144,
       "add_ons": 0,
-      "total": 172.95798727070462,
-      "occupied_days": 20.223748416156685,
-      "hdd_occupied_per_day": 29.974367630626045,
-      "hdd_vacant_per_day": 23.552961116900143,
-      "heating_weight": 789.3478210846664
+      "total": 204.53967843552402,
+      "occupied_days": 17.90561342305583,
+      "hdd_occupied_per_day": 24.836316666655847,
+      "hdd_vacant_per_day": 24.222799975513098,
+      "heating_weight": 689.2237920145611
     },
     "mar": {
-      "flat": 25.466000000000005,
-      "occupancy": 47.508705983568184,
-      "heating": 87.35187360723594,
-      "heating_occupied": 62.695912825241244,
-      "heating_vacant": 24.6559607819947,
+      "flat": 23.086000000000002,
+      "occupancy": 55.12464978275769,
+      "heating": 87.73713934796508,
+      "heating_occupied": 36.19196439672243,
+      "heating_vacant": 51.54517495124265,
       "add_ons": 0,
-      "total": 160.32657959080413,
-      "occupied_days": 20.223748416156685,
-      "hdd_occupied_per_day": 24.474769191456033,
-      "hdd_vacant_per_day": 18.063222754319614,
-      "heating_weight": 689.6254074870608
+      "total": 165.94778913072278,
+      "occupied_days": 12.546930894515727,
+      "hdd_occupied_per_day": 19.342021848198588,
+      "hdd_vacant_per_day": 18.730381768098788,
+      "heating_weight": 588.3160406283907
     },
     "apr": {
-      "flat": 25.466000000000005,
-      "occupancy": 24.214528493414058,
-      "heating": 50.82818546209171,
-      "heating_occupied": 22.83374075928716,
-      "heating_vacant": 27.99444470280455,
+      "flat": 23.086000000000002,
+      "occupancy": 8.039364446635455,
+      "heating": 53.214828022449616,
+      "heating_occupied": 3.396321939531846,
+      "heating_vacant": 49.81850608291777,
       "add_ons": 0,
-      "total": 100.50871395550577,
-      "occupied_days": 10.307764064044152,
-      "hdd_occupied_per_day": 17.488542858273686,
-      "hdd_vacant_per_day": 11.223229810684886,
-      "heating_weight": 401.27826300246943
+      "total": 84.34019246908508,
+      "occupied_days": 1.8298411063885325,
+      "hdd_occupied_per_day": 12.44579635475971,
+      "hdd_vacant_per_day": 11.858469011064644,
+      "heating_weight": 356.82878604833854
     },
     "may": {
-      "flat": 25.466000000000005,
-      "occupancy": 21.79307564407265,
-      "heating": 21.244873406650235,
-      "heating_occupied": 10.409518064972612,
-      "heating_vacant": 10.835355341677623,
+      "flat": 23.086000000000002,
+      "occupancy": 5.544910597318443,
+      "heating": 20.244567905590255,
+      "heating_occupied": 0.8981418138300865,
+      "heating_vacant": 19.34642609176017,
       "add_ons": 0,
-      "total": 68.5039490507229,
-      "occupied_days": 9.276987657639737,
-      "hdd_occupied_per_day": 8.858591460592692,
-      "hdd_vacant_per_day": 3.937895059264601,
-      "heating_weight": 167.7239866193156
+      "total": 48.875478502908706,
+      "occupied_days": 1.2620780423095508,
+      "hdd_occupied_per_day": 4.771840561490981,
+      "hdd_vacant_per_day": 4.362318296698308,
+      "heating_weight": 135.74871625587926
     },
     "jun": {
-      "flat": 25.466000000000005,
-      "occupancy": 42.98261413712591,
-      "heating": 4.967983722118121,
-      "heating_occupied": 4.393930692953484,
-      "heating_vacant": 0.5740530291646371,
+      "flat": 23.086000000000002,
+      "occupancy": 47.28470196584881,
+      "heating": 2.2431362113628865,
+      "heating_occupied": 0.8950438808001615,
+      "heating_vacant": 1.348092330562725,
       "add_ons": 0,
-      "total": 73.41659785924404,
-      "occupied_days": 18.297058540778355,
-      "hdd_occupied_per_day": 1.8958892050611986,
-      "hdd_vacant_per_day": 0.387255869895598,
-      "heating_weight": 39.22122854696263
+      "total": 72.61383817721169,
+      "occupied_days": 10.762479041070424,
+      "hdd_occupied_per_day": 0.5576468181757186,
+      "hdd_vacant_per_day": 0.46989167577315105,
+      "heating_weight": 15.041213154048314
     },
     "jul": {
-      "flat": 25.466000000000005,
-      "occupancy": 59.56626165678106,
-      "heating": 1.912467515781675,
-      "heating_occupied": 1.8601132610506583,
-      "heating_vacant": 0.052354254731016736,
+      "flat": 23.086000000000002,
+      "occupancy": 77.02270443443767,
+      "heating": 0.4933767783244123,
+      "heating_occupied": 0.30512580026582675,
+      "heating_vacant": 0.18825097805858554,
       "add_ons": 0,
-      "total": 86.94472917256273,
-      "occupied_days": 25.356470248934027,
-      "hdd_occupied_per_day": 0.5791507465819847,
-      "hdd_vacant_per_day": 0.07323896391595974,
-      "heating_weight": 15.098544947150993
+      "total": 100.60208121276209,
+      "occupied_days": 17.531150831000417,
+      "hdd_occupied_per_day": 0.11670668269663853,
+      "hdd_vacant_per_day": 0.09372036499180986,
+      "heating_weight": 3.3083079174787526
     },
     "aug": {
-      "flat": 25.466000000000005,
-      "occupancy": 40.72650466317939,
-      "heating": 2.7085457277706553,
-      "heating_occupied": 2.4021612779952832,
-      "heating_vacant": 0.30638444977537205,
+      "flat": 23.086000000000002,
+      "occupancy": 52.10746037254332,
+      "heating": 1.1030593634335049,
+      "heating_occupied": 0.4737710854450015,
+      "heating_vacant": 0.6292882779885034,
       "add_ons": 0,
-      "total": 68.90105039095005,
-      "occupied_days": 17.33666634621547,
-      "hdd_occupied_per_day": 1.0938999437070973,
-      "hdd_vacant_per_day": 0.1770317141639245,
-      "heating_weight": 21.383421718116946
+      "total": 76.29651973597683,
+      "occupied_days": 11.860187900686034,
+      "hdd_occupied_per_day": 0.26785774098823334,
+      "hdd_vacant_per_day": 0.22046476596814213,
+      "heating_weight": 7.396497333923207
     },
     "sep": {
-      "flat": 25.466000000000005,
-      "occupancy": 24.214528493414058,
-      "heating": 7.1552246176021335,
-      "heating_occupied": 4.689188926998793,
-      "heating_vacant": 2.4660356906033405,
+      "flat": 23.086000000000002,
+      "occupancy": 37.304001859393125,
+      "heating": 5.409511165199951,
+      "heating_occupied": 1.6899933943157082,
+      "heating_vacant": 3.7195177708842424,
       "add_ons": 0,
-      "total": 56.83575311101619,
-      "occupied_days": 10.307764064044152,
-      "hdd_occupied_per_day": 3.591486930892218,
-      "hdd_vacant_per_day": 0.9886563413140166,
-      "heating_weight": 56.48905385546954
+      "total": 65.79951302459307,
+      "occupied_days": 8.490770195606617,
+      "hdd_occupied_per_day": 1.334643082474079,
+      "hdd_vacant_per_day": 1.159548712249673,
+      "heating_weight": 36.27314742761009
     },
     "oct": {
-      "flat": 25.466000000000005,
-      "occupancy": 21.79307564407265,
-      "heating": 31.838002685622204,
-      "heating_occupied": 14.217352016987231,
-      "heating_vacant": 17.620650668634973,
+      "flat": 23.086000000000002,
+      "occupancy": 31.61348007115732,
+      "heating": 32.626159220996676,
+      "heating_occupied": 7.989894248745307,
+      "heating_vacant": 24.636264972251368,
       "add_ons": 0,
-      "total": 79.09707832969485,
-      "occupied_days": 9.276987657639737,
-      "hdd_occupied_per_day": 12.099091656675533,
-      "hdd_vacant_per_day": 6.403876109364573,
-      "heating_weight": 251.3546037303035
+      "total": 87.325639292154,
+      "occupied_days": 7.195549565414725,
+      "hdd_occupied_per_day": 7.445678532544708,
+      "hdd_vacant_per_day": 6.939751612072744,
+      "heating_weight": 218.77272220698873
     },
     "nov": {
-      "flat": 25.466000000000005,
-      "occupancy": 28.748120938714862,
-      "heating": 72.9020539509798,
-      "heating_occupied": 35.6137920027517,
-      "heating_vacant": 37.288261948228104,
+      "flat": 23.086000000000002,
+      "occupancy": 27.424411848145738,
+      "heating": 77.69098392906828,
+      "heating_occupied": 16.614708119590397,
+      "heating_vacant": 61.076275809477885,
       "add_ons": 0,
-      "total": 127.11617488969468,
-      "occupied_days": 12.237646832622683,
-      "hdd_occupied_per_day": 22.97530742439769,
-      "hdd_vacant_per_day": 16.57344032816824,
-      "heating_weight": 575.5469984380909
+      "total": 128.20139577721403,
+      "occupied_days": 6.242075036076704,
+      "hdd_occupied_per_day": 17.848057263669155,
+      "hdd_vacant_per_day": 17.23817402734542,
+      "heating_weight": 520.9521577447406
     },
     "dec": {
-      "flat": 25.466000000000005,
-      "occupancy": 66.32822153145536,
-      "heating": 121.33919471221866,
-      "heating_occupied": 112.56481632535323,
-      "heating_vacant": 8.774378386865422,
+      "flat": 23.086000000000002,
+      "occupancy": 75.8434370789205,
+      "heating": 120.49778402618468,
+      "heating_occupied": 67.80070638628517,
+      "heating_vacant": 52.697077639899504,
       "add_ons": 0,
-      "total": 213.13341624367402,
-      "occupied_days": 28.234935836964517,
-      "hdd_occupied_per_day": 31.474358765181258,
-      "hdd_vacant_per_day": 25.052563667146245,
-      "heating_weight": 957.9484462326855
+      "total": 219.42722110510516,
+      "occupied_days": 17.26273758802939,
+      "hdd_occupied_per_day": 26.336118598849758,
+      "hdd_vacant_per_day": 25.722522567909554,
+      "heating_weight": 807.9905468723732
     }
   },
   "cap_warnings": [],
@@ -329,7 +329,7 @@
       "end_month": 1,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 83.22189157337912,
+      "projected_value": 91.87956165024752,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -337,7 +337,7 @@
       "end_month": 2,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 133.74512367950925,
+      "projected_value": 134.88693747265407,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -345,7 +345,7 @@
       "end_month": 3,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 224.24805608320312,
+      "projected_value": 230.8700749595361,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -353,7 +353,7 @@
       "end_month": 4,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 231.744146507892,
+      "projected_value": 229.58678674878666,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -361,7 +361,7 @@
       "end_month": 5,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 181.9775289726305,
+      "projected_value": 215.20616564701226,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -369,7 +369,7 @@
       "end_month": 6,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 168.68740925450206,
+      "projected_value": 174.60175780847044,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -377,7 +377,7 @@
       "end_month": 7,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 105.7501170918047,
+      "projected_value": 88.7384275267858,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -385,7 +385,7 @@
       "end_month": 8,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 72.07634391354317,
+      "projected_value": 51.42427329125575,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -393,7 +393,7 @@
       "end_month": 9,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 77.24518118432955,
+      "projected_value": 76.40055859360491,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -401,7 +401,7 @@
       "end_month": 10,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 91.47878754656074,
+      "projected_value": 105.84835333420422,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -409,15 +409,15 @@
       "end_month": 11,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 72.49415358967657,
-      "growth_sigma": 0.027175269480138438
+      "projected_value": 80.27528736810348,
+      "growth_sigma": 0.027175269480138604
     },
     {
       "start_month": 11,
       "end_month": 12,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 59.79966621751429,
+      "projected_value": 69.23087494697047,
       "growth_sigma": 0.027175269480138604
     },
     {
@@ -425,7 +425,7 @@
       "end_month": 13,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 87.05870617846908,
+      "projected_value": 96.11552453674477,
       "growth_sigma": 0.04385506734346525
     },
     {
@@ -433,31 +433,31 @@
       "end_month": 14,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 139.91123255052236,
-      "growth_sigma": 0.04385506734346508
+      "projected_value": 141.10568787530033,
+      "growth_sigma": 0.04385506734346525
     },
     {
       "start_month": 14,
       "end_month": 15,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 234.58666051139525,
-      "growth_sigma": 0.04385506734346525
+      "projected_value": 241.51397716766988,
+      "growth_sigma": 0.043855067343465406
     },
     {
       "start_month": 15,
       "end_month": 16,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 242.42834641197118,
-      "growth_sigma": 0.04385506734346525
+      "projected_value": 240.17152496945923,
+      "growth_sigma": 0.043855067343465406
     },
     {
       "start_month": 16,
       "end_month": 17,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 190.36731713725942,
+      "projected_value": 225.12790791757595,
       "growth_sigma": 0.04385506734346525
     },
     {
@@ -465,15 +465,15 @@
       "end_month": 18,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 176.46447732260506,
-      "growth_sigma": 0.043855067343465406
+      "projected_value": 182.65149762774905,
+      "growth_sigma": 0.04385506734346525
     },
     {
       "start_month": 18,
       "end_month": 19,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 110.62556015224094,
+      "projected_value": 92.82957335789543,
       "growth_sigma": 0.04385506734346525
     },
     {
@@ -481,7 +481,7 @@
       "end_month": 20,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 75.39931054865183,
+      "projected_value": 53.79510864586983,
       "growth_sigma": 0.04385506734346525
     },
     {
@@ -489,7 +489,7 @@
       "end_month": 21,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 80.80644894378119,
+      "projected_value": 79.92288635505106,
       "growth_sigma": 0.04385506734346525
     },
     {
@@ -497,7 +497,7 @@
       "end_month": 22,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 95.69627337245176,
+      "projected_value": 110.72832542230928,
       "growth_sigma": 0.04385506734346525
     },
     {
@@ -505,7 +505,7 @@
       "end_month": 23,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 75.83638268370353,
+      "projected_value": 83.97625341416071,
       "growth_sigma": 0.04385506734346525
     },
     {
@@ -513,15 +513,15 @@
       "end_month": 24,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 62.55663590884315,
-      "growth_sigma": 0.043855067343465406
+      "projected_value": 72.42265570438671,
+      "growth_sigma": 0.04385506734346525
     },
     {
       "start_month": 24,
       "end_month": 25,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 91.06055737649444,
+      "projected_value": 100.53369296469846,
       "growth_sigma": 0.055871346128746335
     },
     {
@@ -529,7 +529,7 @@
       "end_month": 26,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 146.34257018666545,
+      "projected_value": 147.59193136385355,
       "growth_sigma": 0.055871346128746335
     },
     {
@@ -537,7 +537,7 @@
       "end_month": 27,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 245.36996926495988,
+      "projected_value": 252.6157157679081,
       "growth_sigma": 0.055871346128746335
     },
     {
@@ -545,23 +545,23 @@
       "end_month": 28,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 253.57211607166766,
-      "growth_sigma": 0.055871346128746335
+      "projected_value": 251.21155470480016,
+      "growth_sigma": 0.0558713461287465
     },
     {
       "start_month": 28,
       "end_month": 29,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 199.11798332093656,
-      "growth_sigma": 0.0558713461287465
+      "projected_value": 235.47642362101408,
+      "growth_sigma": 0.055871346128746335
     },
     {
       "start_month": 29,
       "end_month": 30,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 184.57606789155653,
+      "projected_value": 191.0474886398864,
       "growth_sigma": 0.055871346128746335
     },
     {
@@ -569,15 +569,15 @@
       "end_month": 31,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 115.71071532925367,
-      "growth_sigma": 0.055871346128746335
+      "projected_value": 97.09669557532106,
+      "growth_sigma": 0.0558713461287465
     },
     {
       "start_month": 31,
       "end_month": 32,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 78.8652111402693,
+      "projected_value": 56.26792301943814,
       "growth_sigma": 0.055871346128746335
     },
     {
@@ -585,7 +585,7 @@
       "end_month": 33,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 84.52090093495748,
+      "projected_value": 83.59672338467495,
       "growth_sigma": 0.055871346128746335
     },
     {
@@ -593,7 +593,7 @@
       "end_month": 34,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 100.09516996823898,
+      "projected_value": 115.81820443840934,
       "growth_sigma": 0.055871346128746335
     },
     {
@@ -601,31 +601,31 @@
       "end_month": 35,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 79.32237428889172,
-      "growth_sigma": 0.055871346128746335
+      "projected_value": 87.83641266856337,
+      "growth_sigma": 0.0558713461287465
     },
     {
       "start_month": 35,
       "end_month": 36,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 65.43219378634069,
-      "growth_sigma": 0.055871346128746335
+      "projected_value": 75.7517275941141,
+      "growth_sigma": 0.0558713461287465
     },
     {
       "start_month": 36,
       "end_month": 37,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 95.24608269805569,
-      "growth_sigma": 0.06572865427720331
+      "projected_value": 105.15464334867256,
+      "growth_sigma": 0.06572865427720345
     },
     {
       "start_month": 37,
       "end_month": 38,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 153.06908878907356,
+      "projected_value": 154.37587584848282,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -633,7 +633,7 @@
       "end_month": 39,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 256.64820266367497,
+      "projected_value": 264.2269940802,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -641,7 +641,7 @@
       "end_month": 40,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 265.2273545551276,
+      "projected_value": 262.7582918825491,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -649,7 +649,7 @@
       "end_month": 41,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 208.27028136499752,
+      "projected_value": 246.29990814704718,
       "growth_sigma": 0.06572865427720331
     },
     {
@@ -657,7 +657,7 @@
       "end_month": 42,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 193.0599584823002,
+      "projected_value": 199.8288328833309,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -665,7 +665,7 @@
       "end_month": 43,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 121.02926534629509,
+      "projected_value": 101.55966713709337,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -673,15 +673,15 @@
       "end_month": 44,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 82.4901871752071,
-      "growth_sigma": 0.06572865427720331
+      "projected_value": 58.8542328705385,
+      "growth_sigma": 0.06572865427720345
     },
     {
       "start_month": 44,
       "end_month": 45,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 88.40583620503031,
+      "projected_value": 87.43917957654125,
       "growth_sigma": 0.06572865427720331
     },
     {
@@ -689,7 +689,7 @@
       "end_month": 46,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 104.69596399518379,
+      "projected_value": 121.1416951059489,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -697,7 +697,7 @@
       "end_month": 47,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 82.96836346046926,
+      "projected_value": 91.87374277032568,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -705,7 +705,7 @@
       "end_month": 48,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 68.43973197662113,
+      "projected_value": 79.23359486059996,
       "growth_sigma": 0.06572865427720345
     },
     {
@@ -713,7 +713,7 @@
       "end_month": 49,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 99.62398570943014,
+      "projected_value": 109.98798469705706,
       "growth_sigma": 0.07428937765848907
     },
     {
@@ -721,15 +721,15 @@
       "end_month": 50,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 160.10477577771766,
-      "growth_sigma": 0.07428937765848924
+      "projected_value": 161.47162816307582,
+      "growth_sigma": 0.07428937765848907
     },
     {
       "start_month": 50,
       "end_month": 51,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 268.44481316436156,
+      "projected_value": 276.37195710967416,
       "growth_sigma": 0.07428937765848924
     },
     {
@@ -737,23 +737,23 @@
       "end_month": 52,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 277.41829828020195,
-      "growth_sigma": 0.07428937765848907
+      "projected_value": 274.8357472981481,
+      "growth_sigma": 0.07428937765848924
     },
     {
       "start_month": 52,
       "end_month": 53,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 217.84324296235926,
-      "growth_sigma": 0.07428937765848924
+      "projected_value": 257.62086832759877,
+      "growth_sigma": 0.07428937765848907
     },
     {
       "start_month": 53,
       "end_month": 54,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 201.93379087176334,
+      "projected_value": 209.01379067327724,
       "growth_sigma": 0.07428937765848907
     },
     {
@@ -761,15 +761,15 @@
       "end_month": 55,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 126.59226983125329,
-      "growth_sigma": 0.07428937765848924
+      "projected_value": 106.22776854345962,
+      "growth_sigma": 0.07428937765848907
     },
     {
       "start_month": 55,
       "end_month": 56,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 86.28177658878992,
+      "projected_value": 61.55941628614289,
       "growth_sigma": 0.07428937765848907
     },
     {
@@ -777,7 +777,7 @@
       "end_month": 57,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 92.46933326004336,
+      "projected_value": 91.45824510382162,
       "growth_sigma": 0.07428937765848924
     },
     {
@@ -785,15 +785,15 @@
       "end_month": 58,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 109.50822254765677,
-      "growth_sigma": 0.07428937765848907
+      "projected_value": 126.70986732662298,
+      "growth_sigma": 0.07428937765848924
     },
     {
       "start_month": 58,
       "end_month": 59,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 86.7819318294056,
+      "projected_value": 96.09663912203739,
       "growth_sigma": 0.07428937765848924
     },
     {
@@ -801,23 +801,23 @@
       "end_month": 60,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 71.58550448747556,
-      "growth_sigma": 0.07428937765848924
+      "projected_value": 82.8754978524731,
+      "growth_sigma": 0.07428937765848907
     },
     {
       "start_month": 60,
       "end_month": 61,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 104.20311505308733,
-      "growth_sigma": 0.08196076762703614
+      "projected_value": 115.04348618687887,
+      "growth_sigma": 0.08196076762703629
     },
     {
       "start_month": 61,
       "end_month": 62,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 167.46385172316042,
+      "projected_value": 168.89353028257364,
       "growth_sigma": 0.08196076762703629
     },
     {
@@ -825,39 +825,39 @@
       "end_month": 63,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 280.7836441432665,
-      "growth_sigma": 0.08196076762703614
+      "projected_value": 289.07515232469035,
+      "growth_sigma": 0.08196076762703629
     },
     {
       "start_month": 63,
       "end_month": 64,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 290.1695876516938,
-      "growth_sigma": 0.08196076762703629
+      "projected_value": 287.4683319731836,
+      "growth_sigma": 0.08196076762703614
     },
     {
       "start_month": 64,
       "end_month": 65,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 227.85621703745647,
-      "growth_sigma": 0.08196076762703629
+      "projected_value": 269.462186151783,
+      "growth_sigma": 0.08196076762703614
     },
     {
       "start_month": 65,
       "end_month": 66,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 211.21550090044872,
-      "growth_sigma": 0.08196076762703629
+      "projected_value": 218.6209266986574,
+      "growth_sigma": 0.08196076762703614
     },
     {
       "start_month": 66,
       "end_month": 67,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 132.41097276043743,
+      "projected_value": 111.110434987536,
       "growth_sigma": 0.08196076762703629
     },
     {
@@ -865,23 +865,23 @@
       "end_month": 68,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 90.24764296310828,
-      "growth_sigma": 0.08196076762703629
+      "projected_value": 64.38894099835888,
+      "growth_sigma": 0.08196076762703614
     },
     {
       "start_month": 68,
       "end_month": 69,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 96.71960526335872,
-      "growth_sigma": 0.08196076762703614
+      "projected_value": 95.66204332462156,
+      "growth_sigma": 0.08196076762703629
     },
     {
       "start_month": 69,
       "end_month": 70,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 114.54167219001785,
+      "projected_value": 132.53397552179757,
       "growth_sigma": 0.08196076762703614
     },
     {
@@ -889,7 +889,7 @@
       "end_month": 71,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 90.77078740178081,
+      "projected_value": 100.51363706582578,
       "growth_sigma": 0.08196076762703614
     },
     {
@@ -897,7 +897,7 @@
       "end_month": 72,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 74.87586957219705,
+      "projected_value": 86.68479760477697,
       "growth_sigma": 0.08196076762703629
     },
     {
@@ -905,15 +905,15 @@
       "end_month": 73,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 108.9927200671225,
-      "growth_sigma": 0.08897316017032603
+      "projected_value": 120.33135937562224,
+      "growth_sigma": 0.08897316017032618
     },
     {
       "start_month": 73,
       "end_month": 74,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 175.16118115015752,
+      "projected_value": 176.65657363369994,
       "growth_sigma": 0.08897316017032603
     },
     {
@@ -921,23 +921,23 @@
       "end_month": 75,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 293.68961868311123,
-      "growth_sigma": 0.08897316017032618
+      "projected_value": 302.36223878368867,
+      "growth_sigma": 0.08897316017032603
     },
     {
       "start_month": 75,
       "end_month": 76,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 303.5069788729546,
-      "growth_sigma": 0.08897316017032587
+      "projected_value": 300.68156234056397,
+      "growth_sigma": 0.08897316017032603
     },
     {
       "start_month": 76,
       "end_month": 77,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 238.3294286976424,
+      "projected_value": 281.8477797804182,
       "growth_sigma": 0.08897316017032603
     },
     {
@@ -945,7 +945,7 @@
       "end_month": 78,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 220.92383660269093,
+      "projected_value": 228.66964631855978,
       "growth_sigma": 0.08897316017032603
     },
     {
@@ -953,15 +953,15 @@
       "end_month": 79,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 138.49712727437466,
-      "growth_sigma": 0.08897316017032587
+      "projected_value": 116.21752891900637,
+      "growth_sigma": 0.08897316017032603
     },
     {
       "start_month": 79,
       "end_month": 80,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 94.39579691244795,
+      "projected_value": 67.34852233618201,
       "growth_sigma": 0.08897316017032603
     },
     {
@@ -969,7 +969,7 @@
       "end_month": 81,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 101.16523729738073,
+      "projected_value": 100.05906544941152,
       "growth_sigma": 0.08897316017032603
     },
     {
@@ -977,23 +977,23 @@
       "end_month": 82,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 119.80647993744256,
-      "growth_sigma": 0.08897316017032603
+      "projected_value": 138.62578375004313,
+      "growth_sigma": 0.08897316017032618
     },
     {
       "start_month": 82,
       "end_month": 83,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 94.94298722753457,
-      "growth_sigma": 0.08897316017032603
+      "projected_value": 105.13365845217422,
+      "growth_sigma": 0.08897316017032618
     },
     {
       "start_month": 83,
       "end_month": 84,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 78.31747340669406,
+      "projected_value": 90.66918848442529,
       "growth_sigma": 0.08897316017032603
     },
     {
@@ -1001,7 +1001,7 @@
       "end_month": 85,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 114.00247508501974,
+      "projected_value": 125.86228502892432,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1009,7 +1009,7 @@
       "end_month": 86,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 183.21231158957949,
+      "projected_value": 184.77643848027807,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1017,15 +1017,15 @@
       "end_month": 87,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 307.18880505075066,
-      "growth_sigma": 0.09547187560457922
+      "projected_value": 316.2600545463962,
+      "growth_sigma": 0.09547187560457937
     },
     {
       "start_month": 87,
       "end_month": 88,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 317.4574116123084,
+      "projected_value": 314.5021272810219,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1033,7 +1033,7 @@
       "end_month": 89,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 249.2840323683765,
+      "projected_value": 294.80266638356545,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1041,7 +1041,7 @@
       "end_month": 90,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 231.07840746129358,
+      "projected_value": 239.18024654378303,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1049,7 +1049,7 @@
       "end_month": 91,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 144.86302655553632,
+      "projected_value": 121.55936595464556,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1057,15 +1057,15 @@
       "end_month": 92,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 98.73461712869094,
-      "growth_sigma": 0.09547187560457922
+      "projected_value": 70.44413824074762,
+      "growth_sigma": 0.09547187560457937
     },
     {
       "start_month": 92,
       "end_month": 93,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 105.81520891819356,
+      "projected_value": 104.65819284904511,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1073,15 +1073,15 @@
       "end_month": 94,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 125.3132799665966,
-      "growth_sigma": 0.09547187560457922
+      "projected_value": 144.9975966135447,
+      "growth_sigma": 0.09547187560457937
     },
     {
       "start_month": 94,
       "end_month": 95,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 99.30695856786238,
+      "projected_value": 109.96603507931329,
       "growth_sigma": 0.09547187560457922
     },
     {
@@ -1089,23 +1089,23 @@
       "end_month": 96,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 81.9172675502533,
-      "growth_sigma": 0.09547187560457937
+      "projected_value": 94.83671840476111,
+      "growth_sigma": 0.09547187560457922
     },
     {
       "start_month": 96,
       "end_month": 97,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 119.24249910917415,
-      "growth_sigma": 0.10155557509176832
+      "projected_value": 131.64743484075674,
+      "growth_sigma": 0.10155557509176848
     },
     {
       "start_month": 97,
       "end_month": 98,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 191.63350519554544,
+      "projected_value": 193.26952581028794,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1113,7 +1113,7 @@
       "end_month": 99,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 321.30846970905543,
+      "projected_value": 330.7966712511441,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1121,7 +1121,7 @@
       "end_month": 100,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 332.04906378699843,
+      "projected_value": 328.9579423970639,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1129,7 +1129,7 @@
       "end_month": 101,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 260.7421548124218,
+      "projected_value": 308.3530130149225,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1137,7 +1137,7 @@
       "end_month": 102,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 241.69972428496342,
+      "projected_value": 250.17395731241254,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1145,15 +1145,15 @@
       "end_month": 103,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 151.52152882749687,
-      "growth_sigma": 0.10155557509176848
+      "projected_value": 127.14673585594186,
+      "growth_sigma": 0.10155557509176832
     },
     {
       "start_month": 103,
       "end_month": 104,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 103.2728674200481,
+      "projected_value": 73.68204142194686,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1161,15 +1161,15 @@
       "end_month": 105,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 110.67891241619868,
-      "growth_sigma": 0.10155557509176848
+      "projected_value": 109.46871511572917,
+      "growth_sigma": 0.10155557509176832
     },
     {
       "start_month": 105,
       "end_month": 106,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 131.07319524107504,
+      "projected_value": 151.66228428048348,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1177,15 +1177,15 @@
       "end_month": 107,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 103.87151603271766,
-      "growth_sigma": 0.10155557509176848
+      "projected_value": 115.02052767017044,
+      "growth_sigma": 0.10155557509176832
     },
     {
       "start_month": 107,
       "end_month": 108,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 85.68252308208532,
+      "projected_value": 99.19580519162523,
       "growth_sigma": 0.10155557509176832
     },
     {
@@ -1193,7 +1193,7 @@
       "end_month": 109,
       "calendar_month": "oct",
       "known_value": 0.0,
-      "projected_value": 124.72337625299313,
+      "projected_value": 137.69849400214252,
       "growth_sigma": 0.10729487701182851
     },
     {
@@ -1201,23 +1201,23 @@
       "end_month": 110,
       "calendar_month": "nov",
       "known_value": 0.0,
-      "projected_value": 200.44177159773267,
-      "growth_sigma": 0.10729487701182866
+      "projected_value": 202.15299046864348,
+      "growth_sigma": 0.10729487701182851
     },
     {
       "start_month": 110,
       "end_month": 111,
       "calendar_month": "dec",
       "known_value": 0.0,
-      "projected_value": 336.0771323997917,
-      "growth_sigma": 0.10729487701182866
+      "projected_value": 346.0014508243383,
+      "growth_sigma": 0.10729487701182851
     },
     {
       "start_month": 111,
       "end_month": 112,
       "calendar_month": "jan",
       "known_value": 0.0,
-      "projected_value": 347.311408487359,
+      "projected_value": 344.07820640722224,
       "growth_sigma": 0.10729487701182851
     },
     {
@@ -1225,7 +1225,7 @@
       "end_month": 113,
       "calendar_month": "feb",
       "known_value": 0.0,
-      "projected_value": 272.7269398296587,
+      "projected_value": 322.5261894737106,
       "growth_sigma": 0.10729487701182851
     },
     {
@@ -1233,7 +1233,7 @@
       "end_month": 114,
       "calendar_month": "mar",
       "known_value": 0.0,
-      "projected_value": 252.80924064362287,
+      "projected_value": 261.67298437789657,
       "growth_sigma": 0.10729487701182851
     },
     {
@@ -1241,7 +1241,7 @@
       "end_month": 115,
       "calendar_month": "apr",
       "known_value": 0.0,
-      "projected_value": 158.48608333072636,
+      "projected_value": 132.99092432624545,
       "growth_sigma": 0.10729487701182851
     },
     {
@@ -1249,7 +1249,7 @@
       "end_month": 116,
       "calendar_month": "may",
       "known_value": 0.0,
-      "projected_value": 108.0197144154382,
+      "projected_value": 77.06877198996128,
       "growth_sigma": 0.10729487701182851
     },
     {
@@ -1257,7 +1257,7 @@
       "end_month": 117,
       "calendar_month": "jun",
       "known_value": 0.0,
-      "projected_value": 115.76617179013456,
+      "projected_value": 114.50034882957567,
       "growth_sigma": 0.10729487701182851
     },
     {
@@ -1265,7 +1265,7 @@
       "end_month": 118,
       "calendar_month": "jul",
       "known_value": 0.0,
-      "projected_value": 137.09785998167555,
+      "projected_value": 158.6333084849596,
       "growth_sigma": 0.10729487701182866
     },
     {
@@ -1273,16 +1273,16 @@
       "end_month": 119,
       "calendar_month": "aug",
       "known_value": 0.0,
-      "projected_value": 108.64587938781904,
-      "growth_sigma": 0.10729487701182866
+      "projected_value": 120.30734559068594,
+      "growth_sigma": 0.10729487701182851
     },
     {
       "start_month": 119,
       "end_month": 120,
       "calendar_month": "sep",
       "known_value": 0.0,
-      "projected_value": 89.62084529013785,
-      "growth_sigma": 0.10729487701182851
+      "projected_value": 103.75525358879212,
+      "growth_sigma": 0.10729487701182866
     }
   ]
 }

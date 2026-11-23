@@ -31,20 +31,13 @@ see compute_owner_tax_schedule's own comment; property_tax uses
 Colorado's REAL two-step assessment/mill-levy mechanic, and the other four are each projected from
 their own pre-built carrying_cost_prior model, both real, not placeholders, as of 2026-09-26).
 
-===========================================================================================
-*** ONE REMAINING PLACEHOLDER INPUT -- READ THIS BEFORE TRUSTING gross_rent-DERIVED FIGURES ***
-===========================================================================================
-A real rental-revenue model (rental_operations.adr x occupancy, with actual growth propagation)
-DOESN'T EXIST YET. `gross_rent` (placeholder_gross_rent) is a flat, UN-GROWN estimate taken
-directly off the deck's own ADR/occupancy medians (ignoring cv and growth entirely), applied
-identically to every year of the horizon -- see PLACEHOLDER_FIELDS, echoed back in every
-compute_owner_taxes result and printed loudly by reporting.print_taxes_report. `direct_rental_
-expenses` is REAL logic despite depending on this placeholder: mgmt_fee_fraction * gross_rent won't
-change once gross_rent itself is real -- only the number it's fed will.
-
-(As of 2026-09-25 this section also covered property_tax/shared_expenses -- both are now REAL,
-built via carrying_costs.py; see .claude/implementation-plan.md's "Backend build progress" for
-that history and the still-open TODO on gross_rent.)
+gross_rent (REAL since 2026-11-22, section 7 build step 4; was this module's last placeholder): each
+year's EXPECTED (mean) gross rental revenue from scenario["rental_operations"]
+(rental_operations.compute_rental_operations -- fitted occupancy x ADR, grown by the `adr` latent),
+BEFORE lodging tax (guest-paid pass-through, never the owner's income) and before fees.
+direct_rental_expenses = total fee fraction x gross_rent, with total fee fraction = 1 - (1 -
+channel_commission_fraction) x (1 - mgmt_fee_fraction). Taxes stay POINT estimates on these means:
+propagating revenue uncertainty through the nonlinear tax rules is a later (ΔW-stage) concern.
 """
 
 from __future__ import annotations
@@ -58,32 +51,22 @@ from condobuyuq2026.input_deck import (
     get_acquisition_inputs,
     get_exit_inputs,
     get_rental_operations_inputs,
-    get_rental_operations_monthly_medians,
     get_taxes_inputs,
     load_deck,
 )
+from condobuyuq2026.rental_operations import compute_rental_operations
 
 # Statutory day-count threshold this module itself owns (a WARNING only, doesn't affect any tax
 # math below) -- kept as a module constant rather than a deck field, the same precedent
 # classification.py already set for its own day-count thresholds (14 days, 10% of rented days).
 CO_STATUTORY_RESIDENCY_DAYS = 183
 
-PLACEHOLDER_FIELDS = {
-    "gross_rent": (
-        "flat, un-grown ADR x occupancy month-by-month sum from deck medians only -- needs the "
-        "real rental revenue model (growth, cv, actual per-year variation)."
-    ),
-}
 
-
-def placeholder_gross_rent(deck: dict[str, Any] | None = None) -> float:
-    """PLACEHOLDER (see module docstring) -- ADR x occupancy, multiplied MONTH BY MONTH (not
-    annual-total x annual-total, so the seasonal correlation between high-ADR and high-occupancy
-    months, e.g. ski season, is at least preserved) then summed, using only each month's MEDIAN
-    (ignoring cv and growth entirely). Replace with a real revenue model's output once it exists."""
-    deck = deck if deck is not None else load_deck()
-    medians = get_rental_operations_monthly_medians(deck)
-    return sum(medians["adr"][month] * medians["occupancy"][month] for month in medians["adr"])
+def gross_rent_by_year(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.Series:
+    """Expected (mean) gross rental revenue per scenario year, pre-lodging-tax, from
+    scenario["rental_operations"] (computed here if runner hasn't stored it yet)."""
+    rental_operations = scenario.get("rental_operations") or compute_rental_operations(scenario, deck)
+    return rental_operations["annual"]["gross_mean"]
 
 
 def estimate_sale_proceeds(
@@ -119,10 +102,10 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
 
     tax_use_class is read from scenario["classification"] (never recomputed -- see module
     docstring) and held CONSTANT across every year, matching classification.py's own annual
-    (not year-varying) day-count assumption. gross_rent is a PLACEHOLDER (see module docstring)
-    held flat across every year for that reason; mortgage_interest, property_tax, and
-    shared_expenses are all real and DO vary year to year (the amortization schedule, the condo's
-    own projected appreciation, and carrying_costs.py's own per-year schedule, respectively).
+    (not year-varying) day-count assumption. gross_rent (expected, per year, see gross_rent_by_year),
+    mortgage_interest, property_tax, and shared_expenses all vary year to year (the rental projection's
+    ADR growth, the amortization schedule, the condo's own projected appreciation, and carrying_costs.py's
+    own per-year schedule, respectively).
 
     Returns a DataFrame indexed by year (1..horizon_years) with columns: use_class, mortgage_
     interest, property_tax, gross_rent, shared_expenses, direct_rental_expenses, taxable_rental,
@@ -164,8 +147,10 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
     shared_expenses_by_year = carrying_costs_schedule[["hoa_dues", "insurance", "maintenance", "utilities"]].sum(axis=1)
 
     mortgage_interest_by_year = _annual_mortgage_interest(scenario, horizon_years)
-    gross_rent = placeholder_gross_rent(deck)  # PLACEHOLDER -- flat every year, see module docstring
-    direct_rental_expenses = rental_operations_inputs["mgmt_fee_fraction"] * gross_rent  # REAL formula
+    gross_rent_schedule = gross_rent_by_year(scenario, deck)
+    total_fee_fraction = 1 - (1 - rental_operations_inputs["channel_commission_fraction"]) * (
+        1 - rental_operations_inputs["mgmt_fee_fraction"]
+    )
 
     depr_taken, suspended_passive, carry_280a, carry_280a_depr = 0.0, 0.0, 0.0, 0.0
     rows = []
@@ -173,6 +158,8 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
         mortgage_interest = mortgage_interest_by_year[year - 1]
         property_tax = property_tax_by_year.loc[year]  # REAL -- Colorado's own assessment/mill-levy mechanic
         shared_expenses = shared_expenses_by_year.loc[year]  # REAL -- carrying_costs.py's own per-year schedule
+        gross_rent = float(gross_rent_schedule.loc[year])  # expected gross rent, pre-lodging-tax
+        direct_rental_expenses = total_fee_fraction * gross_rent  # channel commissions + management fee
         interest_tax = mortgage_interest + property_tax
         taxable, personal_it, depr_this_year = 0.0, interest_tax, 0.0
 
@@ -301,9 +288,7 @@ def compute_owner_taxes(scenario: dict[str, Any], deck: dict[str, Any] | None = 
     ordering). Returns {"annual_schedule" (DataFrame, see compute_owner_tax_schedule), "sale"
     (dict, see compute_owner_sale_tax), "total_tax" (annual_schedule's "tax" column summed + sale's
     "tax"), "flags" (CO statutory-residency warning if triggered -- see
-    CO_STATUTORY_RESIDENCY_DAYS; informational only, doesn't affect any number here),
-    "placeholder_fields" (PLACEHOLDER_FIELDS' keys, echoed back so a caller/print never mistakes
-    this for a fully-real result)."""
+    CO_STATUTORY_RESIDENCY_DAYS; informational only, doesn't affect any number here)."""
     deck = deck if deck is not None else load_deck()
     annual_schedule = compute_owner_tax_schedule(scenario, deck)
     sale = compute_owner_sale_tax(scenario, annual_schedule, deck)
@@ -322,7 +307,6 @@ def compute_owner_taxes(scenario: dict[str, Any], deck: dict[str, Any] | None = 
         "sale": sale,
         "total_tax": annual_schedule["tax"].sum() + sale["tax"],
         "flags": flags,
-        "placeholder_fields": list(PLACEHOLDER_FIELDS.keys()),
     }
 
 

@@ -1,0 +1,581 @@
+{
+  "sources_as_entered": [
+    {
+      "label": "2025 owner statement (Vail Properties)",
+      "include": true,
+      "kind": "history",
+      "year": 2025,
+      "resolution": "monthly",
+      "months": {
+        "jan": {
+          "occupancy": 0.258,
+          "adr": 359.53
+        },
+        "feb": {
+          "occupancy": 0.643,
+          "adr": 269.22
+        },
+        "mar": {
+          "occupancy": 0.269,
+          "adr": 280.57
+        },
+        "apr": {
+          "occupancy": 0.0,
+          "adr": null
+        },
+        "may": {
+          "occupancy": 0.0,
+          "adr": null
+        },
+        "jun": {
+          "occupancy": 0.241,
+          "adr": 179.7
+        },
+        "jul": {
+          "occupancy": 0.375,
+          "adr": 211.95
+        },
+        "aug": {
+          "occupancy": 0.32,
+          "adr": 169.32
+        },
+        "sep": {
+          "occupancy": 0.233,
+          "adr": 173.43
+        },
+        "oct": {
+          "occupancy": 0.233,
+          "adr": 166.36
+        },
+        "nov": {
+          "occupancy": 0.19,
+          "adr": 176.5
+        },
+        "dec": {
+          "occupancy": 0.355,
+          "adr": 265.1
+        }
+      },
+      "owner_nights_by_month": {
+        "jan": 0.0,
+        "feb": 0.0,
+        "mar": 5.0,
+        "apr": 0.0,
+        "may": 4.0,
+        "jun": 1.0,
+        "jul": 7.0,
+        "aug": 6.0,
+        "sep": 0.0,
+        "oct": 1.0,
+        "nov": 9.0,
+        "dec": 0.0
+      }
+    },
+    {
+      "label": "Property manager projection (EXAMPLE)",
+      "include": true,
+      "kind": "estimate",
+      "year": 2026,
+      "resolution": "monthly",
+      "months": {
+        "jan": {
+          "occupancy": 0.45,
+          "adr": 340.0
+        },
+        "feb": {
+          "occupancy": 0.55,
+          "adr": 330.0
+        },
+        "mar": {
+          "occupancy": 0.5,
+          "adr": 310.0
+        },
+        "apr": {
+          "occupancy": 0.12,
+          "adr": 170.0
+        },
+        "may": {
+          "occupancy": 0.08,
+          "adr": 160.0
+        },
+        "jun": {
+          "occupancy": 0.3,
+          "adr": 190.0
+        },
+        "jul": {
+          "occupancy": 0.45,
+          "adr": 220.0
+        },
+        "aug": {
+          "occupancy": 0.4,
+          "adr": 200.0
+        },
+        "sep": {
+          "occupancy": 0.3,
+          "adr": 180.0
+        },
+        "oct": {
+          "occupancy": 0.2,
+          "adr": 165.0
+        },
+        "nov": {
+          "occupancy": 0.2,
+          "adr": 175.0
+        },
+        "dec": {
+          "occupancy": 0.45,
+          "adr": 300.0
+        }
+      },
+      "owner_nights_by_month": null
+    },
+    {
+      "label": "Regional 1b/1ba estimate (EXAMPLE)",
+      "include": true,
+      "kind": "estimate",
+      "year": 2026,
+      "resolution": "annual",
+      "occupancy": 0.35,
+      "adr": 230.0,
+      "owner_nights_by_month": null
+    }
+  ],
+  "observations_fitted": [
+    {
+      "label": "2025 owner statement (Vail Properties)",
+      "kind": "history",
+      "year": 2025,
+      "resolution": "monthly",
+      "cpi_factor": 1.0404947459643479,
+      "months": {
+        "jan": {
+          "occupancy": 0.258,
+          "adr": 374.089076016562
+        },
+        "feb": {
+          "occupancy": 0.643,
+          "adr": 280.12199550852176
+        },
+        "mar": {
+          "occupancy": 0.269,
+          "adr": 291.9316108752171
+        },
+        "apr": {
+          "occupancy": 0.0,
+          "adr": null
+        },
+        "may": {
+          "occupancy": 0.0,
+          "adr": null
+        },
+        "jun": {
+          "occupancy": 0.241,
+          "adr": 186.9769058497933
+        },
+        "jul": {
+          "occupancy": 0.375,
+          "adr": 220.5328614071435
+        },
+        "aug": {
+          "occupancy": 0.32,
+          "adr": 176.17657038668338
+        },
+        "sep": {
+          "occupancy": 0.233,
+          "adr": 180.45300379259686
+        },
+        "oct": {
+          "occupancy": 0.233,
+          "adr": 173.09670593862893
+        },
+        "nov": {
+          "occupancy": 0.19,
+          "adr": 183.6473226627074
+        },
+        "dec": {
+          "occupancy": 0.355,
+          "adr": 275.83515715514864
+        }
+      }
+    },
+    {
+      "label": "Property manager projection (EXAMPLE)",
+      "kind": "estimate",
+      "year": 2026,
+      "resolution": "monthly",
+      "cpi_factor": 1.0100243362556691,
+      "months": {
+        "jan": {
+          "occupancy": 0.45,
+          "adr": 343.4082743269275
+        },
+        "feb": {
+          "occupancy": 0.55,
+          "adr": 333.3080309643708
+        },
+        "mar": {
+          "occupancy": 0.5,
+          "adr": 313.10754423925744
+        },
+        "apr": {
+          "occupancy": 0.12,
+          "adr": 171.70413716346374
+        },
+        "may": {
+          "occupancy": 0.08,
+          "adr": 161.60389380090706
+        },
+        "jun": {
+          "occupancy": 0.3,
+          "adr": 191.90462388857713
+        },
+        "jul": {
+          "occupancy": 0.45,
+          "adr": 222.2053539762472
+        },
+        "aug": {
+          "occupancy": 0.4,
+          "adr": 202.00486725113382
+        },
+        "sep": {
+          "occupancy": 0.3,
+          "adr": 181.80438052602045
+        },
+        "oct": {
+          "occupancy": 0.2,
+          "adr": 166.6540154821854
+        },
+        "nov": {
+          "occupancy": 0.2,
+          "adr": 176.75425884474208
+        },
+        "dec": {
+          "occupancy": 0.45,
+          "adr": 303.00730087670075
+        }
+      }
+    },
+    {
+      "label": "Regional 1b/1ba estimate (EXAMPLE)",
+      "kind": "estimate",
+      "year": 2026,
+      "resolution": "annual",
+      "cpi_factor": 1.0100243362556691,
+      "months": {
+        "jan": {
+          "occupancy": 0.412116825872784,
+          "adr": 334.41655352761103
+        },
+        "feb": {
+          "occupancy": 0.7257192006907637,
+          "adr": 285.06385926488167
+        },
+        "mar": {
+          "occupancy": 0.44593697853326597,
+          "adr": 281.4986961971873
+        },
+        "apr": {
+          "occupancy": 0.06328021587628324,
+          "adr": 156.23368506467378
+        },
+        "may": {
+          "occupancy": 0.04218681058418883,
+          "adr": 147.04346829616355
+        },
+        "jun": {
+          "occupancy": 0.32149767123004896,
+          "adr": 176.36627956839033
+        },
+        "jul": {
+          "occupancy": 0.49139385653711115,
+          "adr": 206.13468682259295
+        },
+        "aug": {
+          "occupancy": 0.4277601196951727,
+          "adr": 175.81706571348522
+        },
+        "sep": {
+          "occupancy": 0.31607701956069323,
+          "adr": 168.6637626639489
+        },
+        "oct": {
+          "occupancy": 0.2633435063304572,
+          "adr": 158.26721201137514
+        },
+        "nov": {
+          "occupancy": 0.23420750360767026,
+          "adr": 167.88769876798915
+        },
+        "dec": {
+          "occupancy": 0.4778422273637219,
+          "adr": 269.23666439869237
+        }
+      }
+    }
+  ],
+  "warnings": [
+    "CPI for the closing month (2026-10) isn't in the general CPI data yet -- ADR restated to 2026-08 dollars instead"
+  ],
+  "report_ci": [
+    0.1,
+    0.9
+  ],
+  "method": "Per calendar month: plain linear mean and sample std across every included observation (occupancy: zeros included; ADR: booked months only), moment-matched to a lognormal (cv = std/mean, median = mean/sqrt(1+cv^2)). sigma_log = sqrt(ln(1+cv^2)) is year-to-year variation; level_sigma_log = sigma_log/sqrt(n) is persistent. One observation -> pooled cv. predictive_sigma combines both; predictive_median = mean x exp(-predictive_sigma^2/2) keeps the mean equal to the sources' average. Bands are year-1 predictive.",
+  "quantity": "ADR = gross rental revenue / nights rented, USD per night, before lodging tax and fees",
+  "dollars": "closing-date dollars (each source restated from its own year with the general CPI)",
+  "cpi_factors_by_year": {
+    "2025": 1.0404947459643479,
+    "2026": 1.0100243362556691
+  },
+  "seasonal_pattern": {
+    "jan": 1.43955443759663,
+    "feb": 1.2271071490762788,
+    "mar": 1.211760282239942,
+    "apr": 0.6725351728689354,
+    "may": 0.6329742803472334,
+    "jun": 0.7591994406883387,
+    "jul": 0.8873427467266652,
+    "aug": 0.7568352537673316,
+    "sep": 0.7260426119563654,
+    "oct": 0.6812888446271564,
+    "nov": 0.7227019094298228,
+    "dec": 1.158976225639655
+  },
+  "months": {
+    "jan": {
+      "n": 3,
+      "mean": 350.6379679570335,
+      "std": 20.80092816794425,
+      "cv": 0.05932309124747482,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 350.0226040067373,
+      "sigma_log": 0.05927099761699707,
+      "level_sigma_log": 0.03422012642931093,
+      "predictive_sigma": 0.06844025285862185,
+      "predictive_median": 349.8177227733596
+    },
+    "feb": {
+      "n": 3,
+      "mean": 299.4979619125914,
+      "std": 29.384453054483995,
+      "cv": 0.09811236399351479,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 298.06679692130575,
+      "sigma_log": 0.0978774788807663,
+      "level_sigma_log": 0.05650958877941233,
+      "predictive_sigma": 0.11301917755882467,
+      "predictive_median": 297.59126329430467
+    },
+    "mar": {
+      "n": 3,
+      "mean": 295.5126171038873,
+      "std": 16.105822637915804,
+      "cv": 0.05450130284032445,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 295.0746982971073,
+      "sigma_log": 0.05446089527060241,
+      "level_sigma_log": 0.03144301254479032,
+      "predictive_sigma": 0.06288602508958063,
+      "predictive_median": 294.9288696201209
+    },
+    "apr": {
+      "n": 2,
+      "mean": 163.96891111406876,
+      "std": 10.93926158707604,
+      "cv": 0.06671546156372223,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 163.605215814733,
+      "sigma_log": 0.06664140316653346,
+      "level_sigma_log": 0.047122588086842464,
+      "predictive_sigma": 0.08161871675055105,
+      "predictive_median": 163.42367079074944
+    },
+    "may": {
+      "n": 2,
+      "mean": 154.32368104853532,
+      "std": 10.295775611365691,
+      "cv": 0.06671546156372225,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 153.98137959033693,
+      "sigma_log": 0.06664140316653348,
+      "level_sigma_log": 0.047122588086842485,
+      "predictive_sigma": 0.08161871675055109,
+      "predictive_median": 153.81051368541125
+    },
+    "jun": {
+      "n": 3,
+      "mean": 185.08260310225356,
+      "std": 7.9404863344553895,
+      "cv": 0.04290239169625504,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 184.9125049527114,
+      "sigma_log": 0.04288266965566581,
+      "level_sigma_log": 0.024758320869268453,
+      "predictive_sigma": 0.049516641738536905,
+      "predictive_median": 184.8558403159284
+    },
+    "jul": {
+      "n": 3,
+      "mean": 216.29096740199455,
+      "std": 8.835260848105982,
+      "cv": 0.04084895894743918,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 216.11073732081653,
+      "sigma_log": 0.04083193380651754,
+      "level_sigma_log": 0.023574327974725886,
+      "predictive_sigma": 0.047148655949451765,
+      "predictive_median": 216.05069400691892
+    },
+    "aug": {
+      "n": 3,
+      "mean": 184.66616778376746,
+      "std": 15.01683006886774,
+      "cv": 0.08131879406547013,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 184.05860412106216,
+      "sigma_log": 0.0811848383285334,
+      "level_sigma_log": 0.04687208826309501,
+      "predictive_sigma": 0.09374417652619002,
+      "predictive_median": 183.8565274306728
+    },
+    "sep": {
+      "n": 3,
+      "mean": 176.9737156608554,
+      "std": 7.228280838277266,
+      "cv": 0.04084381011770824,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 176.8262848301597,
+      "sigma_log": 0.04082679140993293,
+      "level_sigma_log": 0.02357135901067348,
+      "predictive_sigma": 0.04714271802134696,
+      "predictive_median": 176.77716851823777
+    },
+    "oct": {
+      "n": 3,
+      "mean": 166.00597781072983,
+      "std": 7.435955698653231,
+      "cv": 0.04479330079987401,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 165.83968750737068,
+      "sigma_log": 0.044770856421147635,
+      "level_sigma_log": 0.025848466006599673,
+      "predictive_sigma": 0.051696932013199345,
+      "predictive_median": 165.78429443118688
+    },
+    "nov": {
+      "n": 3,
+      "mean": 176.09642675847954,
+      "std": 7.900379333679559,
+      "cv": 0.044863938917483644,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 175.9194727719504,
+      "sigma_log": 0.04484138826547983,
+      "level_sigma_log": 0.025889187585911307,
+      "predictive_sigma": 0.05177837517182261,
+      "predictive_median": 175.8605276332065
+    },
+    "dec": {
+      "n": 3,
+      "mean": 282.69304081018055,
+      "std": 17.89935468674537,
+      "cv": 0.06331728094701922,
+      "hard_zero": false,
+      "pooled_cv_used": false,
+      "median": 282.12806976879915,
+      "sigma_log": 0.06325395740653529,
+      "level_sigma_log": 0.03651968933597227,
+      "predictive_sigma": 0.07303937867194454,
+      "predictive_median": 281.9399971137807
+    }
+  },
+  "bands_by_month": {
+    "median": [
+      349.8177227733596,
+      297.59126329430467,
+      294.9288696201209,
+      163.42367079074944,
+      153.81051368541125,
+      184.8558403159284,
+      216.05069400691892,
+      183.8565274306728,
+      176.77716851823777,
+      165.78429443118688,
+      175.8605276332065,
+      281.9399971137807
+    ],
+    "lo": [
+      320.44239119753865,
+      257.4642927048423,
+      272.09262010600946,
+      147.1934108116693,
+      138.53497488157112,
+      173.4896858441643,
+      203.38274369928564,
+      163.04361065290564,
+      166.4132546294784,
+      155.15664633030826,
+      164.56976217657743,
+      256.74684025205505
+    ],
+    "hi": [
+      381.88592560745764,
+      343.9722031304209,
+      319.68172492702297,
+      181.44355801969047,
+      170.770407547944,
+      196.96664693716977,
+      229.50768355199082,
+      207.32626408051968,
+      187.78652805573935,
+      177.13989655032685,
+      187.92592740242463,
+      309.6052200466464
+    ],
+    "lo_outer": [
+      298.3288465545141,
+      228.78873470817956,
+      254.78993887585813,
+      135.1617903376915,
+      127.21109678841555,
+      164.74245003563541,
+      193.60672273148816,
+      147.83165282978118,
+      158.41523299890184,
+      146.99851200948493,
+      155.9034197325227,
+      237.88307437447952
+    ],
+    "hi_outer": [
+      410.19311601829213,
+      387.08444321814756,
+      341.39118098294773,
+      197.59501637257904,
+      185.97178011536855,
+      207.42487252991774,
+      241.09649562948584,
+      228.66024989782144,
+      197.26743898133878,
+      186.97081966566478,
+      198.3723335414315,
+      334.1564429564413
+    ]
+  },
+  "annual_band": {
+    "median": 243.3215760517993,
+    "lo": 221.62022344887913,
+    "hi": 267.3851027692621,
+    "lo_outer": 205.50061651676248,
+    "hi_outer": 288.94668954577736
+  }
+}

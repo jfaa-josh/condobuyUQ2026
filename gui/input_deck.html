@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
-   One narrow column: sticky section nav, then one panel per deck section (1-5 built, 6-13 placeholders).
+   One narrow column: sticky section nav, then one panel per deck section (1-7 built, 8-13 placeholders).
    Every section is rendered from the SECTIONS schema in the script below, and all values live in one
    `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
 :root {
@@ -85,7 +85,7 @@ section { display: grid; gap: 14px; }
 .field.wide { grid-column: 1 / -1; }
 .f-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
 .f-top label, .f-top .lbl { font-weight: 600; font-size: 0.9rem; }
-.f-key { color: var(--muted); }
+.f-key { color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
 .hint { color: var(--muted); font-size: 0.82rem; }
 .kind { font-family: var(--f-mono); font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .kind.sweep { border-color: var(--accent); color: var(--accent); }
@@ -161,6 +161,34 @@ td.dim { color: var(--muted); }
 .pill.bad { background: var(--bad-bg); color: var(--bad); }
 .pill.neutral { background: var(--sunk); color: var(--muted); }
 
+/* sections 6-7 editors */
+/* Single-column grids must be allowed to shrink below their widest child's min-content (wide tables scroll
+   inside .tbl-wrap instead of stretching the whole page). */
+.wrap, #sections, section, .panel, .preview, .sources, .source, .stack-sm { grid-template-columns: minmax(0, 1fr); }
+.stack-sm { display: grid; gap: 8px; }
+.inline-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.inline-row > input[type="text"] { flex: 1 1 180px; width: auto; }
+.inline-row .affix { flex: 0 1 220px; }
+.icon-btn { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 1.1rem; line-height: 1; cursor: pointer; flex: none; }
+.icon-btn:hover { color: var(--bad); border-color: var(--bad); }
+td.cell-in { padding: 4px 6px; }
+td.cell-in input { padding: 5px 8px; min-width: 84px; text-align: right; }
+td.cell-in input[type="text"] { text-align: left; min-width: 120px; }
+input:disabled { opacity: 0.55; }
+.month-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.mcell { display: grid; gap: 3px; font-family: var(--f-mono); font-size: 0.72rem; color: var(--muted); }
+.mcell input { padding: 6px 8px; }
+.sources { display: grid; gap: 14px; }
+.source { background: var(--sunk); border-radius: 10px; padding: 14px; display: grid; gap: 12px; border-left: 3px solid var(--accent); }
+.source.off { border-left-color: var(--line); opacity: 0.72; }
+.source input, .source select, .source .tbl-wrap { background: var(--surface); }
+.source-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.source-name { flex: 1 1 220px; width: auto; font-weight: 600; }
+.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 0.85rem; cursor: pointer; }
+.toggle input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.fields.compact { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+@media (max-width: 480px) { .month-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
 /* placeholders 6+ */
 .placeholder { border: 1px dashed var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 8px; background: transparent; }
 .placeholder .keys { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -184,7 +212,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   <header>
     <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
     <h1>Buy vs. Rent Input Deck</h1>
-    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–5 are editable here. Sections 6–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–7 are editable here. Sections 8–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
   </header>
 
   <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
@@ -240,6 +268,91 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       mortgage_rate: { primary_residence: 0.0625, second_home: 0.065, investment: 0.0725 },
       non_warrantable_premium: 0.0,
       loan_term_years: 30
+    },
+    carrying_costs: {
+      property_tax: {
+        market_value: {
+          initial_price: 555400,
+          reassessment_frequency_years: 2,
+          first_reassessment_year: 1,
+          latent: "home_price",
+          validation_data_source: "166_Argentine_Ct_Unit1433_keystone_mkt_value.csv"
+        },
+        assessment_rate: {
+          local: { rate: 0.068, mill_levy: 0.038219 },
+          school: { rate: 0.0705, mill_levy: 0.015343 }
+        }
+      },
+      hoa_dues_annual: { initial_annual_dues: 8700, initial_annual_association_dues: 325, growth: { latent: "construction_cost" } },
+      special_assessment: {
+        annual_rate: 0.05,
+        size_scenarios: [
+          { label: "minor", amount_today_usd: 5000, probability: 0.7 },
+          { label: "major", amount_today_usd: 20000, probability: 0.3 }
+        ],
+        growth: { latent: "construction_cost" },
+        timing: "uniform",
+        k_max: 3
+      },
+      insurance_annual: { initial_guess_premium: 1200, growth: { latent: "insurance" } },
+      utilities: {
+        initial_annual_average_monthly_cost: 119,
+        calibration_occupied_days_by_month: "history",
+        components: {
+          electric: { weight: 0.8, occupancy_fraction: 0.6 },
+          gas: { weight: 0.0, occupancy_fraction: 0.0 },
+          water: { weight: 0.1, occupancy_fraction: 1.0 },
+          sewer: { weight: 0.1, occupancy_fraction: 0.5 },
+          trash: { weight: 0.0, occupancy_fraction: 0.0 },
+          internet: { weight: 0.0, occupancy_fraction: 0.0 }
+        },
+        heating_type: 1,
+        heating_share: 0.55,
+        occupied_setpoint_f: 68,
+        vacant_setpoint_f: 50,
+        daily_temperature_std_f: 7,
+        additional_flat_monthly: [],
+        seasonal_data_source: "keystone_co_monthly_temperature_averages.csv",
+        growth: { latent: "utilities" }
+      },
+      maintenance_annual: { initial_guess_mean: 2000, growth: { latent: "maintenance" } }
+    },
+    rental_operations: {
+      managed_by: "company",
+      sources: [
+        {
+          label: "2025 owner statement (Vail Properties)", include: true, kind: "history", year: 2025, resolution: "monthly",
+          months: {
+            jan: { occupancy: 0.258, adr: 359.53 }, feb: { occupancy: 0.643, adr: 269.22 }, mar: { occupancy: 0.269, adr: 280.57 },
+            apr: { occupancy: 0.0, adr: null }, may: { occupancy: 0.0, adr: null }, jun: { occupancy: 0.241, adr: 179.70 },
+            jul: { occupancy: 0.375, adr: 211.95 }, aug: { occupancy: 0.320, adr: 169.32 }, sep: { occupancy: 0.233, adr: 173.43 },
+            oct: { occupancy: 0.233, adr: 166.36 }, nov: { occupancy: 0.190, adr: 176.50 }, dec: { occupancy: 0.355, adr: 265.10 }
+          },
+          owner_nights_by_month: { jan: 0, feb: 0, mar: 5, apr: 0, may: 4, jun: 1, jul: 7, aug: 6, sep: 0, oct: 1, nov: 9, dec: 0 }
+        },
+        {
+          label: "Property manager projection (EXAMPLE)", include: true, kind: "estimate", year: 2026, resolution: "monthly",
+          months: {
+            jan: { occupancy: 0.45, adr: 340 }, feb: { occupancy: 0.55, adr: 330 }, mar: { occupancy: 0.50, adr: 310 },
+            apr: { occupancy: 0.12, adr: 170 }, may: { occupancy: 0.08, adr: 160 }, jun: { occupancy: 0.30, adr: 190 },
+            jul: { occupancy: 0.45, adr: 220 }, aug: { occupancy: 0.40, adr: 200 }, sep: { occupancy: 0.30, adr: 180 },
+            oct: { occupancy: 0.20, adr: 165 }, nov: { occupancy: 0.20, adr: 175 }, dec: { occupancy: 0.45, adr: 300 }
+          },
+          owner_nights_by_month: null
+        },
+        {
+          label: "Regional 1b/1ba estimate (EXAMPLE)", include: true, kind: "estimate", year: 2026, resolution: "annual",
+          occupancy: 0.35, adr: 230, owner_nights_by_month: null
+        }
+      ],
+      occupancy_adr_correlation: 0.0,
+      adr_growth_latent: "adr",
+      channel_commission_fraction: 0.0,
+      mgmt_fee_fraction: 0.25
+    },
+    // Section 8 isn't built in this GUI yet; kept here (read-only) because section 7's preview needs it.
+    personal_use: {
+      personal_use_days_by_month: { jan: 7, feb: 0, mar: 0, apr: 0, may: 0, jun: 3, jul: 7, aug: 0, sep: 0, oct: 0, nov: 0, dec: 7 }
     }
   };
 
@@ -250,6 +363,10 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   const usdK = (v) => v >= 1e6 ? "$" + (v / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M" : "$" + Math.round(v / 1000) + "k";
   const pct = (f, d = 2) => (f * 100).toFixed(d).replace(/\.?0+$/, "") + "%";
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const MONTH_KEYS = MONTHS.map((m) => m.toLowerCase());
+  const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  // Growth/trend drivers a field can name: the three founding processes, then the derived latents.
+  const LATENT_OPTIONS = ["general", "home_price", "market", "construction_cost", "insurance", "maintenance", "adr", "utilities"];
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -329,12 +446,76 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       ],
       preview: previewFinancing
     },
-    { n: 6, id: "carrying_costs", title: "Carrying costs", soon: true,
-      desc: "Starting values grown forward by a derived latent's fitted process, plus the closing-anchored property tax stair-step.",
-      keys: ["property_tax", "hoa_dues_annual", "special_assessment", "insurance_annual", "utilities", "maintenance_annual"] },
-    { n: 7, id: "rental_operations", title: "Rental operations", soon: true,
-      desc: "STR revenue side. managed_by also decides the loan occupancy class used in section 5.",
-      keys: ["managed_by", "occupancy", "adr", "mgmt_fee_fraction", "lodging_tax_rate"] },
+    {
+      n: 6, id: "carrying_costs", title: "Carrying costs",
+      intro: "The ongoing costs of owning the condo. Each one starts from today's value and grows with a derived latent's fitted process. Property tax follows Colorado's own reassessment cycle. Special assessments are modeled separately and left out of every total.",
+      groups: [
+        { title: "Property tax · market value (the assessor's value, not the sale price)", fields: [
+          { path: "carrying_costs.property_tax.market_value.initial_price", label: "Assessor's value at closing", kind: "constant", type: "money", step: 100, hint: "The value in effect on the closing date. Known, never estimated." },
+          { path: "carrying_costs.property_tax.market_value.first_reassessment_year", label: "First reassessment", kind: "constant", type: "number", unit: "yr", min: 1, max: 10, step: 1, hint: "1 = the January right after the closing year. Point to the next cycle, not the one already in effect." },
+          { path: "carrying_costs.property_tax.market_value.reassessment_frequency_years", label: "Reassessment every", kind: "constant", type: "number", unit: "yr", min: 1, max: 10, step: 1, hint: "Colorado reassesses every 2 years." },
+          { path: "carrying_costs.property_tax.market_value.latent", label: "Trend driver", kind: "constant", type: "select", options: LATENT_OPTIONS, hint: "Projects later reassessments. Calibrated to this property with the validation file below." },
+          { path: "carrying_costs.property_tax.market_value.validation_data_source", label: "Past reassessments file", kind: "constant", type: "text", wide: true, hint: "Filename under data/manual/ with this property's past assessed values (format in data/manual/README.md)." }
+        ]},
+        { title: "Property tax · assessment · tax = value × rate × mill levy (local on 90% of value, school on 100%)", fields: [
+          { path: "carrying_costs.property_tax.assessment_rate.local.rate", label: "Local assessment rate", kind: "constant", type: "percent", step: 0.01, max: 100 },
+          { path: "carrying_costs.property_tax.assessment_rate.local.mill_levy", label: "Local mill levy", kind: "constant", type: "number", step: 0.000001, max: 1, hint: "As a fraction of assessed value: 38.219 mills = 0.038219." },
+          { path: "carrying_costs.property_tax.assessment_rate.school.rate", label: "School assessment rate", kind: "constant", type: "percent", step: 0.01, max: 100 },
+          { path: "carrying_costs.property_tax.assessment_rate.school.mill_levy", label: "School mill levy", kind: "constant", type: "number", step: 0.000001, max: 1, hint: "Same units as the local mill levy." }
+        ]},
+        { title: "HOA dues · today's actual bills, grown together", fields: [
+          { path: "carrying_costs.hoa_dues_annual.initial_annual_dues", label: "Annual dues", kind: "constant", type: "money", step: 50, hint: "The regular monthly-billed dues, annualized." },
+          { path: "carrying_costs.hoa_dues_annual.initial_annual_association_dues", label: "Annual association charge", kind: "constant", type: "money", step: 25, hint: "Once-a-year charge, billed in January. 0 if the HOA has none." },
+          { path: "carrying_costs.hoa_dues_annual.growth.latent", label: "Growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS }
+        ]},
+        { title: "Special assessments · how many × how big (excluded from totals)", fields: [
+          { path: "carrying_costs.special_assessment.annual_rate", label: "Expected per year (λ)", kind: "constant", type: "number", step: 0.01, max: 2, unit: "/yr", hint: "0.05 ≈ one every 20 years. 0 turns them off. Source it from the HOA reserve study." },
+          { path: "carrying_costs.special_assessment.k_max", label: "Most counted (k_max)", kind: "constant", type: "number", min: 1, max: 20, step: 1, hint: "More than this is counted as k_max. The run warns if that folded-in chance tops 1%." },
+          { path: "carrying_costs.special_assessment.timing", label: "Payment timing", kind: "constant", type: "select", options: [["uniform", "uniform · any month equally likely"], ["worst_case_year1", "worst_case_year1 · all at closing"]] },
+          { path: "carrying_costs.special_assessment.growth.latent", label: "Size growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS.concat(["none"]), hint: "none keeps sizes in today's dollars." },
+          { path: "carrying_costs.special_assessment.size_scenarios", label: "Size scenarios (one assessment)", kind: "constant", type: "custom", render: renderSizeScenarios, wide: true, hint: "Today's dollars. Probabilities are given that an assessment happens, so they must add up to 100%." }
+        ]},
+        { title: "Insurance and maintenance · best guesses, uncertainty derived from the driver", fields: [
+          { path: "carrying_costs.insurance_annual.initial_guess_premium", label: "Annual insurance premium", kind: "constant", type: "money", step: 50, hint: "Best guess at an STR-rated policy's premium." },
+          { path: "carrying_costs.insurance_annual.growth.latent", label: "Insurance growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS },
+          { path: "carrying_costs.maintenance_annual.initial_guess_mean", label: "Annual maintenance", kind: "constant", type: "money", step: 100, hint: "A plain dollar guess (~1% of price is a common rule of thumb)." },
+          { path: "carrying_costs.maintenance_annual.growth.latent", label: "Maintenance growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS }
+        ]},
+        { title: "Utilities · the previous owner's bill, split into flat / occupancy-driven / heating", fields: [
+          { path: "carrying_costs.utilities.initial_annual_average_monthly_cost", label: "Previous owner's average bill", kind: "constant", type: "money", step: 1, unit: "/mo", hint: "Annual total ÷ 12. The model reproduces exactly this under the calibration occupancy." },
+          { path: "carrying_costs.utilities.calibration_occupied_days_by_month", label: "Occupancy the bill was measured under", kind: "constant", type: "custom", render: renderCalibration, wide: true },
+          { path: "carrying_costs.utilities.components", label: "Components", kind: "constant", type: "custom", render: renderComponents, wide: true, hint: "Share of bill: each utility's part of the average bill (0 if the HOA pays it). Occupancy-driven: the part of its non-heating cost that scales with occupied days; the rest is flat." },
+          { path: "carrying_costs.utilities.heating_type", label: "Heating type", kind: "constant", type: "select", numeric: true, options: [[0, "0 · HOA/common heat"], [1, "1 · electric resistance (COP 1.0)"], [2, "2 · cold-climate heat pump (COP 2.0)"], [3, "3 · heat pump + resistance backup (COP 1.5)"], [4, "4 · gas furnace/boiler (not yet supported)"]] },
+          { path: "carrying_costs.utilities.heating_share", label: "Heating share of the fuel's bill", kind: "constant", type: "percent", step: 1, max: 99, hint: "Stated as if electric resistance for types 1–3. 55% is an estimate for a resistance-heated condo at ~9,000 ft." },
+          { path: "carrying_costs.utilities.occupied_setpoint_f", label: "Thermostat, occupied", kind: "constant", type: "number", unit: "°F", min: 32, max: 90, step: 1 },
+          { path: "carrying_costs.utilities.vacant_setpoint_f", label: "Thermostat, vacant", kind: "constant", type: "number", unit: "°F", min: 32, max: 90, step: 1, hint: "Freeze protection. Must not exceed the occupied setting." },
+          { path: "carrying_costs.utilities.daily_temperature_std_f", label: "Day-to-day temperature spread", kind: "constant", type: "number", unit: "°F", min: 0.5, max: 30, step: 0.5, hint: "Estimate. Only shapes the shoulder months; NOAA normals will replace it." },
+          { path: "carrying_costs.utilities.additional_flat_monthly", label: "New monthly costs on top", kind: "constant", type: "custom", render: renderAddOns, wide: true, hint: "Costs the previous owner didn't pay (e.g. guest internet). Added above the calibrated bill." },
+          { path: "carrying_costs.utilities.seasonal_data_source", label: "Monthly temperatures file", kind: "constant", type: "text", hint: "Filename under data/manual/." },
+          { path: "carrying_costs.utilities.growth.latent", label: "Growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS }
+        ]}
+      ],
+      preview: previewCarrying
+    },
+    {
+      n: 7, id: "rental_operations", title: "Rental operations",
+      intro: "Short-term-rental revenue. You enter your raw data as sources; the model fits each calendar month's occupancy and nightly rate (ADR) from them. Predictions apply that occupancy to the nights you leave available (section 8). Enter every number before lodging tax: guests pay it on top and the manager remits it, so it never reduces your income.",
+      groups: [
+        { title: "Management", fields: [
+          { path: "rental_operations.managed_by", label: "Managed by", kind: "constant", type: "select", options: [["company", "company · property manager"], ["self", "self"]], hint: "Also sets the loan occupancy class in section 5: company → investment, self → second home." },
+          { path: "rental_operations.mgmt_fee_fraction", label: "Management fee", kind: "constant", type: "percent", step: 1, max: 99, hint: "Share of revenue after commissions that the manager keeps. Covers cleaning and platform costs. (Vail Properties' 2025 statement: 50%.)" },
+          { path: "rental_operations.channel_commission_fraction", label: "Channel commissions", kind: "constant", type: "percent", step: 0.1, max: 99, hint: "Airbnb/VRBO/agent fees passed through to you, taken off gross first. 0 if the manager's fee covers them. (Vail Properties' 2025 statement: ~4.8%.)" }
+        ]},
+        { title: "Model settings", fields: [
+          { path: "rental_operations.adr_growth_latent", label: "ADR growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS, hint: "ADR's level comes from the sources; this only grows it over the horizon." },
+          { path: "rental_operations.occupancy_adr_correlation", label: "Occupancy–ADR correlation", kind: "constant", type: "number", min: -1, max: 1, step: 0.05, hint: "How a year's occupancy surprise moves with its ADR surprise (e.g. a big snow year raises both). 0 = independent." }
+        ]},
+        { title: "Sources · every piece of rental data you have", fields: [
+          { path: "rental_operations.sources", label: "Sources", kind: "constant", type: "custom", render: renderSources, wide: true, hint: "Occupancy = nights rented ÷ nights available to rent (nights minus the owner's own). ADR = gross ÷ nights rented. Enter each year of history once, monthly if you have it. Convert ranges to one value yourself." }
+        ]}
+      ],
+      preview: previewRental
+    },
     { n: 8, id: "personal_use", title: "Personal use", soon: true,
       desc: "Nights you use the condo yourself, and what you'd otherwise pay to stay nearby.",
       keys: ["personal_use_days_by_month", "alternate_lodging_cost_by_month"] },
@@ -363,7 +544,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     const wrap = el("div", "field" + (f.wide ? " wide" : ""));
     const id = "f" + (++uid);
     const top = el("div", "f-top");
-    const lab = el(f.type.startsWith("sweep") || f.type === "stub" ? "span" : "label", "lbl", f.label);
+    const lab = el(f.type.startsWith("sweep") || f.type === "stub" || f.type === "custom" ? "span" : "label", "lbl", f.label);
     if (lab.tagName === "LABEL") lab.htmlFor = id; else lab.id = id + "-l";
     top.append(lab, el("span", "kind " + f.kind, f.kind), el("code", "f-key", f.path));
     wrap.append(top);
@@ -385,11 +566,21 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       wrap.append(box);
     } else if (f.type === "select" || f.type === "month") {
       const s = el("select"); s.id = id;
-      const opts = f.type === "month" ? MONTHS.map((m, i) => [i + 1, (i + 1) + " · " + m]) : f.options.map((o) => [o, o]);
+      const opts = f.type === "month" ? MONTHS.map((m, i) => [i + 1, (i + 1) + " · " + m]) : f.options.map((o) => Array.isArray(o) ? o : [o, o]);
       opts.forEach(([v, t]) => { const o = el("option", null, t); o.value = v; s.append(o); });
       s.value = get(f.path);
-      s.addEventListener("change", () => commit(f.type === "month" ? +s.value : s.value));
+      s.addEventListener("change", () => commit(f.type === "month" || f.numeric ? +s.value : s.value));
       wrap.append(s);
+    } else if (f.type === "text") {
+      const i = el("input"); i.type = "text"; i.id = id; i.value = get(f.path); i.spellcheck = false;
+      i.addEventListener("input", () => {
+        if (!i.value.trim()) { err.textContent = "Can't be empty."; return; }
+        err.textContent = "";
+        commit(i.value.trim());
+      });
+      wrap.append(i);
+    } else if (f.type === "custom") {
+      f.render(wrap, onChange, err);
     } else if (f.type === "number" || f.type === "money" || f.type === "percent") {
       const i = el("input"); i.type = "number"; i.id = id; i.inputMode = "decimal";
       const isPct = f.type === "percent";
@@ -631,6 +822,350 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   }
 
   // ---------------------------------------------------------------------------
+  // Sections 6-7: small editors for list- and map-shaped fields
+  // ---------------------------------------------------------------------------
+  // A number input that validates in DISPLAY units (percent fields show 0-100) and reports problems in `err`.
+  function numInput(value, opts, onValid, err) {
+    const i = el("input"); i.type = "number"; i.inputMode = "decimal"; i.step = opts.step || "any";
+    if (opts.min != null) i.min = opts.min;
+    if (opts.max != null) i.max = opts.max;
+    i.value = value == null ? "" : (opts.pct ? +(value * 100).toFixed(4) : value);
+    if (opts.label) i.setAttribute("aria-label", opts.label);
+    i.addEventListener("input", () => {
+      if (i.value === "" && opts.allowEmpty) { err.textContent = ""; onValid(null); return; }
+      const v = parseFloat(i.value);
+      if (!Number.isFinite(v)) { err.textContent = (opts.label || "Value") + ": enter a number."; return; }
+      if ((opts.min != null && v < opts.min) || (opts.max != null && v > opts.max)) {
+        err.textContent = (opts.label || "Value") + " must be between " + opts.min + " and " + opts.max + "."; return;
+      }
+      err.textContent = "";
+      onValid(opts.pct ? v / 100 : v);
+    });
+    return i;
+  }
+
+  // 12 small inputs, one per month, editing obj[jan..dec] in place.
+  function monthGrid(obj, opts, onChange, err) {
+    const g = el("div", "month-grid");
+    MONTH_KEYS.forEach((m, i) => {
+      const cell = el("label", "mcell");
+      cell.append(el("span", null, MONTHS[i]),
+        numInput(obj[m], { min: 0, max: opts.maxFn ? opts.maxFn(i) : opts.max, step: opts.step || 1, label: (opts.what || "") + " " + MONTHS[i] },
+          (v) => { obj[m] = v; onChange(); }, err));
+      g.append(cell);
+    });
+    return g;
+  }
+
+  function sumPill(total, target, what) {
+    const ok = Math.abs(total - target) < 1e-6;
+    return el("span", "pill " + (ok ? "ok" : "bad"), what + " add up to " + pct(total, 1) + (ok ? "" : " · must be " + pct(target, 0)));
+  }
+
+  function removeButton(label, onClick) {
+    const b = el("button", "icon-btn", "×"); b.type = "button"; b.setAttribute("aria-label", label);
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function renderSizeScenarios(wrap, onChange, err) {
+    const sa = deck.carrying_costs.special_assessment;
+    const box = el("div", "stack-sm");
+    const pillBox = el("div");
+    const paintSum = () => { pillBox.textContent = ""; pillBox.append(sumPill(sa.size_scenarios.reduce((a, s) => a + s.probability, 0), 1, "Probabilities")); };
+    const paint = () => {
+      box.textContent = "";
+      const rows = sa.size_scenarios.map((s, idx) => {
+        const tr = el("tr");
+        const name = el("input"); name.type = "text"; name.value = s.label; name.setAttribute("aria-label", "Scenario label");
+        name.addEventListener("input", () => {
+          const dup = sa.size_scenarios.some((o, j) => j !== idx && o.label === name.value.trim());
+          err.textContent = !name.value.trim() ? "Labels can't be empty." : dup ? "Labels must be unique." : "";
+          if (!err.textContent) { s.label = name.value.trim(); onChange(); }
+        });
+        const amount = numInput(s.amount_today_usd, { min: 0, step: 500, label: "Amount" }, (v) => { s.amount_today_usd = v; onChange(); }, err);
+        const prob = numInput(s.probability, { min: 0, max: 100, step: 5, pct: true, label: "Probability" }, (v) => { s.probability = v; paintSum(); onChange(); }, err);
+        const rm = removeButton("Remove " + s.label, () => {
+          if (sa.size_scenarios.length === 1) { err.textContent = "Keep at least one size scenario."; return; }
+          sa.size_scenarios.splice(idx, 1); paint(); onChange();
+        });
+        tr.append(td(name, "cell-in"), td(amount, "num cell-in"), td(prob, "num cell-in"), td(rm));
+        return tr;
+      });
+      box.append(table([["Label"], ["Amount, today's $", 1], ["Probability %", 1], [""]], rows));
+      paintSum();
+    };
+    const add = el("button", "btn ghost", "Add size scenario"); add.type = "button";
+    add.addEventListener("click", () => { sa.size_scenarios.push({ label: "scenario " + (sa.size_scenarios.length + 1), amount_today_usd: 10000, probability: 0 }); paint(); onChange(); });
+    paint();
+    wrap.append(box, pillBox, add);
+  }
+
+  function renderCalibration(wrap, onChange, err) {
+    const u = deck.carrying_costs.utilities;
+    const s = el("select"); s.setAttribute("aria-label", "Calibration occupancy");
+    [["history", "history · the previous owner's real nights (section 7 history sources with owner nights)"],
+     ["deck", "deck · assume the previous owner used it like you will"],
+     ["map", "12-month map · enter occupied days yourself"]].forEach(([v, t]) => { const o = el("option", null, t); o.value = v; s.append(o); });
+    s.value = typeof u.calibration_occupied_days_by_month === "string" ? u.calibration_occupied_days_by_month : "map";
+    const gridBox = el("div");
+    const note = el("p", "hint");
+    const paintGrid = () => {
+      gridBox.textContent = "";
+      const c = u.calibration_occupied_days_by_month;
+      if (typeof c === "object") gridBox.append(monthGrid(c, { maxFn: (i) => DAYS[i], what: "Occupied days" }, onChange, err));
+    };
+    const paintNote = () => {
+      const c = u.calibration_occupied_days_by_month;
+      const hist = deck.rental_operations.sources.filter((x) => x.include && x.kind === "history" && x.owner_nights_by_month);
+      note.textContent = c === "history"
+        ? (hist.length ? "Uses: " + hist.map((x) => x.label).join("; ") + "." : "No included history source has owner nights yet. The run will stop with an error until one does.")
+        : c === "deck" ? "Your own predicted rented nights plus your personal use." : "Occupied days (rented + owner) in each calendar month.";
+    };
+    s.addEventListener("change", () => {
+      u.calibration_occupied_days_by_month = s.value === "map" ? Object.fromEntries(MONTH_KEYS.map((m) => [m, 10])) : s.value;
+      paintGrid(); onChange();
+    });
+    paintGrid(); paintNote(); repaints.push(paintNote);
+    wrap.append(s, note, gridBox);
+  }
+
+  function renderComponents(wrap, onChange, err) {
+    const comps = deck.carrying_costs.utilities.components;
+    const pillBox = el("div");
+    const paintSum = () => { pillBox.textContent = ""; pillBox.append(sumPill(Object.values(comps).reduce((a, c) => a + c.weight, 0), 1, "Shares of the bill")); };
+    const rows = Object.keys(comps).map((name) => {
+      const tr = el("tr");
+      tr.append(td(name),
+        td(numInput(comps[name].weight, { min: 0, max: 100, step: 1, pct: true, label: name + " share of bill %" }, (v) => { comps[name].weight = v; paintSum(); onChange(); }, err), "num cell-in"),
+        td(numInput(comps[name].occupancy_fraction, { min: 0, max: 100, step: 5, pct: true, label: name + " occupancy-driven %" }, (v) => { comps[name].occupancy_fraction = v; onChange(); }, err), "num cell-in"));
+      return tr;
+    });
+    wrap.append(table([["Utility"], ["Share of bill %", 1], ["Occupancy-driven %", 1]], rows), pillBox);
+    paintSum();
+  }
+
+  function renderAddOns(wrap, onChange, err) {
+    const list = deck.carrying_costs.utilities.additional_flat_monthly;
+    const box = el("div", "stack-sm");
+    const paint = () => {
+      box.textContent = "";
+      if (!list.length) box.append(el("p", "hint", "None."));
+      list.forEach((a, idx) => {
+        const row = el("div", "inline-row");
+        const name = el("input"); name.type = "text"; name.value = a.label; name.setAttribute("aria-label", "Cost label");
+        name.addEventListener("input", () => { a.label = name.value; onChange(); });
+        const amt = el("div", "affix");
+        amt.append(el("span", null, "$"), numInput(a.amount_usd, { min: 0, step: 5, label: "Monthly amount" }, (v) => { a.amount_usd = v; onChange(); }, err), el("span", null, "/mo"));
+        row.append(name, amt, removeButton("Remove " + a.label, () => { list.splice(idx, 1); paint(); onChange(); }));
+        box.append(row);
+      });
+    };
+    const add = el("button", "btn ghost", "Add monthly cost"); add.type = "button";
+    add.addEventListener("click", () => { list.push({ label: "new_cost", amount_usd: 0 }); paint(); onChange(); });
+    paint();
+    wrap.append(box, add);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section 7: rental data sources
+  // ---------------------------------------------------------------------------
+  function sourceAnnual(src) {
+    // Annual occupancy (nights rented ÷ nights available) and nights-weighted ADR of one source.
+    if (src.resolution === "annual") return { occupancy: src.occupancy, adr: src.occupancy > 0 ? src.adr : null };
+    const owner = src.owner_nights_by_month || {};
+    let avail = 0, nights = 0, revenue = 0;
+    MONTH_KEYS.forEach((m, i) => {
+      const a = DAYS[i] - (owner[m] || 0), n = src.months[m].occupancy * a;
+      avail += a; nights += n; if (src.months[m].adr != null) revenue += n * src.months[m].adr;
+    });
+    return { occupancy: avail ? nights / avail : 0, adr: nights ? revenue / nights : null };
+  }
+
+  function sourceCard(src, idx, repaint, onChangeOuter) {
+    const card = el("div", "source" + (src.include ? "" : " off"));
+    const err = el("div", "f-err");
+    const summary = el("p", "hint");
+    const paintSummary = () => {
+      const a = sourceAnnual(src);
+      summary.textContent = "Year: occupancy " + pct(a.occupancy, 1) + (a.adr != null ? " · ADR " + usd.format(a.adr) : " · no bookings") +
+        (src.kind === "history" && src.resolution === "monthly" && src.owner_nights_by_month ? " (nights available net of owner nights)" : "");
+    };
+    const onChange = () => { paintSummary(); onChangeOuter(); };
+    const head = el("div", "source-head");
+    const name = el("input"); name.type = "text"; name.value = src.label; name.className = "source-name"; name.setAttribute("aria-label", "Source label");
+    name.addEventListener("input", () => { src.label = name.value; onChange(); });
+    const inc = el("label", "toggle");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = src.include;
+    cb.addEventListener("change", () => { src.include = cb.checked; card.classList.toggle("off", !cb.checked); onChange(); });
+    inc.append(cb, el("span", null, "Include in fit"));
+    head.append(name, inc, removeButton("Remove source " + src.label, () => {
+      if (deck.rental_operations.sources.length === 1) { err.textContent = "Keep at least one source."; return; }
+      deck.rental_operations.sources.splice(idx, 1); repaint(); onChange();
+    }));
+
+    const row = el("div", "fields compact");
+    const mk = (label, node, hint) => { const f = el("div", "field"); const l = el("span", "lbl", label); f.append(l, node); if (hint) f.append(el("p", "hint", hint)); return f; };
+    const kind = el("select"); [["history", "history (actual year)"], ["estimate", "estimate"]].forEach(([v, t]) => { const o = el("option", null, t); o.value = v; kind.append(o); });
+    kind.value = src.kind; kind.setAttribute("aria-label", "Kind");
+    kind.addEventListener("change", () => { src.kind = kind.value; if (src.kind !== "history") src.owner_nights_by_month = null; repaint(); onChange(); });
+    const year = numInput(src.year, { min: 1990, max: 2100, step: 1, label: "Year" }, (v) => { src.year = Math.round(v); onChange(); }, err);
+    const res = el("select"); [["annual", "annual · one value each"], ["monthly", "monthly · all 12 months"]].forEach(([v, t]) => { const o = el("option", null, t); o.value = v; res.append(o); });
+    res.value = src.resolution; res.setAttribute("aria-label", "Resolution");
+    res.addEventListener("change", () => {
+      if (res.value === "monthly") {
+        src.months = Object.fromEntries(MONTH_KEYS.map((m) => [m, { occupancy: src.occupancy, adr: src.occupancy > 0 ? src.adr : null }]));
+        delete src.occupancy; delete src.adr;
+      } else {
+        const a = sourceAnnual(src); src.occupancy = +a.occupancy.toFixed(3); src.adr = a.adr != null ? +a.adr.toFixed(2) : 200; delete src.months;
+      }
+      src.resolution = res.value; repaint(); onChange();
+    });
+    row.append(mk("Kind", kind, "history = this unit's actual results; estimate = a projection or market figure."), mk("Year the numbers are from", year, "ADR is restated to closing-date dollars with CPI."), mk("Resolution", res));
+    card.append(head, row);
+
+    if (src.resolution === "annual") {
+      const vals = el("div", "fields compact");
+      const occ = el("div", "affix"); occ.append(numInput(src.occupancy, { min: 0, max: 100, step: 1, pct: true, label: "Annual occupancy" }, (v) => { src.occupancy = v; onChange(); }, err), el("span", null, "%"));
+      const adr = el("div", "affix"); adr.append(el("span", null, "$"), numInput(src.adr, { min: 0.01, step: 5, label: "Annual ADR" }, (v) => { src.adr = v; onChange(); }, err), el("span", null, "/night"));
+      vals.append(mk("Occupancy (whole year)", occ), mk("ADR (whole year)", adr, "Spread over the months with the monthly sources' seasonal pattern."));
+      card.append(vals);
+    } else {
+      const rows = MONTH_KEYS.map((m, i) => {
+        const v = src.months[m];
+        const tr = el("tr");
+        const adrIn = numInput(v.adr, { min: 0.01, step: 5, allowEmpty: true, label: MONTHS[i] + " ADR" }, (x) => { v.adr = x; onChange(); }, err);
+        const syncAdr = () => { adrIn.disabled = v.occupancy === 0; if (v.occupancy === 0) { adrIn.value = ""; v.adr = null; } adrIn.placeholder = v.occupancy === 0 ? "no bookings" : "required"; };
+        const occIn = numInput(v.occupancy, { min: 0, max: 100, step: 1, pct: true, label: MONTHS[i] + " occupancy %" }, (x) => { v.occupancy = x; syncAdr(); onChange(); }, err);
+        syncAdr();
+        tr.append(td(MONTHS[i]), td(occIn, "num cell-in"), td(adrIn, "num cell-in"));
+        return tr;
+      });
+      card.append(table([["Month"], ["Occupancy %", 1], ["ADR $/night", 1]], rows));
+    }
+
+    if (src.kind === "history") {
+      const ownerBox = el("div", "stack-sm");
+      const has = el("label", "toggle");
+      const hcb = el("input"); hcb.type = "checkbox"; hcb.checked = !!src.owner_nights_by_month;
+      hcb.addEventListener("change", () => { src.owner_nights_by_month = hcb.checked ? Object.fromEntries(MONTH_KEYS.map((m) => [m, 0])) : null; repaint(); onChange(); });
+      has.append(hcb, el("span", null, "Owner nights by month known (used only to calibrate utilities)"));
+      ownerBox.append(has);
+      if (src.owner_nights_by_month) ownerBox.append(monthGrid(src.owner_nights_by_month, { maxFn: (i) => DAYS[i], what: "Owner nights" }, onChange, err));
+      card.append(ownerBox);
+    }
+
+    paintSummary();
+    card.append(summary, err);
+    return card;
+  }
+
+  function renderSources(wrap, onChange) {
+    const list = el("div", "sources");
+    const paint = () => {
+      list.textContent = "";
+      deck.rental_operations.sources.forEach((src, idx) => list.append(sourceCard(src, idx, paint, onChange)));
+    };
+    const add = el("div", "inline-row");
+    [["Add annual source", "annual"], ["Add monthly source", "monthly"]].forEach(([t, r]) => {
+      const b = el("button", "btn ghost", t); b.type = "button";
+      b.addEventListener("click", () => {
+        const base = { label: "New source", include: true, kind: "estimate", year: deck.scenario.closing_year, resolution: r, owner_nights_by_month: null };
+        deck.rental_operations.sources.push(r === "annual" ? Object.assign(base, { occupancy: 0.3, adr: 200 })
+          : Object.assign(base, { months: Object.fromEntries(MONTH_KEYS.map((m) => [m, { occupancy: 0.3, adr: 200 }])) }));
+        paint(); onChange();
+      });
+      add.append(b);
+    });
+    paint();
+    wrap.append(list, add);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section 6-7 previews (approximate; the real math is in src/)
+  // ---------------------------------------------------------------------------
+  function previewCarrying(box) {
+    const c = deck.carrying_costs, pt = c.property_tax, u = c.utilities, sa = c.special_assessment;
+    const tax = pt.market_value.initial_price * (0.9 * pt.assessment_rate.local.rate * pt.assessment_rate.local.mill_levy
+      + pt.assessment_rate.school.rate * pt.assessment_rate.school.mill_levy);
+    const hoa = c.hoa_dues_annual.initial_annual_dues + c.hoa_dues_annual.initial_annual_association_dues;
+    const addOns = u.additional_flat_monthly.reduce((a, x) => a + (x.amount_usd || 0), 0) * 12;
+    const util = u.initial_annual_average_monthly_cost * 12 + addOns;
+    const items = [["Property tax", tax, "assessor's value × rates × mill levies"], ["HOA dues", hoa, "dues + association charge"],
+      ["Insurance", c.insurance_annual.initial_guess_premium, "guess"], ["Maintenance", c.maintenance_annual.initial_guess_mean, "guess"],
+      ["Utilities", util, "previous owner's average × 12" + (addOns ? " + new costs" : "")]];
+    const total = items.reduce((a, [, v]) => a + v, 0);
+    const rows = items.map(([l, v, n]) => { const tr = el("tr"); tr.append(td(l), td(usd.format(v), "num"), td(usd.format(v / 12), "num"), td(n, "dim")); return tr; });
+    const tot = el("tr"); tot.append(td("Total (excl. special assessments)"), td(usd.format(total), "num"), td(usd.format(total / 12), "num"), td("", "dim")); rows.push(tot);
+    const expectedSize = sa.size_scenarios.reduce((a, s) => a + s.amount_today_usd * s.probability, 0);
+    const stats = el("div", "stat-row");
+    [[usd.format(total), "year 1, before growth"], [usd.format(sa.annual_rate * expectedSize), "special assessments, expected/yr (excluded)"],
+     [sa.annual_rate > 0 ? Math.round(1 / sa.annual_rate) + " yr" : "off", "average gap between assessments"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+    box.append(stats, table([["Item"], ["Per year", 1], ["Per month", 1], ["Basis"]], rows));
+    const checks = el("div", "ids");
+    const wsum = Object.values(u.components).reduce((a, x) => a + x.weight, 0);
+    const psum = sa.size_scenarios.reduce((a, s) => a + s.probability, 0);
+    checks.append(el("span", "pill " + (Math.abs(wsum - 1) < 1e-6 ? "ok" : "bad"), "utility shares " + pct(wsum, 1)),
+      el("span", "pill " + (Math.abs(psum - 1) < 1e-6 ? "ok" : "bad"), "assessment probabilities " + pct(psum, 1)),
+      el("span", "pill " + (u.vacant_setpoint_f <= u.occupied_setpoint_f ? "ok" : "bad"), "setpoints " + u.vacant_setpoint_f + "°F ≤ " + u.occupied_setpoint_f + "°F"),
+      el("span", "pill " + (u.heating_type === 4 ? "bad" : "ok"), u.heating_type === 4 ? "gas heat not yet supported" : "heating type " + u.heating_type));
+    box.append(checks, el("p", "hint", "Year-1 values in today's dollars, no growth. The run's utilities differ a little: it re-applies the calibrated bill to your own predicted occupancy."));
+  }
+
+  function previewRental(box) {
+    const ro = deck.rental_operations;
+    const inc = ro.sources.filter((s) => s.include);
+    if (!inc.length) { box.append(el("span", "pill bad", "No source is included. The run needs at least one.")); return; }
+    // Seasonal pattern of the monthly sources (each month ÷ that source's own annual occupancy / ADR).
+    const monthly = inc.filter((s) => s.resolution === "monthly");
+    const occPat = MONTH_KEYS.map(() => []), adrPat = MONTH_KEYS.map(() => []);
+    monthly.forEach((s) => {
+      const a = sourceAnnual(s);
+      if (!a.occupancy) return;
+      MONTH_KEYS.forEach((m, i) => { occPat[i].push(s.months[m].occupancy / a.occupancy); if (s.months[m].adr != null) adrPat[i].push(s.months[m].adr / a.adr); });
+    });
+    const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const occP = occPat.map((xs) => xs.length ? mean(xs) : 1), adrP = adrPat.map((xs) => xs.length ? mean(xs) : (monthly.length ? null : 1));
+    // Observations per month: monthly sources as entered; annual sources spread by the pattern.
+    const obs = MONTH_KEYS.map((m, i) => inc.map((s) => s.resolution === "monthly" ? s.months[m]
+      : { occupancy: Math.min(s.occupancy * occP[i], 1), adr: adrP[i] != null && s.occupancy > 0 ? s.adr * adrP[i] : null }));
+    const personal = deck.personal_use.personal_use_days_by_month;
+    let nightsTot = 0, availTot = 0, grossTot = 0;
+    const rows = MONTH_KEYS.map((m, i) => {
+      const occ = obs[i].map((o) => o.occupancy), adrs = obs[i].filter((o) => o.adr != null).map((o) => o.adr);
+      const mo = mean(occ), sd = occ.length > 1 ? Math.sqrt(occ.reduce((a, x) => a + (x - mo) ** 2, 0) / (occ.length - 1)) : null;
+      const adr = adrs.length ? mean(adrs) : null;
+      const avail = DAYS[i] - personal[m], nights = Math.min(mo * avail, avail), gross = adr != null ? nights * adr : 0;
+      nightsTot += nights; availTot += avail; grossTot += gross;
+      const tr = el("tr");
+      tr.append(td(MONTHS[i]), td(String(occ.length), "num dim"), td(pct(mo, 1), "num"), td(sd != null && mo > 0 ? (sd / mo).toFixed(2) : "pooled", "num dim"),
+        td(adr != null ? usd.format(adr) : "—", "num"), td(String(avail), "num dim"), td(nights.toFixed(1), "num"), td(usd.format(gross), "num"));
+      return tr;
+    });
+    const keep = (1 - ro.channel_commission_fraction) * (1 - ro.mgmt_fee_fraction);
+    const tot = el("tr");
+    tot.append(td("Year"), td(""), td(pct(availTot ? nightsTot / availTot : 0, 1), "num"), td(""), td(nightsTot ? usd.format(grossTot / nightsTot) : "—", "num"), td(String(availTot), "num dim"), td(nightsTot.toFixed(0), "num"), td(usd.format(grossTot), "num"));
+    rows.push(tot);
+    const stats = el("div", "stat-row");
+    [[inc.length + " / " + ro.sources.length, "sources included"], [Math.round(nightsTot) + " nights", "rented in year 1"],
+     [usd.format(grossTot), "gross, year 1"], [usd.format(grossTot * keep), "net after fees (" + pct(keep, 1) + " kept)"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+    const perSource = ro.sources.map((s) => {
+      const a = sourceAnnual(s); const tr = el("tr");
+      tr.append(td(s.label), td(s.include ? "yes" : "no", s.include ? "" : "dim"), td(s.kind), td(String(s.year), "num"), td(s.resolution),
+        td(pct(a.occupancy, 1), "num"), td(a.adr != null ? usd.format(a.adr) : "—", "num"));
+      return tr;
+    });
+    box.append(stats,
+      el("p", "hint", "Each source's year:"),
+      table([["Source"], ["Included"], ["Kind"], ["Year", 1], ["Resolution"], ["Occupancy", 1], ["ADR", 1]], perSource),
+      el("p", "hint", "Fitted by calendar month (plain mean and spread across the included sources, zeros included; ADR from booked months only), applied to the nights you leave available:"),
+      table([["Month"], ["Obs", 1], ["Occupancy", 1], ["cv", 1], ["ADR", 1], ["Available", 1], ["Nights", 1], ["Gross", 1]], rows),
+      el("p", "hint", "Approximate: no CPI restatement, no growth, and no lognormal/cap adjustment of the mean. The run's fit (models/rental_operations_priors/) and projection are the real numbers. Personal use comes from section 8, not built in this GUI yet."));
+  }
+
+  // ---------------------------------------------------------------------------
   // Build page
   // ---------------------------------------------------------------------------
   const previews = [];
@@ -653,8 +1188,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     s.append(head);
 
     if (sec.soon) {
-      const p = el("div", "placeholder" + (sec.n === 6 ? " next" : ""));
-      p.append(el("span", "eyebrow", sec.n === 6 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const p = el("div", "placeholder" + (sec.n === 8 ? " next" : ""));
+      p.append(el("span", "eyebrow", sec.n === 8 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
       const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
       s.append(p);
       host.append(s);

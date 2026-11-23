@@ -1,15 +1,31 @@
 """Shared human-readable print formatting for backend build/compute results -- one function per
-deck-section stage, called identically by run/main.py (the real build/report pipeline) and each
-matching run/tests/test_*.py (the user's manual-run check for that same stage, see
-.claude/implementation-plan.md's "Backend build progress"). Keeping this formatting here, in one
-place, means main.py and a test script can never drift into two different versions of the same
-printout.
+deck-section stage, called by run/main.py (the real build/report pipeline). Keeping all printout
+formatting here, in one place, keeps it out of main.py and the backend modules.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+
+
+def print_rental_operations_prior_build_report(results: dict[str, dict[str, Any]]) -> None:
+    """Prints the rental_operations prior build (utils.rental_prior_utils.build_rental_operations_prior_models):
+    where each prior was saved, its fitted annual median and band, your annual rented nights, and any fit
+    warnings."""
+    print("\nSaving rental_operations priors to //models/rental_operations_priors/...")
+    for name, result in results.items():
+        print(f"{name}: saved fit to {result['fit_path']}, plot to {result['plot_path']}")
+    occupancy, adr = results["occupancy"]["annual_band"], results["adr"]["annual_band"]
+    nights = results["occupancy"]["annual_rented_nights"]
+    print(
+        f"  fitted from {results['occupancy']['source_count']} included source(s): annual occupancy "
+        f"{occupancy['median']:.1%} ({occupancy['lo']:.1%}-{occupancy['hi']:.1%}), ADR ${adr['median']:,.0f} "
+        f"(${adr['lo']:,.0f}-${adr['hi']:,.0f}); your rented nights/yr: {nights['mean']:.0f} expected, "
+        f"{nights['median_sum']:.0f} by monthly medians"
+    )
+    for warning in results["occupancy"]["warnings"]:
+        print(f"  WARNING: {warning}")
 
 
 def print_derived_latent_build_report(results: dict[str, dict[str, Path]]) -> None:
@@ -71,7 +87,8 @@ def print_utilities_build_report(report: dict[str, Any]) -> None:
         )
     print(f"  utilities heating: {heating_line}")
     print(
-        f"  utilities calibration ({report['calibration_source']}, observed ${calibration['annual_observed_total']:,.0f}/yr): "
+        f"  utilities calibration ({report['calibration_source']}, {sum(report['calibration_occupied_days'].values()):.0f} "
+        f"occupied days/yr, observed ${calibration['annual_observed_total']:,.0f}/yr): "
         f"flat ${calibration['flat_pool']:,.0f}/yr (${calibration['flat_monthly']:,.2f}/month), "
         f"occupancy ${calibration['occupancy_pool']:,.0f}/yr (${calibration['cost_per_occupied_day']:,.2f}/occupied day), "
         f"heating ${calibration['heating_pool']:,.0f}/yr (${calibration['cost_per_heating_degree_day']:,.4f}/heating degree-day)"
@@ -113,8 +130,7 @@ def print_classification_report(classification: dict[str, Any]) -> None:
 def print_financing_report(financing: dict[str, Any]) -> None:
     """Prints one scenario's financing results (see financing.compute_financing) as a single line
     -- the mortgage rate actually applied, and the loan's cost/payoff over the scenario's horizon.
-    Not the full amortization_schedule (too verbose for a normal run) -- see a test script's own
-    VARIABLE CHECK print for that."""
+    Not the full amortization_schedule (too verbose for a normal run)."""
     print(
         f"mortgage_rate={financing['mortgage_rate']:.4%} ({financing['loan_occupancy_class']}), "
         f"loan_term_years={financing['loan_term_years']} -> "
@@ -142,6 +158,31 @@ def print_carrying_costs_report(carrying_costs: dict[str, Any]) -> None:
         f"(${property_tax_year_1['assessed_value_lo']:,.0f}-${property_tax_year_1['assessed_value_hi']:,.0f}), "
         f"tax=${property_tax_year_1['tax_median']:,.0f} "
         f"(${property_tax_year_1['tax_lo']:,.0f}-${property_tax_year_1['tax_hi']:,.0f})"
+    )
+
+
+def print_rental_operations_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """One line: where this scenario's rental result plots went (results.save_rental_operations_result_plots)."""
+    print(f"  saved {len(result_plots)} rental result plots to {result_plots['occupancy'].parent} "
+          f"(+ {result_plots['net_rental_income'].name} one level up)")
+
+
+def print_rental_operations_report(rental_operations: dict[str, Any]) -> None:
+    """Prints one buy scenario's rental projection (rental_operations.compute_rental_operations): horizon
+    gross and net (mean, median and band), then year 1's nights, gross and fees."""
+    horizon, year_1, fees = rental_operations["horizon"], rental_operations["annual"].loc[1], rental_operations["fees"]
+    ci = rental_operations["ci"]
+    band = f"{ci[0]:.0%}-{ci[1]:.0%}"
+    print(
+        f"rental_operations: gross=${horizon['gross_mean']:,.0f} mean over the horizon (median ${horizon['gross_median']:,.0f}, "
+        f"{band} ${horizon['gross_lo']:,.0f}-${horizon['gross_hi']:,.0f}); net=${horizon['net_mean']:,.0f} "
+        f"after channel commissions {fees['channel_commission_fraction']:.1%} and management fee "
+        f"{fees['mgmt_fee_fraction']:.1%}"
+    )
+    print(
+        f"  year 1: {year_1['nights_mean']:.0f} nights rented (expected), gross=${year_1['gross_mean']:,.0f} "
+        f"({band} ${year_1['gross_lo']:,.0f}-${year_1['gross_hi']:,.0f}), commissions=${year_1['channel_commissions_mean']:,.0f}, "
+        f"management fee=${year_1['mgmt_fee_mean']:,.0f}, net=${year_1['net_mean']:,.0f}"
     )
 
 
@@ -187,13 +228,14 @@ def print_carrying_cost_result_plots_report(result_plots: dict[str, Path]) -> No
 
 
 def print_taxes_report(taxes: dict[str, Any]) -> None:
-    """Prints one buy scenario's tax results (see taxes.compute_owner_taxes) as a single line, plus
-    a LOUD placeholder warning (taxes.PLACEHOLDER_FIELDS) and any residency flags (taxes.
-    compute_owner_taxes' "flags") on their own lines so neither is easy to miss."""
-    print(f"total_tax=${taxes['total_tax']:,.0f} over the horizon (annual + sale)")
-    if taxes["placeholder_fields"]:
-        fields = ", ".join(taxes["placeholder_fields"])
-        print(f"  [PLACEHOLDER] uses simplified, un-grown estimates for: {fields} -- see taxes.py's module docstring")
+    """Prints one buy scenario's tax results (see taxes.compute_owner_taxes) as a single line (with the
+    expected gross rent and taxable rental income it was computed from), plus any residency flags (taxes.
+    compute_owner_taxes' "flags") on their own lines so they're hard to miss."""
+    schedule = taxes["annual_schedule"]
+    print(
+        f"total_tax=${taxes['total_tax']:,.0f} over the horizon (annual + sale); use class {schedule['use_class'].iloc[0]}, "
+        f"expected gross rent ${schedule['gross_rent'].sum():,.0f}, taxable rental income ${schedule['taxable_rental'].sum():,.0f}"
+    )
     for flag in taxes["flags"]:
         print(f"  {flag}")
 

@@ -400,3 +400,178 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
         save_path=out_dir.parent / "total_carrying_costs.png",
     )
     return paths
+
+
+# ---------------------------------------------------------------------------------------------------
+# rental_operations result plots (section 7 plan, build step 5)
+# ---------------------------------------------------------------------------------------------------
+
+
+def _draw_monthly_stairstep(
+    ax, monthly: pd.DataFrame, prefix: str, ci: tuple[float, float], outer_ci: tuple[float, float]
+) -> None:
+    """Draws one monthly quantity from rental_operations.compute_rental_operations' "monthly" DataFrame
+    (columns <prefix>_median/_lo/_hi/_lo_outer/_hi_outer, index = scenario month h) as a stair-step: each
+    month its own flat box (main band), flat median bar and dashed 1-99% bars, over [h, h + 1] -- the
+    same style as total_carrying_costs.png. Months with no value (NaN: e.g. no bookings, so no ADR) are
+    left blank."""
+    data = monthly[[f"{prefix}_{band}" for band in ("median", "lo", "hi", "lo_outer", "hi_outer")]].dropna()
+    starts = data.index.to_numpy()
+    ends = starts + 1
+    for i, (start, end, lo, hi) in enumerate(zip(starts, ends, data[f"{prefix}_lo"], data[f"{prefix}_hi"], strict=True)):
+        ax.fill_between(
+            [start, end], [lo, lo], [hi, hi], color="C1", alpha=0.2,
+            label=f"{ci[0] * 100:.0f}-{ci[1] * 100:.0f}% Band" if i == 0 else None,
+        )
+    ax.hlines(data[f"{prefix}_median"], starts, ends, color="C1", linewidth=2, label="Projected Median")
+    outer_label = f"{outer_ci[0] * 100:.0f}-{outer_ci[1] * 100:.0f}% Band"
+    for column, label in ((f"{prefix}_lo_outer", outer_label), (f"{prefix}_hi_outer", "_hi_outer")):
+        ax.hlines(data[column], starts, ends, colors="C1", alpha=0.6, linewidth=1, linestyles="--", label=label)
+    ax.set_xlabel("Months from Closing")
+    ax.grid(alpha=0.3)
+
+
+def _plot_rental_monthly(
+    monthly: pd.DataFrame,
+    prefix: str,
+    ci: tuple[float, float],
+    outer_ci: tuple[float, float],
+    title: str,
+    ylabel: str,
+    save_path: Path,
+    cap: list[float] | None = None,
+    final_year: dict[str, Any] | None = None,
+    zoom_months: int = 12,
+) -> Path:
+    """Monthly stair-step of one rental quantity over the whole horizon (top), plus a zoom on the first
+    `zoom_months` months with calendar-month labels (bottom) -- the full horizon is too dense to read
+    month by month. Optional `cap` (nights you leave available, per scenario month) is drawn as a dotted
+    step line. Optional `final_year` ({"median", "hi_outer", "year"}) adds a top-right panel with that
+    year's TOTAL distribution (lognormal, as computed by compute_rental_operations)."""
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(14 if final_year is not None else 12, 9))
+    grid = fig.add_gridspec(2, 2 if final_year is not None else 1, width_ratios=[3, 1] if final_year is not None else [1])
+    ax = fig.add_subplot(grid[0, 0])
+    ax_zoom = fig.add_subplot(grid[1, :])
+    zoom = monthly.loc[monthly.index < zoom_months]
+    for axis, data in ((ax, monthly), (ax_zoom, zoom)):
+        _draw_monthly_stairstep(axis, data, prefix, ci, outer_ci)
+        if cap is not None:
+            edges = np.append(data.index.to_numpy(), data.index[-1] + 1)
+            axis.stairs(cap[: len(data)], edges, baseline=None, color="k", linewidth=1, linestyle=":",
+                        label="Cap: nights you leave available")
+        axis.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend(fontsize="small")
+    ax_zoom.set_title(f"First {zoom_months} months (month 0 = closing month)", fontsize=10)
+    ax_zoom.set_xticks(zoom.index.to_numpy() + 0.5,
+                       [f"{h}\n{m.capitalize()}" for h, m in zip(zoom.index, zoom["calendar_month"], strict=True)])
+    if final_year is not None:
+        ax_dist = fig.add_subplot(grid[0, 1])
+        median, hi_outer = final_year["median"], final_year["hi_outer"]
+        z_hi_outer = norm.ppf(outer_ci[1])
+        sigma = float(np.log(hi_outer / median) / z_hi_outer) if hi_outer > median > 0 else 0.0
+        _draw_final_distribution(ax_dist, median, sigma, outer_ci, subtitle=f"Year {final_year['year']} Total Gross Revenue")
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
+
+
+def _plot_net_rental_income(
+    annual: pd.DataFrame, fees: dict[str, float], ci: tuple[float, float], outer_ci: tuple[float, float], save_path: Path
+) -> Path:
+    """Per scenario year: EXPECTED gross revenue as a stacked bar split into net rental income (bottom) and
+    each deduction (management fee, channel commissions); net's own main band as a solid whisker and its
+    1-99% band as a dashed whisker. Title and caption state every deduction explicitly."""
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    years = annual.index.to_numpy()
+    net = annual["net_mean"].to_numpy()
+    mgmt = annual["mgmt_fee_mean"].to_numpy()
+    commissions = annual["channel_commissions_mean"].to_numpy()
+
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    width = 0.6
+    ax.bar(years, net, width, color="C0", label="Net rental income (expected)")
+    ax.bar(years, mgmt, width, bottom=net, color="C1", alpha=0.6,
+           label=f"Management fee ({fees['mgmt_fee_fraction']:.1%} of gross after commissions)")
+    if commissions.any():
+        ax.bar(years, commissions, width, bottom=net + mgmt, color="C7", alpha=0.6,
+               label=f"Channel commissions ({fees['channel_commission_fraction']:.1%} of gross)")
+    ax.errorbar(years, annual["net_median"], yerr=[annual["net_median"] - annual["net_lo"], annual["net_hi"] - annual["net_median"]],
+                fmt="o", color="k", markersize=4, capsize=4, linewidth=1.2,
+                label=f"Net: median and {ci[0] * 100:.0f}-{ci[1] * 100:.0f}% band")
+    outer = ax.errorbar(years + 0.18, annual["net_median"],
+                        yerr=[annual["net_median"] - annual["net_lo_outer"], annual["net_hi_outer"] - annual["net_median"]],
+                        fmt="none", ecolor="k", alpha=0.5, capsize=3, linewidth=1,
+                        label=f"Net: {outer_ci[0] * 100:.0f}-{outer_ci[1] * 100:.0f}% band")
+    outer[-1][0].set_linestyle("--")
+    ax.set_xticks(years)
+    ax.set_xlim(years[0] - 0.8, years[-1] + 0.8)
+    ax.set_xlabel("Scenario year")
+    ax.set_ylabel("USD/year")
+    ax.set_title(
+        "Net Rental Income = Gross Rental Revenue − Channel Commissions − Management Fee\n"
+        f"(bar height = expected gross; net = gross × (1 − {fees['channel_commission_fraction']:.3g}) × "
+        f"(1 − {fees['mgmt_fee_fraction']:.3g}) = {fees['keep_fraction']:.1%} of gross)"
+    )
+    ax.grid(alpha=0.3, axis="y")
+    ax.legend(fontsize="small", loc="upper left")
+    fig.text(
+        0.01, 0.005,
+        "Lodging tax is NOT deducted: it is charged to guests on top of the nightly rate and remitted by the "
+        "manager/platform.\nCarrying costs and income taxes are NOT subtracted here (see total_carrying_costs.png "
+        "and the taxes stage).",
+        fontsize=8, ha="left", va="bottom",
+    )
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.savefig(save_path)
+    plt.close(fig)
+    return save_path
+
+
+def save_rental_operations_result_plots(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Path]:
+    """Saves this scenario's rental plots (section 7):
+      results/<scenario>/rental_operations/occupancy.png      rented nights per month (with your cap)
+      results/<scenario>/rental_operations/adr.png            ADR per month, grown by the adr latent
+      results/<scenario>/rental_operations/gross_revenue.png  gross per month + final-year total distribution
+      results/<scenario>/net_rental_income.png                per year: gross split into net + each deduction
+    All read scenario["rental_operations"] (rental_operations.compute_rental_operations), computed here if
+    the runner hasn't stored it yet."""
+    from condobuyuq2026.rental_operations import compute_rental_operations, rentable_nights_by_month
+
+    deck = deck if deck is not None else load_deck()
+    rental = scenario.get("rental_operations") or compute_rental_operations(scenario, deck)
+    monthly, annual = rental["monthly"], rental["annual"]
+    ci, outer_ci = rental["ci"], rental["outer_ci"]
+    scenario_dir = scenario_results_dir(scenario).parent
+    out_dir = scenario_dir / "rental_operations"
+    rentable = rentable_nights_by_month(deck)
+    final = annual.iloc[-1]
+
+    return {
+        "occupancy": _plot_rental_monthly(
+            monthly, "nights", ci, outer_ci,
+            title="Nights Rented per Month — Scenario Projection\n(fitted occupancy × nights you leave available, capped)",
+            ylabel="Nights", save_path=out_dir / "occupancy.png",
+            cap=[rentable[m] for m in monthly["calendar_month"]],
+        ),
+        "adr": _plot_rental_monthly(
+            monthly, "adr", ci, outer_ci,
+            title="ADR per Month — Scenario Projection\n(fitted ADR, closing-date dollars, grown by the adr latent; "
+            "blank = no bookings expected)",
+            ylabel="USD per rented night", save_path=out_dir / "adr.png",
+        ),
+        "gross_revenue": _plot_rental_monthly(
+            monthly, "gross", ci, outer_ci,
+            title="Gross Rental Revenue per Month — Scenario Projection\n(nights × ADR, before lodging tax and fees)",
+            ylabel="USD/month", save_path=out_dir / "gross_revenue.png",
+            final_year={"median": float(final["gross_median"]), "hi_outer": float(final["gross_hi_outer"]),
+                        "year": int(annual.index[-1])},
+        ),
+        "net_rental_income": _plot_net_rental_income(
+            annual, rental["fees"], ci, outer_ci, save_path=scenario_dir / "net_rental_income.png"
+        ),
+    }

@@ -68,8 +68,9 @@
 #     `special_assessment`/`utilities`): `growth:` names ONLY a `latent:` — no separate `dist`/
 #     `median`/`cv` of its own. The named latent's own already-fitted process supplies both the mean
 #     growth and how its uncertainty widens/mean-reverts (see that section's header comment).
-#   - Everywhere else (`rental_operations.adr.growth`, `rent_reference.seasonal_lease_cost.growth`,
-#     `personal_use.alternate_lodging_cost_by_month.growth` — all `latent: adr`): `growth:` carries
+#   - `rental_operations.adr_growth_latent`: same idea, just the latent's name (no dist/median/cv).
+#   - Everywhere else (`rent_reference.seasonal_lease_cost.growth`,
+#     `personal_use.alternate_lodging_cost_by_month.growth` — both `latent: adr`): `growth:` carries
 #     its own hand-set `dist`/`median`/`cv` ALONGSIDE the latent. EARMARKED: this is the older,
 #     redundant shape (the hand-set rate can silently disagree with the latent's own fitted rate) —
 #     revisit the same way `carrying_costs` was, if/when worth doing.
@@ -199,8 +200,7 @@ forecast_models:
 # For anything that needs a growth or level driver but isn't itself a founding process:
 # construction_cost and insurance drive both a LEVEL and a GROWTH role (see their own comments
 # below); maintenance drives a LEVEL only; adr and utilities each drive a GROWTH only (their LEVEL/
-# seasonal shape is just their own `months:` map — see rental_operations.adr/carrying_costs.
-# utilities). Each entry is a weighted combination of all three forecast_models' own standardized
+# seasonal shape comes from rental_operations.sources / carrying_costs.utilities). Each entry is a weighted combination of all three forecast_models' own standardized
 # monthly paths -- referenced by their own key (`market`/`home_price`/`general`), same as
 # everywhere else in this deck (see "Referencing a process/derived latent by name" above), not a
 # separate `z_*` identifier -- plus an idiosyncratic share, for latent X with weights {a, b, c}:
@@ -237,8 +237,8 @@ derived_latents:
       general: 0.5
 
   adr:
-    # Drives adr's GROWTH (secular pricing power) — adr's LEVEL/seasonal shape is just its own
-    # `months:` map (see rental_operations.adr). ALSO reused for rent_reference.
+    # Drives adr's GROWTH (secular pricing power) — adr's LEVEL/seasonal shape is fitted from
+    # rental_operations.sources (see rental_operations.adr_growth_latent). ALSO reused for rent_reference.
     # seasonal_lease_cost's growth and personal_use.alternate_lodging_cost_by_month's growth —
     # same rental market, so the same pricing-power process applies to all three.
     weights:
@@ -632,18 +632,23 @@ carrying_costs:
     # MONTHS ARE REAL CALENDAR MONTHS, anchored to scenario.closing_month: scenario month 0 is the
     # closing month (fixed 2026-11-22 -- utilities used to treat month 0 as January regardless).
     #
-    # OCCUPANCY comes from other sections: occupied days per month = EXPECTED rented days
-    # (rental_operations.occupancy's lognormal mean, median x sqrt(1 + cv^2)) + personal_use.
-    # personal_use_days_by_month, capped at the days in that month (with a printed warning).
+    # OCCUPANCY comes from other sections: occupied days per month = EXPECTED rented nights (the
+    # mean of rental_operations' fitted occupancy prior, capped at the nights you leave available)
+    # + personal_use.personal_use_days_by_month.
     kind: three_category
     initial_annual_average_monthly_cost: 119  # example -- the PREVIOUS OWNER's actual average monthly
                                                #   bill (annual total / 12), not any single month's
-    calibration_occupied_days_by_month: deck   # The occupancy the bill above was measured under.
-                                               #   `deck` (default) = assume it was THIS deck's own
-                                               #   occupancy (rented + personal use, as above). If you
-                                               #   learn the previous owner's real occupancy, replace
-                                               #   with a 12-month map of occupied days, e.g.
-                                               #   {jan: 25, feb: 22, ..., dec: 24}.
+    calibration_occupied_days_by_month: history  # The occupancy the bill above was measured under.
+                                               #   OPTIONS:
+                                               #   `history` = the PREVIOUS owner's real occupancy: rented
+                                               #     + owner nights per month, averaged over the included
+                                               #     rental_operations.sources of kind: history that give
+                                               #     owner_nights_by_month (e.g. the 2025 owner statement).
+                                               #   `deck` = assume it was YOUR occupancy (rented + your
+                                               #     personal use), i.e. the previous owner used the unit
+                                               #     like you will.
+                                               #   a 12-month map of occupied days, e.g.
+                                               #     {jan: 25, feb: 22, ..., dec: 24}.
     components:
       # Each utility's share of the observed bill and how its NON-heating cost behaves.
       #   weight: share of the observed average bill (all weights must add up to 1). Set 0 for anything
@@ -653,7 +658,7 @@ carrying_costs:
       #     1 = fully occupancy-driven.
       electric: {weight: 0.80, occupancy_fraction: 0.6}   # example
       gas: {weight: 0.0, occupancy_fraction: 0.0}         # example
-      water: {weight: 0.10, occupancy_fraction: 0.8}      # example
+      water: {weight: 0.10, occupancy_fraction: 1.0}      # example
       sewer: {weight: 0.10, occupancy_fraction: 0.5}      # example
       trash: {weight: 0.0, occupancy_fraction: 0.0}       # example
       internet: {weight: 0.0, occupancy_fraction: 0.0}    # example
@@ -720,16 +725,43 @@ carrying_costs:
 # -----------------------------------------------------------------------------
 # 7. rental_operations
 # -----------------------------------------------------------------------------
-# managed_by below drives financing's loan_occupancy_class (see that section's header comment).
-# tax_use_class (OPTIONS: personal_use | mixed_use | rental) is ALSO DERIVED -- not set anywhere in
-# this deck (see classification.get_tax_use_class) -- from annual_rented_days (this section's own
-# occupancy medians, summed over the year) and annual_personal_days (personal_use.
-# personal_use_days_by_month, summed): rented <=14 days/year -> personal_use (rental income is tax-
-# free); else personal use >14 days/year OR >10% of rented days -> mixed_use (deductions capped at
-# rental income, no loss allowed); else -> rental (a pure rental -- losses suspended, released at
-# sale). Independent of loan_occupancy_class and of taxes.passive_loss_treatment (a DIFFERENT IRS
-# test -- average-guest-stay length, not day counts -- still to be wired into the future taxes
-# module alongside this).
+# WHAT THIS SECTION DOES: predicts the unit's short-term-rental revenue. Monthly gross revenue =
+# nights rented x average nightly rate (ADR) x ADR growth over the horizon. Net rental income =
+# gross minus the two fees at the bottom of this section.
+#
+# WHAT YOU ENTER: `sources` -- every piece of rental data you have (owner statements, property-
+# manager projections, market figures), each as ADR + occupancy, either for a whole year or month
+# by month. You do NOT enter the prior itself (no median/cv): the model FITS it from your sources:
+#   - Occupancy, per calendar month: the plain average and standard deviation of that month's
+#     occupancy across every included source/year (zero months included) are matched to a
+#     lognormal (cv = std / average). A month that is 0 in EVERY source is a hard 0.
+#   - ADR, per calendar month: the same, using only sources that had bookings that month (a month
+#     with no bookings has no ADR).
+#   - A month with only one observation borrows the average cv of the other months (with a warning).
+#   - The fitted spread is treated as year-to-year variation; the uncertainty in the fitted typical
+#     value itself (spread / sqrt(number of observations)) is treated as persistent.
+#   See src/condobuyuq2026/models/rental_operations_priors/ for the fit and plots of it against your
+#   raw source values.
+#
+# YOUR OWN USE IS NOT ENTERED HERE: predictions use YOUR personal use (personal_use.
+# personal_use_days_by_month, section 8). Occupancy is a RATE of nights available to rent, so a
+# source's rate is applied to the nights YOU leave available: predicted rented nights per month =
+# occupancy x (days in month - your personal-use days).
+#
+# LODGING TAX IS NOT MODELED, on purpose: enter every number BEFORE lodging tax (as owner statements
+# and manager projections report them). Lodging tax (state + county + town sales/lodging taxes) is
+# charged to the GUEST on top of the nightly rate and collected and remitted by the manager or
+# booking platform, so it never reduces your income. (If you ever self-manage, you register and
+# remit it yourself, but it's still the guest's money added on top of your rate.)
+#
+# tax_use_class (OPTIONS: personal_use | mixed_use | rental) is DERIVED -- not set anywhere in this
+# deck (see classification.get_tax_use_class) -- from annual rented days (the fitted MEDIAN rented
+# nights, summed over the year) and annual personal days (personal_use.personal_use_days_by_month,
+# summed): rented <=14 days/year -> personal_use (rental income is tax-free); else personal use >14
+# days/year OR >10% of rented days -> mixed_use (deductions capped at rental income, no loss
+# allowed); else -> rental (a pure rental -- losses suspended, released at sale). Independent of
+# loan_occupancy_class and of taxes.passive_loss_treatment (a DIFFERENT IRS test -- average guest
+# stay length, not day counts).
 rental_operations:
   managed_by:
     # Who runs the day-to-day rental (categorical). OPTIONS: self | company. Drives financing's
@@ -739,70 +771,121 @@ rental_operations:
     kind: constant
     value: company                   # example
 
-  occupancy:
-    # DAYS booked per month, not a fraction/percent — matches personal_use_days_by_month's unit
-    # convention. median is a whole number of days; cv stays a plain fraction describing
-    # relative spread (the underlying quantity being integer-valued doesn't require cv itself to
-    # be one). Bounded above by (days in that calendar month - personal_use_days_by_month for
-    # that month) — this bound must be computed dynamically by the loader per actual month/year
-    # (28, 29 in a leap year, 30, or 31 days), not hardcoded here; lognormal draws get rounded to
-    # the nearest whole day downstream. Seasonal shape via its own `months:` map below -- no shared
-    # level-driving latent with adr. No growth — a day-count doesn't have a secular multi-year
-    # trend the way dollar figures do.
-    kind: prior
-    dist: lognormal
-    resolution: monthly
-    months:
-      jan: {median: 22, cv: 0.15}
-      feb: {median: 20, cv: 0.15}
-      mar: {median: 20, cv: 0.15}
-      apr: {median: 10, cv: 0.25}
-      may: {median: 9, cv: 0.25}
-      jun: {median: 15, cv: 0.20}
-      jul: {median: 18, cv: 0.20}
-      aug: {median: 17, cv: 0.20}
-      sep: {median: 10, cv: 0.25}
-      oct: {median: 9, cv: 0.25}
-      nov: {median: 12, cv: 0.20}
-      dec: {median: 21, cv: 0.15}
+  sources:
+    # A LIST: add one entry per piece of rental data you have; there is no limit and no fixed set of
+    # source types. Every entry has these fields:
+    #   label:      any name, shown on the fit plots.
+    #   include:    true | false. false leaves the entry in the deck but out of the fit (handy for
+    #               trades, e.g. "what if I ignore the manager's projection?").
+    #   kind:       history | estimate. history = what actually happened at THIS unit in one year
+    #               (e.g. an owner statement). estimate = anything else (a manager's projection, a
+    #               regional/market figure). Enter each year of history ONCE: monthly if you have
+    #               it, otherwise annual.
+    #   year:       the year the numbers are from. ADR is restated from that year's dollars to
+    #               closing-date dollars using the `general` CPI data (forecast_models.general).
+    #   resolution: annual | monthly. Then EITHER
+    #     annual:   occupancy: <rate>, adr: <USD>   (one value each for the whole year), OR
+    #     monthly:  months: {jan: {occupancy: <rate>, adr: <USD>}, ..., dec: {...}}  (all 12 months)
+    #   owner_nights_by_month: OPTIONAL, history only -- the owner's own nights that year, by month.
+    #               Not used for revenue (your own use comes from section 8); used to work out how
+    #               many nights the unit was occupied when that year's utility bills were measured.
+    #
+    # occupancy = nights rented / nights AVAILABLE to rent (nights in the period minus the owner's
+    #   own nights), a fraction from 0 to 1. E.g. 86 nights rented, 33 owner nights in a 365-night
+    #   year: 86 / (365 - 33) = 0.259. If a source only gives nights rented, divide by the nights it
+    #   assumed available (365 for a full year if it assumed no owner use).
+    # adr = gross rental revenue / nights rented (USD per night, BEFORE lodging tax and before any
+    #   fees). For a month with occupancy 0 there is no ADR: write `adr: null`.
+    # Got a RANGE (e.g. "occupancy 30-45%")? Do the conversion yourself and enter one value (e.g.
+    #   the midpoint); the fit measures disagreement between sources, not within one.
+    - label: 2025 owner statement (Vail Properties)
+      # REAL DATA: the seller's 2025 year-to-date owner statement, whose "year 2025" runs DEC 2024
+      # through NOV 2025. Year total: $20,206.89 gross, 86 nights rented, 33 owner nights, 332
+      # available -> occupancy 0.259, ADR $234.97. Monthly occupancy = nights rented / (days in
+      # month - owner nights); ADR = the statement's "Avg Rent Rate" (gross / nights rented).
+      include: true
+      kind: history
+      year: 2025
+      resolution: monthly
+      months:
+        jan: {occupancy: 0.258, adr: 359.53}   #  8 / 31
+        feb: {occupancy: 0.643, adr: 269.22}   # 18 / 28
+        mar: {occupancy: 0.269, adr: 280.57}   #  7 / (31 - 5 owner)
+        apr: {occupancy: 0.0, adr: null}       #  0 / 30  (shoulder season, no bookings)
+        may: {occupancy: 0.0, adr: null}       #  0 / (31 - 4 owner)
+        jun: {occupancy: 0.241, adr: 179.70}   #  7 / (30 - 1 owner)
+        jul: {occupancy: 0.375, adr: 211.95}   #  9 / (31 - 7 owner)
+        aug: {occupancy: 0.320, adr: 169.32}   #  8 / (31 - 6 owner)
+        sep: {occupancy: 0.233, adr: 173.43}   #  7 / 30
+        oct: {occupancy: 0.233, adr: 166.36}   #  7 / (31 - 1 owner)
+        nov: {occupancy: 0.190, adr: 176.50}   #  4 / (30 - 9 owner)
+        dec: {occupancy: 0.355, adr: 265.10}   # 11 / 31  (December 2024)
+      owner_nights_by_month: {jan: 0, feb: 0, mar: 5, apr: 0, may: 4, jun: 1, jul: 7, aug: 6, sep: 0, oct: 1, nov: 9, dec: 0}
 
-  adr:
-    # USD/night, monthly seasonal shape via its own `months:` map below -- no shared level-driving
-    # latent with occupancy anymore (see occupancy's own comment). Growth (secular pricing power)
-    # via the richer `adr` derived latent instead.
-    kind: prior
-    dist: lognormal
-    resolution: monthly
-    months:
-      jan: {median: 420, cv: 0.20}
-      feb: {median: 440, cv: 0.20}
-      mar: {median: 400, cv: 0.20}
-      apr: {median: 220, cv: 0.20}
-      may: {median: 180, cv: 0.20}
-      jun: {median: 210, cv: 0.20}
-      jul: {median: 230, cv: 0.20}
-      aug: {median: 220, cv: 0.20}
-      sep: {median: 190, cv: 0.20}
-      oct: {median: 180, cv: 0.20}
-      nov: {median: 210, cv: 0.20}
-      dec: {median: 400, cv: 0.20}
-    growth:
-      kind: prior
-      dist: lognormal
-      latent: adr
-      median: 0.04
-      cv: 0.3
+    - label: Property manager projection (EXAMPLE)
+      # PLACEHOLDER -- example values, NOT real data. Replace with the property-specific monthly
+      # projection table (rate and nights rented per month) once entered.
+      include: true
+      kind: estimate
+      year: 2026
+      resolution: monthly
+      months:
+        jan: {occupancy: 0.45, adr: 340}
+        feb: {occupancy: 0.55, adr: 330}
+        mar: {occupancy: 0.50, adr: 310}
+        apr: {occupancy: 0.12, adr: 170}
+        may: {occupancy: 0.08, adr: 160}
+        jun: {occupancy: 0.30, adr: 190}
+        jul: {occupancy: 0.45, adr: 220}
+        aug: {occupancy: 0.40, adr: 200}
+        sep: {occupancy: 0.30, adr: 180}
+        oct: {occupancy: 0.20, adr: 165}
+        nov: {occupancy: 0.20, adr: 175}
+        dec: {occupancy: 0.45, adr: 300}
+
+    - label: Regional 1b/1ba estimate (EXAMPLE)
+      # PLACEHOLDER -- example values, NOT real data. Replace with the regional manager's annual
+      # figures (convert their revenue/nights ranges to one occupancy and one ADR yourself).
+      # An annual entry is spread over the 12 months using the average seasonal pattern of the
+      # monthly sources above.
+      include: true
+      kind: estimate
+      year: 2026
+      resolution: annual
+      occupancy: 0.35
+      adr: 230
+
+  occupancy_adr_correlation:
+    # Correlation (-1 to 1) between a year's occupancy surprise and its ADR surprise -- e.g. a big
+    # snow year that brings both more bookings AND higher rates is a positive correlation. 0 =
+    # independent (default: there's too little history to estimate it reliably; the history
+    # sources' own estimate is reported with the fit for reference).
+    kind: constant
+    value: 0.0
+
+  adr_growth_latent:
+    # Which derived latent grows ADR over the horizon (secular pricing power). ADR's level and
+    # seasonal pattern come from `sources`; this only supplies the growth, using that latent's own
+    # fitted growth path and uncertainty (see derived_latents.adr). No separate growth rate is
+    # entered here.
+    kind: constant
+    value: adr
+
+  channel_commission_fraction:
+    # Booking-channel commissions (Airbnb/VRBO/travel-agent fees) as a fraction of GROSS rental
+    # revenue, if your manager passes them through to you. Taken off FIRST. Set 0 if your manager's
+    # fee already includes them. (For reference, Vail Properties' 2025 statement shows "Comms-Fees"
+    # of ~0.048 of gross.)
+    kind: constant
+    value: 0.0                       # example -- a manager whose fee covers channel commissions
 
   mgmt_fee_fraction:
-    # Property-management fee (fraction of revenue) — also covers cleaning and platform fees
-    # (no separate line items for those).
+    # Property-management fee as a fraction of revenue AFTER channel commissions:
+    #   net rental income = gross x (1 - channel_commission_fraction) x (1 - mgmt_fee_fraction).
+    # Covers cleaning and platform costs too (no separate line items). E.g. 0.25 = the manager keeps
+    # 25%. (For reference, Vail Properties' 2025 statement shows a 50/50 owner split: 0.50.)
     kind: constant
-    value: 0.25                      # example — full-service PM
-
-  lodging_tax_rate:
-    # Combined state, county, and town rate.
-    kind: constant
-    value: 0.088                     # example — Summit County / Keystone area, ballpark
+    value: 0.25                      # example -- quote from a full-service manager
 
 # -----------------------------------------------------------------------------
 # 8. personal_use

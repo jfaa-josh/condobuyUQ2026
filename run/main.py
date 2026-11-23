@@ -28,12 +28,11 @@ once, even though multiple buy scenarios may share it (see condobuyuq2026.runner
 Acquisition costs, occupancy/tax classification, financing (mortgage rate + amortization),
 carrying costs (property tax, HOA, insurance, maintenance, special assessment, utilities -- see
 condobuyuq2026.carrying_costs, plus their own SCALED per-scenario result plots saved to results/,
-see condobuyuq2026.results), and taxes (mortgage/depreciation/rental-income/sale effects -- see
-condobuyuq2026.taxes) are actually computed today; the buy-vs-reference comparison itself is still
+see condobuyuq2026.results), rental operations (fitted occupancy/ADR priors and the per-scenario revenue
+projection -- see condobuyuq2026.rental_operations), and taxes (mortgage/depreciation/rental-income/sale
+effects -- see condobuyuq2026.taxes) are actually computed today; the buy-vs-reference comparison itself is still
 a placeholder print, filled in as later deck sections (rent_reference, capital_markets, exit, ...)
 get built.
-*** taxes.py has ONE remaining PLACEHOLDER input (gross_rent) -- see that module's docstring and
-PLACEHOLDER_FIELDS constant before trusting any gross_rent-derived dollar figure it produces. ***
 
 Run with: uv run python run/main.py            (offline; saved models only)
           uv run python run/main.py --refresh  (also refreshes stale forecast_models)
@@ -50,11 +49,13 @@ from condobuyuq2026.input_deck import load_deck
 from condobuyuq2026.reporting import (
     print_carrying_cost_prior_build_report,
     print_derived_latent_build_report,
+    print_rental_operations_prior_build_report,
     print_stale_forecast_models_warning,
 )
 from condobuyuq2026.runner import run_scenarios
 from condobuyuq2026.utils.manual_utils import build_all_derived_latent_models
 from condobuyuq2026.utils.prior_utils import build_all_carrying_cost_prior_models
+from condobuyuq2026.utils.rental_prior_utils import build_rental_operations_prior_models
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the condobuyUQ2026 pipeline.")
@@ -79,6 +80,10 @@ if __name__ == "__main__":
 
     results = build_all_derived_latent_models()
     print_derived_latent_build_report(results)
+
+    # Before the carrying-cost priors: utilities reads expected rented nights from these.
+    rental_prior_results = build_rental_operations_prior_models()
+    print_rental_operations_prior_build_report(rental_prior_results)
 
     carrying_cost_prior_results = build_all_carrying_cost_prior_models()
     print_carrying_cost_prior_build_report(carrying_cost_prior_results)

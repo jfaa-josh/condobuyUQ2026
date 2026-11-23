@@ -24,7 +24,6 @@ dev = [
     "pre-commit",
     "ruff",
     "mypy",
-    "pytest>=9.1.1",
 ]
 
 [tool.ruff]
