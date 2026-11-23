@@ -8,7 +8,8 @@ A buy scenario dict gets a new key per stage as it's computed -- so far "acquisi
 (acquisition.compute_acquisition_costs), "classification"
 (classification.compute_occupancy_classification), "financing" (financing.compute_financing),
 "carrying_costs" (carrying_costs.compute_carrying_costs), "rental_operations"
-(rental_operations.compute_rental_operations), and "taxes" (taxes.compute_owner_taxes,
+(rental_operations.compute_rental_operations), "personal_use" (personal_use.compute_personal_use),
+and "taxes" (taxes.compute_owner_taxes,
 which reuses "carrying_costs" for its own property_tax/shared_expenses -- see that module's own
 docstring) -- so by the time run_scenarios returns, every scenario in its "scenarios" list carries
 everything computed for it, not just what got printed along the way. reference_results[
@@ -37,6 +38,8 @@ from condobuyuq2026.reporting import (
     print_carrying_costs_report,
     print_classification_report,
     print_financing_report,
+    print_personal_use_report,
+    print_personal_use_result_plots_report,
     print_reference_cache_hit,
     print_reference_report,
     print_rental_operations_report,
@@ -46,8 +49,13 @@ from condobuyuq2026.reporting import (
     print_special_assessment_report,
     print_taxes_report,
 )
+from condobuyuq2026.personal_use import compute_personal_use
 from condobuyuq2026.rental_operations import compute_rental_operations
-from condobuyuq2026.results import save_carrying_cost_result_plots, save_rental_operations_result_plots
+from condobuyuq2026.results import (
+    save_carrying_cost_result_plots,
+    save_personal_use_result_plots,
+    save_rental_operations_result_plots,
+)
 from condobuyuq2026.scenarios import get_scenario_set
 from condobuyuq2026.taxes import compute_owner_taxes, compute_renter_taxes
 
@@ -56,12 +64,13 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
     """Iterates every buy scenario (see scenarios.get_scenario_set), running its matching reference
     case the FIRST time that reference_id is seen (cached after that -- see module docstring), then
     immediately following it with that scenario's own buy-side computation (acquisition,
-    classification, financing, carrying_costs, taxes today; more as later stages are built), so a
+    classification, financing, carrying_costs, rental_operations, personal_use, taxes today; more as later stages are built), so a
     buy scenario and its reference are always handled as a pair.
 
     Returns {"reference_cases": ..., "reference_results": ..., "scenarios": ...}:
     - "scenarios": scenarios.get_scenario_set's buy scenarios, each one now ALSO carrying
-      "acquisition", "classification", "financing", "carrying_costs", "taxes" (each stage's own
+      "acquisition", "classification", "financing", "carrying_costs", "rental_operations",
+      "personal_use", "taxes" (each stage's own
       full result dict for that scenario) -- see module docstring's STORAGE note. Later stages add
       their own key the same way.
     - "reference_cases" / "reference_results": as scenarios.get_scenario_set built them, plus
@@ -107,6 +116,11 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         scenario["rental_operations"] = rental_operations
         print_rental_operations_report(rental_operations)
         print_rental_operations_result_plots_report(save_rental_operations_result_plots(scenario, deck))
+
+        personal_use = compute_personal_use(scenario, deck)
+        scenario["personal_use"] = personal_use
+        print_personal_use_report(personal_use)
+        print_personal_use_result_plots_report(save_personal_use_result_plots(scenario, deck))
 
         owner_taxes = compute_owner_taxes(scenario, deck)
         scenario["taxes"] = owner_taxes

@@ -212,7 +212,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   <header>
     <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
     <h1>Buy vs. Rent Input Deck</h1>
-    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–7 are editable here. Sections 8–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–8 are editable here. Sections 9–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
   </header>
 
   <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
@@ -350,9 +350,10 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       channel_commission_fraction: 0.0,
       mgmt_fee_fraction: 0.25
     },
-    // Section 8 isn't built in this GUI yet; kept here (read-only) because section 7's preview needs it.
     personal_use: {
-      personal_use_days_by_month: { jan: 7, feb: 0, mar: 0, apr: 0, may: 0, jun: 3, jul: 7, aug: 0, sep: 0, oct: 0, nov: 0, dec: 7 }
+      personal_use_days_by_month: { jan: 7, feb: 0, mar: 0, apr: 0, may: 0, jun: 3, jul: 7, aug: 0, sep: 0, oct: 0, nov: 0, dec: 7 },
+      alternate_lodging_cost_by_month: { jan: 3200, feb: 3200, mar: 2800, apr: 1600, may: 1300, jun: 1800, jul: 2100, aug: 2000, sep: 1600, oct: 1300, nov: 1700, dec: 3200 },
+      alternate_lodging_growth_latent: "adr"
     }
   };
 
@@ -516,9 +517,25 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       ],
       preview: previewRental
     },
-    { n: 8, id: "personal_use", title: "Personal use", soon: true,
-      desc: "Nights you use the condo yourself, and what you'd otherwise pay to stay nearby.",
-      keys: ["personal_use_days_by_month", "alternate_lodging_cost_by_month"] },
+    {
+      n: 8, id: "personal_use", title: "Personal use",
+      intro: "Your own use of the condo (buy branch): the nights you stay in it yourself, and what you'd pay for lodging elsewhere while it's rented out. Both are your own estimates, used exactly as entered. Nothing here is fitted.",
+      groups: [
+        { title: "Your own nights in the unit", fields: [
+          { path: "personal_use.personal_use_days_by_month", label: "Nights you stay, per month", kind: "constant", type: "custom", wide: true,
+            render: personalMonthMap("personal_use_days_by_month", { maxFn: (i) => DAYS[i], step: 1, what: "Personal nights", total: (t) => t + " nights a year" }),
+            hint: "Whole nights, the same every year (February = 28). Unrented friends/family stays count too. Used three ways: nights left to rent = days − these (section 7); the tax use class (section 9) compares these with rented nights; utilities count them as occupied days (section 6)." }
+        ]},
+        { title: "Alternate lodging · charged in full every month, exactly as entered", fields: [
+          { path: "personal_use.alternate_lodging_cost_by_month", label: "What you'll pay to stay elsewhere, per month", kind: "constant", type: "custom", wide: true,
+            render: personalMonthMap("alternate_lodging_cost_by_month", { max: 100000, step: 50, what: "Lodging cost", total: (t) => usd.format(t) + " a year, before growth" }),
+            hint: "Today's dollars. The model does NOT prorate this by your own nights or by bookings, so work out the real cost and enter that. A full-month lease while you still stay in the unit a night or two → the full lease price; about half the month → about half; a few nights at a time → nights × nightly rate; nowhere else → 0. A personal cost: not tax-deductible, not in the carrying-cost totals." },
+          { path: "personal_use.alternate_lodging_growth_latent", label: "Growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS,
+            hint: "Default adr: the same short-term-rental market as your own nightly rate. The amounts above are taken as known; the uncertainty comes from the driver's growth." }
+        ]}
+      ],
+      preview: previewPersonal
+    },
     { n: 9, id: "taxes", title: "Taxes", soon: true,
       desc: "Federal and state tax treatment of both branches, depreciation, recapture, and passive-loss rules.",
       keys: ["filing_status", "federal_marginal_rate", "niit_applies", "niit_rate", "itemizes_deductions", "state_tax_profiles", "salt_cap", "depreciation_years_building", "recapture_rate", "ltcg_rate", "passive_loss_treatment"] },
@@ -1082,8 +1099,81 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   }
 
   // ---------------------------------------------------------------------------
-  // Section 6-7 previews (approximate; the real math is in src/)
+  // Section 8 editors
   // ---------------------------------------------------------------------------
+  // A 12-month grid editing deck.personal_use[key] in place, with a running yearly total underneath.
+  function personalMonthMap(key, opts) {
+    return (wrap, onChange, err) => {
+      const obj = deck.personal_use[key];
+      const total = el("div", "ids");
+      const paintTotal = () => {
+        total.textContent = "";
+        total.append(el("span", "pill neutral", opts.total(MONTH_KEYS.reduce((a, m) => a + (obj[m] || 0), 0))));
+      };
+      wrap.append(monthGrid(obj, { maxFn: opts.maxFn, max: opts.max, step: opts.step, what: opts.what }, () => { paintTotal(); onChange(); }, err), total);
+      paintTotal();
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section 6-8 previews (approximate; the real math is in src/)
+  // ---------------------------------------------------------------------------
+  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  // Section 7's approximate per-calendar-month fit, shared by the section 7 and 8 previews: plain mean and
+  // spread of occupancy across included sources (annual sources spread by the monthly sources' seasonal
+  // pattern), ADR from booked months only. Returns null when no source is included, else 12 x {n, occ, sd, adr}.
+  function rentalMonthFit() {
+    const inc = deck.rental_operations.sources.filter((s) => s.include);
+    if (!inc.length) return null;
+    const monthly = inc.filter((s) => s.resolution === "monthly");
+    const occPat = MONTH_KEYS.map(() => []), adrPat = MONTH_KEYS.map(() => []);
+    monthly.forEach((s) => {
+      const a = sourceAnnual(s);
+      if (!a.occupancy) return;
+      MONTH_KEYS.forEach((m, i) => { occPat[i].push(s.months[m].occupancy / a.occupancy); if (s.months[m].adr != null) adrPat[i].push(s.months[m].adr / a.adr); });
+    });
+    const occP = occPat.map((xs) => xs.length ? mean(xs) : 1), adrP = adrPat.map((xs) => xs.length ? mean(xs) : (monthly.length ? null : 1));
+    return MONTH_KEYS.map((m, i) => {
+      const obs = inc.map((s) => s.resolution === "monthly" ? s.months[m]
+        : { occupancy: Math.min(s.occupancy * occP[i], 1), adr: adrP[i] != null && s.occupancy > 0 ? s.adr * adrP[i] : null });
+      const occ = obs.map((o) => o.occupancy), adrs = obs.filter((o) => o.adr != null).map((o) => o.adr);
+      const mo = mean(occ);
+      return { n: occ.length, occ: mo, sd: occ.length > 1 ? Math.sqrt(occ.reduce((a, x) => a + (x - mo) ** 2, 0) / (occ.length - 1)) : null,
+               adr: adrs.length ? mean(adrs) : null };
+    });
+  }
+
+  function previewPersonal(box) {
+    const pu = deck.personal_use, days = pu.personal_use_days_by_month, cost = pu.alternate_lodging_cost_by_month;
+    const fit = rentalMonthFit();
+    let personalTot = 0, availTot = 0, rentedTot = 0, lodgingTot = 0;
+    const rows = MONTH_KEYS.map((m, i) => {
+      const avail = DAYS[i] - days[m];
+      const rented = fit ? Math.min(fit[i].occ * avail, avail) : null;
+      personalTot += days[m]; availTot += avail; rentedTot += rented || 0; lodgingTot += cost[m];
+      const tr = el("tr");
+      tr.append(td(MONTHS[i]), td(String(DAYS[i]), "num dim"), td(String(days[m]), "num"), td(String(avail), "num"),
+        td(rented != null ? rented.toFixed(1) : "—", "num dim"), td(usd.format(cost[m]), "num"));
+      return tr;
+    });
+    const tot = el("tr");
+    tot.append(td("Year"), td("365", "num dim"), td(String(personalTot), "num"), td(String(availTot), "num"),
+      td(fit ? rentedTot.toFixed(0) : "—", "num dim"), td(usd.format(lodgingTot), "num"));
+    rows.push(tot);
+    // Tax use class, same rule as classification.get_tax_use_class (IRC 280A day counts).
+    const cls = !fit ? "—" : rentedTot <= 14 ? "personal_use" : (personalTot > 14 || personalTot > 0.1 * rentedTot) ? "mixed_use" : "rental";
+    const stats = el("div", "stat-row");
+    [[personalTot + " nights", "your own use per year"], [availTot + " nights", "left available to rent"],
+     [usd.format(lodgingTot), "alternate lodging, year 1 (before growth)"], [cls, "tax use class (approx.)"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+    box.append(stats,
+      table([["Month"], ["Days", 1], ["Yours", 1], ["Available", 1], ["Rented (approx.)", 1], ["Alternate lodging", 1]], rows),
+      el("p", "hint", "Alternate lodging is charged exactly as entered, every month, whatever your own nights or bookings, then grown by "
+        + pu.alternate_lodging_growth_latent + " in the run. Rented nights use section 7's approximate fit. Tax class: rented ≤ 14 nights → personal_use; "
+        + "else personal nights > 14 or > 10% of rented → mixed_use; else rental. The run classifies on median rented nights, so a borderline case can differ."));
+  }
+
   function previewCarrying(box) {
     const c = deck.carrying_costs, pt = c.property_tax, u = c.utilities, sa = c.special_assessment;
     const tax = pt.market_value.initial_price * (0.9 * pt.assessment_rate.local.rate * pt.assessment_rate.local.mill_levy
@@ -1116,30 +1206,16 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   function previewRental(box) {
     const ro = deck.rental_operations;
     const inc = ro.sources.filter((s) => s.include);
-    if (!inc.length) { box.append(el("span", "pill bad", "No source is included. The run needs at least one.")); return; }
-    // Seasonal pattern of the monthly sources (each month ÷ that source's own annual occupancy / ADR).
-    const monthly = inc.filter((s) => s.resolution === "monthly");
-    const occPat = MONTH_KEYS.map(() => []), adrPat = MONTH_KEYS.map(() => []);
-    monthly.forEach((s) => {
-      const a = sourceAnnual(s);
-      if (!a.occupancy) return;
-      MONTH_KEYS.forEach((m, i) => { occPat[i].push(s.months[m].occupancy / a.occupancy); if (s.months[m].adr != null) adrPat[i].push(s.months[m].adr / a.adr); });
-    });
-    const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
-    const occP = occPat.map((xs) => xs.length ? mean(xs) : 1), adrP = adrPat.map((xs) => xs.length ? mean(xs) : (monthly.length ? null : 1));
-    // Observations per month: monthly sources as entered; annual sources spread by the pattern.
-    const obs = MONTH_KEYS.map((m, i) => inc.map((s) => s.resolution === "monthly" ? s.months[m]
-      : { occupancy: Math.min(s.occupancy * occP[i], 1), adr: adrP[i] != null && s.occupancy > 0 ? s.adr * adrP[i] : null }));
+    const fit = rentalMonthFit();
+    if (!fit) { box.append(el("span", "pill bad", "No source is included. The run needs at least one.")); return; }
     const personal = deck.personal_use.personal_use_days_by_month;
     let nightsTot = 0, availTot = 0, grossTot = 0;
     const rows = MONTH_KEYS.map((m, i) => {
-      const occ = obs[i].map((o) => o.occupancy), adrs = obs[i].filter((o) => o.adr != null).map((o) => o.adr);
-      const mo = mean(occ), sd = occ.length > 1 ? Math.sqrt(occ.reduce((a, x) => a + (x - mo) ** 2, 0) / (occ.length - 1)) : null;
-      const adr = adrs.length ? mean(adrs) : null;
+      const { n, occ: mo, sd, adr } = fit[i];
       const avail = DAYS[i] - personal[m], nights = Math.min(mo * avail, avail), gross = adr != null ? nights * adr : 0;
       nightsTot += nights; availTot += avail; grossTot += gross;
       const tr = el("tr");
-      tr.append(td(MONTHS[i]), td(String(occ.length), "num dim"), td(pct(mo, 1), "num"), td(sd != null && mo > 0 ? (sd / mo).toFixed(2) : "pooled", "num dim"),
+      tr.append(td(MONTHS[i]), td(String(n), "num dim"), td(pct(mo, 1), "num"), td(sd != null && mo > 0 ? (sd / mo).toFixed(2) : "pooled", "num dim"),
         td(adr != null ? usd.format(adr) : "—", "num"), td(String(avail), "num dim"), td(nights.toFixed(1), "num"), td(usd.format(gross), "num"));
       return tr;
     });
@@ -1162,7 +1238,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       table([["Source"], ["Included"], ["Kind"], ["Year", 1], ["Resolution"], ["Occupancy", 1], ["ADR", 1]], perSource),
       el("p", "hint", "Fitted by calendar month (plain mean and spread across the included sources, zeros included; ADR from booked months only), applied to the nights you leave available:"),
       table([["Month"], ["Obs", 1], ["Occupancy", 1], ["cv", 1], ["ADR", 1], ["Available", 1], ["Nights", 1], ["Gross", 1]], rows),
-      el("p", "hint", "Approximate: no CPI restatement, no growth, and no lognormal/cap adjustment of the mean. The run's fit (models/rental_operations_priors/) and projection are the real numbers. Personal use comes from section 8, not built in this GUI yet."));
+      el("p", "hint", "Approximate: no CPI restatement, no growth, and no lognormal/cap adjustment of the mean. The run's fit (models/rental_operations_priors/) and projection are the real numbers. Nights you leave available come from section 8."));
   }
 
   // ---------------------------------------------------------------------------
@@ -1188,8 +1264,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     s.append(head);
 
     if (sec.soon) {
-      const p = el("div", "placeholder" + (sec.n === 8 ? " next" : ""));
-      p.append(el("span", "eyebrow", sec.n === 8 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const p = el("div", "placeholder" + (sec.n === 9 ? " next" : ""));
+      p.append(el("span", "eyebrow", sec.n === 9 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
       const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
       s.append(p);
       host.append(s);

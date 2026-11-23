@@ -186,6 +186,29 @@ def print_rental_operations_report(rental_operations: dict[str, Any]) -> None:
     )
 
 
+def print_personal_use_report(personal_use: dict[str, Any]) -> None:
+    """Prints one buy scenario's alternate-lodging cost (personal_use.compute_personal_use): horizon total
+    (mean, median and band), then year 1's total and your personal days."""
+    horizon, year_1 = personal_use["horizon"], personal_use["annual"].loc[1]
+    ci = personal_use["ci"]
+    band = f"{ci[0]:.0%}-{ci[1]:.0%}"
+    latent = personal_use["inputs"]["alternate_lodging_growth_latent"]
+    print(
+        f"personal_use: alternate lodging=${horizon['lodging_mean']:,.0f} mean over the horizon (median "
+        f"${horizon['lodging_median']:,.0f}, {band} ${horizon['lodging_lo']:,.0f}-${horizon['lodging_hi']:,.0f}), "
+        f"charged as entered, grown by {latent}; personal cost, not deductible, not in carrying-cost totals"
+    )
+    print(
+        f"  year 1: {year_1['personal_days']:.0f} personal days, alternate lodging=${year_1['lodging_mean']:,.0f} "
+        f"({band} ${year_1['lodging_lo']:,.0f}-${year_1['lodging_hi']:,.0f})"
+    )
+
+
+def print_personal_use_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """One line: where this scenario's personal_use plot went (results.save_personal_use_result_plots)."""
+    print(f"  saved {len(result_plots)} personal_use result plot to {result_plots['alternate_lodging_cost'].parent}")
+
+
 SPECIAL_ASSESSMENT_FOLDED_TAIL_WARNING_THRESHOLD = 0.01  # warn when P(N > k_max) exceeds 1%
 
 

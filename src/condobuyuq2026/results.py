@@ -446,8 +446,9 @@ def _plot_rental_monthly(
     """Monthly stair-step of one rental quantity over the whole horizon (top), plus a zoom on the first
     `zoom_months` months with calendar-month labels (bottom) -- the full horizon is too dense to read
     month by month. Optional `cap` (nights you leave available, per scenario month) is drawn as a dotted
-    step line. Optional `final_year` ({"median", "hi_outer", "year"}) adds a top-right panel with that
-    year's TOTAL distribution (lognormal, as computed by compute_rental_operations)."""
+    step line. Optional `final_year` ({"median", "hi_outer", "year", optional "what" for its subtitle})
+    adds a top-right panel with that year's TOTAL distribution (lognormal, as computed by
+    compute_rental_operations / compute_personal_use). Also used for personal_use's lodging cost."""
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     fig = plt.figure(figsize=(14 if final_year is not None else 12, 9))
@@ -472,7 +473,8 @@ def _plot_rental_monthly(
         median, hi_outer = final_year["median"], final_year["hi_outer"]
         z_hi_outer = norm.ppf(outer_ci[1])
         sigma = float(np.log(hi_outer / median) / z_hi_outer) if hi_outer > median > 0 else 0.0
-        _draw_final_distribution(ax_dist, median, sigma, outer_ci, subtitle=f"Year {final_year['year']} Total Gross Revenue")
+        what = final_year.get("what", "Total Gross Revenue")
+        _draw_final_distribution(ax_dist, median, sigma, outer_ci, subtitle=f"Year {final_year['year']} {what}")
     fig.tight_layout()
     fig.savefig(save_path)
     plt.close(fig)
@@ -573,5 +575,33 @@ def save_rental_operations_result_plots(scenario: dict[str, Any], deck: dict[str
         ),
         "net_rental_income": _plot_net_rental_income(
             annual, rental["fees"], ci, outer_ci, save_path=scenario_dir / "net_rental_income.png"
+        ),
+    }
+
+
+def save_personal_use_result_plots(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Path]:
+    """Saves this scenario's personal_use plot (section 8):
+      results/<scenario>/personal_use/alternate_lodging_cost.png  alternate lodging per month (charged as
+                                                                  entered) + final-year total distribution
+    Reads scenario["personal_use"] (personal_use.compute_personal_use), computed here if the runner hasn't
+    stored it yet."""
+    from condobuyuq2026.personal_use import compute_personal_use
+
+    deck = deck if deck is not None else load_deck()
+    personal_use = scenario.get("personal_use") or compute_personal_use(scenario, deck)
+    monthly, annual = personal_use["monthly"], personal_use["annual"]
+    final = annual.iloc[-1]
+    latent = personal_use["inputs"]["alternate_lodging_growth_latent"]
+    out_dir = scenario_results_dir(scenario).parent / "personal_use"
+    final_year = None
+    if final["lodging_median"] > 0:
+        final_year = {"median": float(final["lodging_median"]), "hi_outer": float(final["lodging_hi_outer"]),
+                      "year": int(annual.index[-1]), "what": "Total Alternate Lodging"}
+    return {
+        "alternate_lodging_cost": _plot_rental_monthly(
+            monthly, "lodging", personal_use["ci"], personal_use["outer_ci"],
+            title="Alternate Lodging Cost per Month — Scenario Projection (buy branch, personal cost)\n"
+            f"(your entered amount, charged in full every month — no proration — grown by the {latent} latent)",
+            ylabel="USD/month", save_path=out_dir / "alternate_lodging_cost.png", final_year=final_year,
         ),
     }

@@ -68,12 +68,11 @@
 #     `special_assessment`/`utilities`): `growth:` names ONLY a `latent:` — no separate `dist`/
 #     `median`/`cv` of its own. The named latent's own already-fitted process supplies both the mean
 #     growth and how its uncertainty widens/mean-reverts (see that section's header comment).
-#   - `rental_operations.adr_growth_latent`: same idea, just the latent's name (no dist/median/cv).
-#   - Everywhere else (`rent_reference.seasonal_lease_cost.growth`,
-#     `personal_use.alternate_lodging_cost_by_month.growth` — both `latent: adr`): `growth:` carries
-#     its own hand-set `dist`/`median`/`cv` ALONGSIDE the latent. EARMARKED: this is the older,
-#     redundant shape (the hand-set rate can silently disagree with the latent's own fitted rate) —
-#     revisit the same way `carrying_costs` was, if/when worth doing.
+#   - `rental_operations.adr_growth_latent` and `personal_use.alternate_lodging_growth_latent`: same
+#     idea, just the latent's name (no dist/median/cv).
+#   - `rent_reference.seasonal_lease_cost.growth` (`latent: adr`): still carries its own hand-set
+#     `dist`/`median`/`cv` ALONGSIDE the latent. EARMARKED: this is the older, redundant shape (the
+#     hand-set rate can silently disagree with the latent's own fitted rate) — fix with section 10.
 #
 # COMPOSITE COST FORMULAS (`acquisition.purchase_closing_costs`, `exit.selling_costs`): both follow
 # `total = fixed_fees + (percent_of_price * price)` — a scalar dollar amount that doesn't scale
@@ -239,8 +238,9 @@ derived_latents:
   adr:
     # Drives adr's GROWTH (secular pricing power) — adr's LEVEL/seasonal shape is fitted from
     # rental_operations.sources (see rental_operations.adr_growth_latent). ALSO reused for rent_reference.
-    # seasonal_lease_cost's growth and personal_use.alternate_lodging_cost_by_month's growth —
-    # same rental market, so the same pricing-power process applies to all three.
+    # seasonal_lease_cost's growth and personal_use.alternate_lodging_cost_by_month's growth
+    # (personal_use.alternate_lodging_growth_latent) — same rental market, so the same
+    # pricing-power process applies to all three.
     weights:
       market: 0.2
       home_price: 0.5
@@ -890,12 +890,21 @@ rental_operations:
 # -----------------------------------------------------------------------------
 # 8. personal_use
 # -----------------------------------------------------------------------------
+# WHAT THIS SECTION DOES: two plain estimates about YOUR OWN use of the place (buy branch).
+#   1. How many nights a month you stay in the condo yourself.
+#   2. What you'd pay each month for lodging somewhere else while the condo is busy being a rental.
+# Nothing here is fitted from data; both are your own judgement, used exactly as entered.
 personal_use:
   personal_use_days_by_month:
-    # Days per month YOU personally occupy the unit (not available to rent that month).
-    # This effects tax class designation of the property!
-    # Rentable nights per month is DERIVED (days in month - this). Friends/family use is
-    # deliberately not modeled separately (small effect, not worth the complexity per the user).
+    # WHAT TO ENTER: nights per calendar month that YOU stay in the unit (whole numbers, 0 up to the
+    # days in that month; February = 28). Same every year of the horizon. Friends/family stays that
+    # aren't rented count here too (no separate field: small effect, not worth the complexity).
+    # HOW IT'S USED (three places):
+    #   - Rental cap (section 7): nights you leave available to rent = days in month - this. The
+    #     fitted occupancy RATE is applied to those nights, so more personal use = fewer rented nights.
+    #   - Tax use class (section 9): the year's total personal days vs rented days decides
+    #     personal_use / mixed_use / rental (IRC 280A's 14-day / 10% tests). THIS CAN CHANGE YOUR TAXES.
+    #   - Utilities (section 6): occupied days = expected rented nights + these days.
     kind: constant
     value:
       jan: 7                         # example — a ski week
@@ -912,15 +921,23 @@ personal_use:
       dec: 7                         # example — holidays
 
   alternate_lodging_cost_by_month:
-    # Buy branch only: months the condo is generating STR income (not personal_use_days_by_month
-    # and not your own stay) are months you'd need to pay for lodging elsewhere if you want the
-    # same flexible mountain access the rent branch has all year round (rent_reference.
-    # seasonal_lease_cost assumes a full-year lease). Same IC + growth pattern as
-    # seasonal_lease_cost, reusing the same `adr` derived latent (same rental market) — but a
-    # HIGHER per-month rate than seasonal_lease_cost's, since this is short-term/flexible
-    # lodging, not a locked-in annual lease. Applies pro-rated to whatever portion of each month
-    # isn't covered by personal_use_days_by_month — exact proration rule TBD (see implementation
-    # plan).
+    # WHAT TO ENTER: the dollars per calendar month YOU WILL PAY for lodging somewhere else (buy
+    # branch only), in today's (closing-date) dollars. The rent branch has mountain access all year
+    # (rent_reference.seasonal_lease_cost is a full-year lease); this is what the buy branch spends to
+    # get whatever access you want while your own unit is rented out.
+    # IMPORTANT: EACH MONTH'S NUMBER IS CHARGED IN FULL, EVERY MONTH, as entered. The model does NOT
+    # prorate it by your personal-use days above or by bookings. Work out the real cost yourself and
+    # enter that. For example:
+    #   - a full-month lease elsewhere, even though you still stay in the unit a night or two -> the
+    #     full lease price;
+    #   - lodging for about half the month -> about half the monthly price;
+    #   - nights booked a few at a time -> nights you'd book x the nightly rate;
+    #   - you wouldn't stay anywhere else that month -> 0.
+    # Short-term/flexible lodging usually costs more per night than seasonal_lease_cost's annual lease.
+    # HOW IT'S USED: each month's amount, grown by alternate_lodging_growth_latent from closing, is a
+    # buy-branch cost in the final buy-vs-rent comparison. It is a PERSONAL cost: NOT tax-deductible
+    # and NOT part of the carrying-cost totals. Shown in
+    # results/<scenario>/personal_use/alternate_lodging_cost.png.
     kind: constant
     value:
       jan: 3200                      # example
@@ -935,12 +952,15 @@ personal_use:
       oct: 1300
       nov: 1700
       dec: 3200
-    growth:
-      kind: prior
-      dist: lognormal
-      latent: adr
-      median: 0.04
-      cv: 0.3
+
+  alternate_lodging_growth_latent:
+    # Which derived latent grows alternate_lodging_cost_by_month over the horizon. Default `adr`:
+    # the same short-term-rental market as your own unit's nightly rate (derived_latents.adr), so
+    # lodging costs and your ADR rise and fall together. Uses that latent's own fitted growth path
+    # and uncertainty; no separate growth rate is entered here. The starting amounts above are
+    # treated as known (no uncertainty of their own).
+    kind: constant
+    value: adr
 
 # -----------------------------------------------------------------------------
 # 9. taxes
