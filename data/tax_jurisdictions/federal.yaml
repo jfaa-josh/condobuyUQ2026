@@ -13,7 +13,7 @@
 name: United States (federal)
 level: federal
 model: federal_us
-as_of: 2026-11-24
+as_of: 2026-11-25
 tax_year_basis: 2026
 filing_status: mfj                 # married filing jointly: the only status the tables below cover
 
@@ -53,6 +53,15 @@ salt_cap:
   phasedown_rate: 0.30
   floor: 10000
   after_last_year: 10000
+
+# Sale of the property (taxes.compute_owner_sale_tax). Held MORE than long_term_holding_months: long-term
+# (gain at the capital-gain brackets, recapture capped at unrecaptured_1250_max_rate; the rental share's loss is
+# a section 1231 loss, and a net 1231 loss is ORDINARY). Held that long or less: short-term (the whole gain at
+# ordinary rates; the rental share's loss is still ordinary -- depreciable business property isn't a capital
+# asset). A unit used for both rental and personal purposes is split into a rental part and a personal part;
+# the personal part's loss is not deductible.
+property_sale:
+  long_term_holding_months: 12
 
 # Section 121 primary-residence exclusion (MFJ). Depreciation taken after May 6, 1997 is never excluded
 # (it's recaptured first).
@@ -101,6 +110,8 @@ sources:
   niit: https://www.irs.gov/taxtopics/tc559
   salt_cap: https://www.thetaxadviser.com/issues/2026/mar/cap-raised-strings-attached-the-2025-salt-shake-up.html
   section_121: https://www.irs.gov/publications/p523
+  property_sale: https://www.irs.gov/publications/p544
+  property_sale_two_parts: https://www.irs.gov/publications/p527
   vacation_home: https://www.irs.gov/publications/p527
   qualified_residence_interest_classes: https://www.irs.gov/publications/p936
   depreciation: https://www.thetaxadviser.com/issues/2012/oct/clinic-story-03.html

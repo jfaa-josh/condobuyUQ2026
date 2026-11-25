@@ -46,6 +46,17 @@
 # taxing both liquidations (capital gains on the portfolio too, not just the condo) is what
 # makes ΔW an apples-to-apples comparison. See scenario.horizon_years and the exit section.
 #
+# HOW ΔW IS BUILT (no inputs of its own; the ΔW stage reads every section below):
+#   ΔW = net equity at the sale (section 12) - the invested portfolio (section 11) - the DIFFERENCE FUND.
+# BUDGET MATCHING: both households have the same income and invest whatever they don't spend, so savings
+# you'd make either way cancel out exactly. Only the monthly SPENDING GAP matters: mortgage + carrying
+# costs + alternate lodging + the condo's income-tax effect + furnishing - net rental income - the lease.
+# Whichever household spends less invests the gap in the same portfolio as section 11; the "difference
+# fund" tracks that. Its interest, dividends and gains are taxed on the return of the household that
+# holds it (with the condo on the owner's return, with the portfolio on the renter's), every year, and
+# when it's sold at the horizon. ASSUMPTION: the savings both households make anyway are taxed alike in
+# both (no savings input; user, 2026-11-25). Results: results/<scenario>/delta_w/.
+#
 # THREE FOUNDING PROCESSES (`forecast_models`: general, home_price, market) — all fitted from real
 # historical data (see KIND above) as annualized GROWTH RATES (BLS CPI, a Denver-metro home price
 # index, S&P 500 price — see the "annualized rate" note below). Treated as ground truth; nothing
@@ -218,6 +229,13 @@ forecast_models:
 # implementation plan): weights below are manually reasoned placeholders; the plan is to build
 # these properly in an offline utility script (with visualizations) against real occupancy/ADR/
 # utilities data, and import the result here instead of hand-setting weights.
+#
+# ASSUMPTION (stated 2026-11-25, flagged to revisit later): the three founding processes are treated
+# as UNCORRELATED with each other (that's what makes sqrt(1 - a^2 - b^2 - c^2) the right idiosyncratic
+# share). History disagrees a little: annual log changes 1987-2026 (39 non-overlapping years)
+# correlate home_price-market +0.27, general-market +0.08, general-home_price -0.01. Using them would
+# narrow the buy-vs-rent spread (sale price vs portfolio partly cancel) and tie adr more to the stock
+# market. Deliberately deferred: see the implementation plan, "To raise once the GUI is wired".
 derived_latents:
   construction_cost:
     # Drives hoa_dues_annual's and special_assessment's (size scenarios') GROWTH -- their multi-year
@@ -1096,6 +1114,8 @@ rent_reference:
 # dividends; both are reinvested after tax. At the horizon the market account is sold and the gain
 # is taxed. All taxes come from the same household tax engine and jurisdiction layers as section 9
 # (taxes.household_agi etc.), using your residence state (scenario.residency_state).
+# The same allocation, cash_yield and dividends also apply to the ΔW DIFFERENCE FUND (the monthly
+# spending gap invested by whichever household spends less; see "HOW ΔW IS BUILT" at the top).
 capital_markets:
   # The market's price growth comes from forecast_models.market (not re-declared here).
   initial_investment:
@@ -1154,15 +1174,14 @@ capital_markets:
 #                scenario.family_loan_repaid_at_sale) - sale tax
 # Sale price: purchase_price grown by forecast_models.home_price to the horizon, with its full
 # uncertainty band (lognormal). The mortgage payoff is the loan balance left at the horizon; the sale
-# tax (recapture, capital gain, NIIT, state) comes from section 9's engine at the EXPECTED price.
-# Shown in results/<scenario>/exit/sale_proceeds.png.
-# KNOWN LIMITATION, SALE AT A LOSS: a loss is taxed $0. In reality the PERSONAL-use share of the loss
-# isn't deductible (the model agrees), but the RENTAL share is a section 1231 loss (IRS Pub. 527 / 544),
-# deductible against ordinary income in the sale year. The model doesn't deduct it, so a loss-making
-# sale is shown slightly WORSE for buying than it really is (by about the rental share of the loss x
-# your marginal rate). Likely only at short horizons. Also: a 1-year horizon is held exactly 12 months,
-# which is NOT long-term (that needs more than 1 year), yet it's still taxed under the long-term rules.
-# Both cases are flagged in the run's tax notes.
+# tax (recapture, capital gain, NIIT, state) comes from section 9's engine, worked out at every price
+# across the band (so the bands and the mean are exact). Shown in results/<scenario>/exit/sale_proceeds.png.
+# SALE TAX RULES (since 2026-11-25): the unit is split by its rental share (rented / (rented + personal)
+# days) into a rental part and a personal part (IRS Pub. 527). A GAIN is taxed as usual when held more than
+# 12 months (depreciation recapture, then long-term); held 12 months or less (a 1-year horizon) the whole
+# gain is short-term, at ordinary rates. A LOSS: the personal part's share isn't deductible; the rental
+# part's share is an ordinary loss that year (section 1231, IRS Pub. 544), so a loss-making sale can SAVE
+# tax (shown as a negative sale tax).
 exit:
   selling_costs:
     # total = fixed_fees + (percent_of_price * sale_price). Same composite pattern as
@@ -1186,6 +1205,7 @@ exit:
 # -----------------------------------------------------------------------------
 run:
   report_quantiles:
-    # Quantiles to report in outputs (probability, 0-1).
+    # Quantiles to report in outputs (probability, 0-1). The first and last also set ΔW's reported band
+    # (alongside P(buy beats rent) and a fixed 1%-99% outer band).
     kind: constant
     value: [0.1, 0.5, 0.9]

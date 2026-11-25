@@ -278,10 +278,15 @@ def print_taxes_report(taxes: dict[str, Any]) -> None:
         f"expected gross rent ${schedule['gross_rent'].sum():,.0f}, taxable rental income "
         f"${schedule['taxable_rental'].sum():,.0f}"
     )
+    term = "long-term" if sale["long_term"] else "SHORT-term (ordinary rates)"
     print(
-        f"  sale: gain ${sale['gain']:,.0f} = recapture ${sale['recapture']:,.0f} + long-term ${sale['ltcg']:,.0f} "
-        f"+ excluded ${sale['excluded_121']:,.0f}; released passive losses ${sale['released_passive']:,.0f}; lost 280A "
-        f"carryforward ${sale['lost_280a_carry']:,.0f}"
+        f"  sale ({term}, held {sale['held_months']:g} months): gain ${sale['gain']:,.0f} = rental part "
+        f"${sale['rental_gain']:,.0f} ({sale['rental_share']:.0%}) + personal part ${sale['personal_gain']:,.0f}; "
+        f"taxed: recapture ${sale['recapture']:,.0f} + long-term ${sale['ltcg']:,.0f} + short-term "
+        f"${sale['short_term_gain']:,.0f}, excluded ${sale['excluded_121']:,.0f}; deducted: rental-part ordinary loss "
+        f"${sale['ordinary_loss']:,.0f} + released passive losses ${sale['released_passive']:,.0f}; not deductible: "
+        f"personal-part loss ${sale['nondeductible_personal_loss']:,.0f}, lost 280A carryforward "
+        f"${sale['lost_280a_carry']:,.0f}"
     )
     for flag in taxes["flags"]:
         print(f"  {flag}")
@@ -294,8 +299,9 @@ def print_exit_report(exit_result: dict[str, Any]) -> None:
             else "family loan not repaid")
     print(
         f"exit: sale ${price['mean']:,.0f} mean (median ${price['median']:,.0f}) - selling ${exit_result['selling_costs']:,.0f}"
-        f" - payoff ${exit_result['mortgage_payoff']:,.0f} - {loan} - tax ${exit_result['sale_tax']:,.0f} "
-        f"(marginal {exit_result['marginal_sale_tax_rate']:.1%}) = net equity ${equity['mean']:,.0f} mean "
+        f" - payoff ${exit_result['mortgage_payoff']:,.0f} - {loan} - tax ${exit_result['sale_tax']:,.0f} expected "
+        f"(${exit_result['sale_tax_at_expected_price']:,.0f} at the expected price; band marginal "
+        f"{exit_result['marginal_sale_tax_rate']:.1%}) = net equity ${equity['mean']:,.0f} mean "
         f"(${equity['lo']:,.0f}-${equity['hi']:,.0f})"
     )
 
@@ -381,15 +387,29 @@ def print_reference_cache_hit(reference_id: int) -> None:
     print(f"reference_id={reference_id}: reusing already-run result (not re-run)")
 
 
-def print_scenario_comparison_placeholder(scenario: dict[str, Any], reference_id: int) -> None:
-    """Placeholder for the eventual buy-vs-reference comparison (ΔW = W_buy - W_rent, see
-    .claude/implementation-plan.md's Goal) -- prints which buy scenario would be compared against
-    which reference case's result, once both sides actually compute a result to compare. See
-    runner.run_scenarios."""
+def print_delta_w_report(delta_w: dict[str, Any], reference_id: int) -> None:
+    """One developer/testing line for the buy-vs-rent result (delta_w.compute_delta_w); the user-facing
+    version belongs in the GUI (CLI -> GUI migration list). Flags on their own lines. ASCII "delta W" (not the
+    Greek letter): a Windows console's code page can't print it when output is redirected."""
+    bands, overlay, comp = delta_w["bands"], delta_w["overlay"], delta_w["components"]
+    holder = {1: "rent", -1: "buy", 0: "nobody"}[delta_w["fund"]["final_holder"]]
+    top = sorted(delta_w["variance_breakdown"].items(), key=lambda kv: -kv[1])[:3]
+    with_overlay = (f"; {overlay['p_buy_beats_rent']:.1%} with special assessments" if overlay["enabled"] else "")
     print(
-        f"[PLACEHOLDER] would compare this buy scenario's result against reference_id={reference_id}'s "
-        "result here"
+        f"delta W vs reference_id={reference_id}: mean ${delta_w['mean']:,.0f} (median ${bands['median']:,.0f}, "
+        f"{delta_w['ci'][0]:.0%}-{delta_w['ci'][1]:.0%} ${bands['lo']:,.0f} to ${bands['hi']:,.0f}), sd "
+        f"${delta_w['sd']:,.0f}, skew {delta_w['skewness']:.2f}; P(buy beats rent) {delta_w['p_buy_beats_rent']:.1%}"
+        f"{with_overlay}. W_buy ${comp['w_buy']:,.0f} vs W_rent ${comp['w_rent']:,.0f}; difference fund "
+        f"${abs(comp['fund_after_tax_signed']):,.0f} after tax, held by {holder} at the sale; top variance: "
+        + ", ".join(f"{name} {share:.0%}" for name, share in top)
     )
+    for flag in delta_w["flags"]:
+        print(f"  NOTE: {flag}")
+
+
+def print_delta_w_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """One line: where this scenario's ΔW plots went (results.save_delta_w_result_plots)."""
+    print(f"  saved {len(result_plots)} delta W result plots to {result_plots['distribution'].parent}")
 
 
 def print_forecast_model_refresh(name: str, model_name: str, script_path: Path) -> None:

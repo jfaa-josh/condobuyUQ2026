@@ -7,6 +7,7 @@ runner.run_scenarios, once per buy scenario.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -716,7 +717,8 @@ def save_capital_markets_result_plots(
 def save_exit_result_plots(scenario: dict[str, Any]) -> dict[str, Path]:
     """Saves this scenario's exit plot (section 12):
       results/<scenario>/exit/sale_proceeds.png  a waterfall from the sale price through selling costs,
-        mortgage payoff, family loan (if repaid) and sale tax to net equity, at EXPECTED values, with the
+        mortgage payoff, family loan (if repaid) and the expected sale tax (negative = a saving from a
+        deductible loss, drawn as an increase) to net equity, at EXPECTED values, with the
         sale price's and net equity's bands as whiskers. Reads scenario["exit"] (exit.compute_exit)."""
     ex = scenario["exit"]
     price, equity = ex["sale_price"], ex["net_equity"]
@@ -731,8 +733,12 @@ def save_exit_result_plots(scenario: dict[str, Any]) -> dict[str, Path]:
     ax.bar(0, price["mean"], width, color="C0", alpha=0.8, label="Sale price (expected)")
     level = price["mean"]
     for x, (_label, amount) in enumerate(steps, start=1):
-        ax.bar(x, -amount, width, bottom=level, color="C3", alpha=0.6, label="Deduction" if x == 1 else None)
-        ax.text(x, level + 0.01 * price["mean"], f"−${amount:,.0f}", ha="center", va="bottom", fontsize=9)
+        saving = amount < 0
+        ax.bar(x, -amount, width, bottom=level, color="C2" if saving else "C3", alpha=0.45 if saving else 0.6,
+               label="Tax saving" if saving else ("Deduction" if x == 1 else None))
+        sign = "−" if amount >= 0 else "+"  # a negative amount (a sale-tax saving) adds to equity
+        ax.text(x, max(level, level - amount) + 0.01 * price["mean"], f"{sign}${abs(amount):,.0f}", ha="center",
+                va="bottom", fontsize=9)
         ax.hlines(level - amount, x - width / 2, x + 1 + width / 2 if x < len(steps) else x + 1 - width / 2,
                   color="k", linewidth=0.6, alpha=0.5)
         level -= amount
@@ -751,8 +757,9 @@ def save_exit_result_plots(scenario: dict[str, Any]) -> dict[str, Path]:
     ax.set_ylabel("USD")
     ax.set_title(
         f"Buy Branch at the Sale (year {scenario['horizon_years']}) — expected values; whiskers: 10-90% (solid), "
-        f"1-99% (dashed)\nSale price = purchase price grown by forecast_models.home_price; sale tax at the expected "
-        f"price,\nmarginal {ex['marginal_sale_tax_rate']:.1%} across the price band"
+        f"1-99% (dashed)\nSale price = purchase price grown by forecast_models.home_price; sale tax = its expected "
+        f"value over the price distribution\n(negative = a saving, e.g. a deductible loss); marginal "
+        f"{ex['marginal_sale_tax_rate']:.1%} across the price band"
     )
     ax.grid(alpha=0.3, axis="y")
     ax.legend(fontsize="small", loc="upper right")
@@ -855,3 +862,152 @@ def save_tax_result_plots(scenario: dict[str, Any], deck: dict[str, Any] | None 
     fig.savefig(save_path, dpi=120)
     plt.close(fig)
     return {"tax_effects_by_year": save_path}
+
+
+def _tex_safe(text: str) -> str:
+    """Escapes "$" so matplotlib doesn't read a pair of them as math mode."""
+    return text.replace("$", r"\$")
+
+
+def save_delta_w_result_plots(scenario: dict[str, Any]) -> dict[str, Path]:
+    """Saves this scenario's ΔW plots (the ΔW stage, delta_w.compute_delta_w), under
+    results/<scenario>/delta_w/:
+      distribution.png        ΔW = W_buy - W_rent: density (top) and P(ΔW <= x) (bottom), Cornish-Fisher, with
+                              P(buy beats rent) at 0; dashed = with the special-assessment overlay.
+      variance_breakdown.png  share of Var(ΔW) by source (first-order shares, scaled to the exact variance).
+      components.png          expected W_buy (net equity + buy-held fund) vs W_rent (portfolio + rent-held fund).
+      difference_fund.png     the expected spending gap by source over the horizon (top) and the difference
+                              fund's expected balance by year, signed by holder, with its yearly taxes.
+    Reads scenario["delta_w"]."""
+    from condobuyuq2026.delta_w import delta_w_cdf
+
+    dw = scenario["delta_w"]
+    out_dir = scenario_results_dir(scenario).parent / "delta_w"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    money = matplotlib.ticker.FuncFormatter(lambda v, _: f"${v:,.0f}")
+    horizon = scenario["horizon_years"]
+    overlay = dw["overlay"]
+    paths: dict[str, Path] = {}
+
+    # 1. Distribution.
+    bands = dw["bands"]
+    span = bands["hi_outer"] - bands["lo_outer"]
+    x = np.linspace(bands["lo_outer"] - 0.35 * span, bands["hi_outer"] + 0.2 * span, 1200)
+    fig, (ax_pdf, ax_cdf) = plt.subplots(2, 1, figsize=(11, 8), sharex=True, height_ratios=[3, 2])
+    curves = [(False, "ΔW", "-")]
+    if overlay["enabled"]:
+        curves.append((True, "ΔW with special assessments", "--"))
+    for with_overlay, label, style in curves:
+        cdf = delta_w_cdf(dw, x, with_overlay=with_overlay)
+        p = overlay["p_buy_beats_rent"] if with_overlay else dw["p_buy_beats_rent"]
+        ax_pdf.plot(x, np.gradient(cdf, x), "C0", linestyle=style, linewidth=2,
+                    label=f"{label}: P(buy beats rent) = {p:.1%}")
+        ax_cdf.plot(x, cdf, "C0", linestyle=style, linewidth=2)
+    ax_pdf.axvspan(bands["lo"], bands["hi"], color="C0", alpha=0.12,
+                   label=f"{dw['ci'][0]:.0%}-{dw['ci'][1]:.0%} band (ΔW)")
+    for ax in (ax_pdf, ax_cdf):
+        ax.axvline(0, color="k", linewidth=1)
+        ax.axvline(dw["mean"], color="C1", linewidth=1, linestyle=":")
+        ax.grid(alpha=0.3)
+    top = ax_pdf.get_ylim()[1]
+    ax_pdf.text(dw["mean"], top * 0.97, f" mean ${dw['mean']:,.0f}", color="C1", va="top", fontsize=9)
+    ax_pdf.text(0, top * 0.85, " buy beats rent →", va="top", fontsize=9)
+    ax_pdf.set_ylabel("Density")
+    ax_pdf.set_yticks([])
+    ax_pdf.legend(fontsize="small", loc="upper left")
+    ax_cdf.set_ylabel("P(ΔW ≤ x)")
+    ax_cdf.set_xlabel("ΔW = W_buy − W_rent at the sale (USD, after tax)")
+    ax_cdf.xaxis.set_major_formatter(money)
+    subtitle = "Cornish-Fisher from exact moments" + ("; dashed = with the special-assessment overlay"
+                                                       if overlay["enabled"] else "")
+    ax_pdf.set_title(_tex_safe(f"Buy vs Rent after {horizon} years — ΔW mean ${dw['mean']:,.0f}, sd ${dw['sd']:,.0f}, "
+                     f"skew {dw['skewness']:.2f}\n{subtitle}"))
+    fig.tight_layout()
+    paths["distribution"] = out_dir / "distribution.png"
+    fig.savefig(paths["distribution"])
+    plt.close(fig)
+
+    # 2. Variance breakdown.
+    shares = pd.Series(dw["variance_breakdown"], dtype=float).sort_values(ascending=False)
+    small = shares[shares < 0.005]
+    shares = shares[shares >= 0.005]
+    if small.sum() > 0:
+        shares["everything else"] = small.sum()
+    fig, ax = plt.subplots(figsize=(10, 0.45 * len(shares) + 2))
+    y = np.arange(len(shares))[::-1]
+    ax.barh(y, shares.to_numpy() * 100, color="C0", height=0.6)
+    for yi, share in zip(y, shares.to_numpy(), strict=True):
+        ax.text(share * 100 + 0.5, yi, f"{share:.1%}  (sd ≈ ${math.sqrt(share) * dw['sd']:,.0f})", va="center",
+                fontsize=9)
+    ax.set_yticks(y, list(shares.index))
+    ax.set_xlabel("Share of Var(ΔW), %")
+    ax.set_xlim(0, max(100.0, float(shares.max()) * 100 + 25))
+    ax.grid(alpha=0.3, axis="x")
+    ax.set_title(_tex_safe(f"What drives the uncertainty in ΔW (year {horizon}) — sd ${dw['sd']:,.0f}\n"
+                 "first-order shares by source; own share = a derived latent's part not tied to the founding processes"))
+    fig.tight_layout()
+    paths["variance_breakdown"] = out_dir / "variance_breakdown.png"
+    fig.savefig(paths["variance_breakdown"])
+    plt.close(fig)
+
+    # 3. Components.
+    comp = dw["components"]
+    fig, ax = plt.subplots(figsize=(8, 6.5))
+    ax.bar(0, comp["net_equity"], 0.55, color="C0", label="Net equity at the sale")
+    ax.bar(0, comp["buy_held_fund"], 0.55, bottom=comp["net_equity"], color="C2",
+           label="Difference fund (buy household holds it)")
+    ax.bar(1, comp["portfolio"], 0.55, color="C1", label="Invested portfolio (section 11)")
+    ax.bar(1, comp["rent_held_fund"], 0.55, bottom=comp["portfolio"], color="C4",
+           label="Difference fund (rent household holds it)")
+    for xi, total in ((0, comp["w_buy"]), (1, comp["w_rent"])):
+        ax.text(xi, total, f"${total:,.0f}", ha="center", va="bottom", fontsize=10)
+    ax.set_xticks([0, 1], ["Buy (W_buy)", "Rent (W_rent)"])
+    ax.yaxis.set_major_formatter(money)
+    ax.set_ylabel("USD at the sale, after tax (expected)")
+    ax.grid(alpha=0.3, axis="y")
+    ax.legend(fontsize="small", loc="upper center", bbox_to_anchor=(0.5, -0.08), ncol=2)
+    ax.set_title(_tex_safe(f"Expected wealth at the sale (year {horizon}): ΔW = ${comp['w_buy'] - comp['w_rent']:,.0f}\n"
+                 "savings both households make either way are left out of both (they cancel)"))
+    fig.tight_layout()
+    paths["components"] = out_dir / "components.png"
+    fig.savefig(paths["components"])
+    plt.close(fig)
+
+    # 4. The difference fund.
+    flows = pd.Series(dw["flows_by_source"], dtype=float).sort_values()
+    fund = dw["fund"]["annual"]
+    fig, (ax_flow, ax_fund) = plt.subplots(2, 1, figsize=(11, 9))
+    yf = np.arange(len(flows))
+    values = flows.to_numpy()
+    ax_flow.barh(yf, values, color=np.where(values >= 0, "C3", "C2"), height=0.6)
+    for yi, value in zip(yf, values, strict=True):
+        ax_flow.text(value, yi, f" ${value:,.0f} ", va="center", ha="left" if value >= 0 else "right", fontsize=8)
+    ax_flow.set_yticks(yf, list(flows.index))
+    reach = float(np.abs(values).max()) if values.size else 1.0
+    ax_flow.set_xlim(min(0.0, float(values.min())) - 0.35 * reach, max(0.0, float(values.max())) + 0.3 * reach)
+    ax_flow.axvline(0, color="k", linewidth=0.8)
+    ax_flow.xaxis.set_major_formatter(money)
+    ax_flow.grid(alpha=0.3, axis="x")
+    ax_flow.set_title(_tex_safe(f"Spending gap over {horizon} years (expected, nominal): buy − rent = ${values.sum():,.0f}\n"
+                      "red = the buy household spends more (the rent household invests it); green = the reverse"))
+    years = fund.index.to_numpy()
+    balance = fund["balance_signed"].to_numpy()
+    ax_fund.bar(years, balance, 0.6, color=np.where(balance >= 0, "C4", "C2"), label="Balance (year end)")
+    ax_fund.plot(years, fund["basis_signed"].to_numpy(), "k--", linewidth=1, label="Cost basis of the market part")
+    for xi, row in fund.iterrows():
+        tax = row["rent_tax"] + row["buy_tax"]
+        if abs(tax) >= 0.5:
+            ax_fund.text(xi, row["balance_signed"], f"tax ${tax:,.0f}", ha="center",
+                         va="bottom" if row["balance_signed"] >= 0 else "top", fontsize=7)
+    ax_fund.axhline(0, color="k", linewidth=0.8)
+    ax_fund.yaxis.set_major_formatter(money)
+    ax_fund.set_xlabel("Scenario year (the last bar is after the sale and its tax)")
+    ax_fund.set_ylabel("USD (+ rent household holds it, − buy household)")
+    ax_fund.grid(alpha=0.3, axis="y")
+    ax_fund.legend(fontsize="small", loc="upper left")
+    ax_fund.set_title(_tex_safe("Difference fund (expected path), taxed on the holder's own return each year"))
+    fig.tight_layout()
+    paths["difference_fund"] = out_dir / "difference_fund.png"
+    fig.savefig(paths["difference_fund"])
+    plt.close(fig)
+    return paths

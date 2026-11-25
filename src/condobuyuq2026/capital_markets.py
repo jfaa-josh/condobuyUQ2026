@@ -71,7 +71,7 @@ def project_portfolio(
       "sale": {market_value_mean, basis, gain, effective_rate, federal, property_state, residence_state, tax};
       "horizon": cash, pre_tax_mean / pre_tax_<band> (cash + market, before the sale tax), after_tax_mean /
         after_tax_<band>, contributions, income_tax (all yearly taxes), total_tax (yearly + sale);
-      "inputs", "ci", "outer_ci"."""
+      "inputs", "ci", "outer_ci"; "terms" (the after-tax value as lognormal terms, for the ΔW stage)."""
     deck = deck if deck is not None else load_deck()
     inputs = get_capital_markets_inputs(deck)
     taxes_inputs = get_taxes_inputs(deck)
@@ -174,7 +174,18 @@ def project_portfolio(
         "income_tax": income_tax,
         "total_tax": income_tax + sale["tax"],
     }
-    return {"annual": annual, "sale": sale, "horizon": horizon, "inputs": inputs, "ci": ci, "outer_ci": outer_ci}
+    lots = np.flatnonzero(market_in > 0)
+    # For the ΔW stage (delta_w.py): the after-tax horizon value as lognormal terms on the market latent,
+    #   after_tax = cash + sale_rate x basis + (1 - sale_rate) x sum_j exp(log_mean_factor_j + log G_H/G_(start_j)
+    #   - its median), with Var(log G_H/G_(start_j)) = Var(log G_H) - Var(log G_start_j).
+    terms = {
+        "start_month": lots,
+        "log_mean_factor": (np.log(market_in[lots]) + (horizon_months - lots) * math.log1p(dividend_rate)
+                            + log_haircut_after[horizon_months] - log_haircut_after[lots] + mu[horizon_months] - mu[lots]),
+        "cash": cash, "basis": basis, "sale_rate": rate,
+    }
+    return {"annual": annual, "sale": sale, "horizon": horizon, "inputs": inputs, "ci": ci, "outer_ci": outer_ci,
+            "terms": terms}
 
 
 def compute_capital_markets(reference_case: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:

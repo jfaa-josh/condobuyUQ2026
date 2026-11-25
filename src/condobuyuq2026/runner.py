@@ -11,7 +11,8 @@ A buy scenario dict gets a new key per stage as it's computed -- so far "acquisi
 (rental_operations.compute_rental_operations), "personal_use" (personal_use.compute_personal_use),
 "taxes" (taxes.compute_owner_taxes,
 which reuses "carrying_costs" for its own property_tax/shared_expenses -- see that module's own
-docstring) and "exit" (exit.compute_exit, the buy branch's net equity at the sale) -- so by the time
+docstring), "exit" (exit.compute_exit, the buy branch's net equity at the sale) and "delta_w"
+(delta_w.compute_delta_w: ΔW = W_buy - W_rent against its reference case, the model's headline) -- so by the time
 run_scenarios returns, every scenario in its "scenarios" list carries
 everything computed for it, not just what got printed along the way. reference_results[
 reference_id] is, symmetrically, a dict each reference-side stage adds its own key to -- so far
@@ -19,11 +20,8 @@ reference_id] is, symmetrically, a dict each reference-side stage adds its own k
 (capital_markets.compute_capital_markets, the invested portfolio) and "taxes"
 (taxes.compute_renter_taxes, the portfolio's taxes; renting itself has no tax effect).
 
-The eventual buy-vs-reference comparison (ΔW = W_buy - W_rent, see .claude/implementation-plan.md's
-Goal) is still a PLACEHOLDER (see reporting.print_scenario_comparison_placeholder) -- as later
-stages (rent_reference, capital_markets, exit) get built, this is where their per-scenario
-computation gets wired in -- and stored, per the paragraph above -- on both the reference and buy
-sides.
+The buy-vs-reference comparison (ΔW = W_buy - W_rent, see .claude/implementation-plan.md's Goal) runs
+last for each buy scenario (delta_w.compute_delta_w), reading both sides' stored results.
 """
 
 from __future__ import annotations
@@ -34,6 +32,7 @@ from condobuyuq2026.acquisition import compute_acquisition_costs
 from condobuyuq2026.capital_markets import compute_capital_markets
 from condobuyuq2026.carrying_costs import compute_carrying_costs
 from condobuyuq2026.classification import compute_occupancy_classification
+from condobuyuq2026.delta_w import compute_delta_w
 from condobuyuq2026.exit import compute_exit
 from condobuyuq2026.financing import compute_financing
 from condobuyuq2026.reporting import (
@@ -45,6 +44,8 @@ from condobuyuq2026.reporting import (
     print_exit_report,
     print_exit_result_plots_report,
     print_classification_report,
+    print_delta_w_report,
+    print_delta_w_result_plots_report,
     print_financing_report,
     print_personal_use_report,
     print_personal_use_result_plots_report,
@@ -55,7 +56,6 @@ from condobuyuq2026.reporting import (
     print_rent_reference_result_plots_report,
     print_rental_operations_result_plots_report,
     print_renter_taxes_report,
-    print_scenario_comparison_placeholder,
     print_special_assessment_report,
     print_tax_result_plots_report,
     print_taxes_report,
@@ -66,6 +66,7 @@ from condobuyuq2026.rental_operations import compute_rental_operations
 from condobuyuq2026.results import (
     save_capital_markets_result_plots,
     save_carrying_cost_result_plots,
+    save_delta_w_result_plots,
     save_exit_result_plots,
     save_personal_use_result_plots,
     save_rent_reference_result_plots,
@@ -163,7 +164,10 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         print_exit_report(exit_result)
         print_exit_result_plots_report(save_exit_result_plots(scenario))
 
-        print_scenario_comparison_placeholder(scenario, reference_id)
+        delta_w = compute_delta_w(scenario, reference_results[reference_id], deck)
+        scenario["delta_w"] = delta_w
+        print_delta_w_report(delta_w, reference_id)
+        print_delta_w_result_plots_report(save_delta_w_result_plots(scenario))
         print()  # blank line -- groups this scenario's reference/alternative/result together
 
     return {"reference_cases": reference_cases, "reference_results": reference_results, "scenarios": scenarios}

@@ -138,6 +138,11 @@ class FederalLayer(JurisdictionLayer):
         return list(self.data["qualified_residence_interest_classes"])
 
     @property
+    def long_term_holding_months(self) -> float:
+        """A sale is long-term only if the property was held MORE than this many months."""
+        return float(self.data["property_sale"]["long_term_holding_months"])
+
+    @property
     def section_121(self) -> dict[str, float]:
         return {name: float(value) for name, value in self.data["section_121"].items()}
 

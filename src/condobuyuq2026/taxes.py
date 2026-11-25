@@ -26,27 +26,30 @@ scenario["classification"], never recomputed; held constant across years):
 Depreciable basis = (purchase price + closing costs) x building_fraction (acquisition.percent_improved),
 over the federal period for the average stay (39 yr if transient, else 27.5).
 
-SALE (compute_owner_sale_tax): recapture (unrecaptured 1250 gain), section 121 exclusion (primary
-residence held >= the minimum years), long-term gain, and released passive losses, taxed as an increment
-on top of the final year's return. At the EXPECTED sale price (carrying_costs.project_sale_price's mean,
-since 2026-11-25; it was the median) -- the same convention as every other tax here and as the
-portfolio's sale. exit.py evaluates it at other prices too (sale_price=...) for the net-equity band.
-
-KNOWN LIMITATION -- A SALE AT A LOSS IS TAXED $0 (nothing deducted). What the law would do instead
-(IRS Pub. 527: a unit used for both rental and personal purposes is treated as two separate properties;
-IRS Pub. 544: real property used in a business and held MORE than 1 year is section 1231 property, and a
-net section 1231 loss is an ORDINARY loss):
-  - the PERSONAL-use share of the loss is not deductible (a personal loss) -- the model agrees;
-  - the RENTAL share (e.g. by rental days) is a section 1231 loss: deductible against ordinary income
-    in the sale year with no $3,000 cap, and as a full disposition it isn't held back by the passive
-    rules -- the model does NOT deduct it.
-So when the expected sale is at a loss, the buy branch's tax is OVERSTATED by about (rental share of the
-loss) x (the household's marginal ordinary rate); the result leans against buying. The same $0 floor
-applies across the price band in exit.py (the secant marginal rate is 0 where every price in the band is
-a loss). compute_owner_taxes adds a NOTE to "flags" whenever the expected sale is at a loss.
-HOLDING PERIOD: the sale is at month 12 x horizon_years, so a 1-year horizon is held exactly 12 months --
-NOT more than 1 year. Any gain would then be short-term (ordinary rates, no 25% recapture cap) and a loss
-wouldn't be section 1231; the model still uses the long-term rules (also flagged).
+SALE (compute_owner_sale_tax / owner_sale_tax_function): taxed as an increment on top of the final
+year's return, at the EXPECTED sale price (carrying_costs.project_sale_price's mean, since 2026-11-25; it
+was the median) -- the same convention as every other tax here and as the portfolio's sale. exit.py
+evaluates it at other prices too, for net equity's exact bands and mean.
+  TWO PARTS (IRS Pub. 527: a unit used for both rental and personal purposes is treated as two
+  properties), split by the rental share r (the same rented / (rented + personal) days split as the
+  yearly schedule; personal_use class -> r = 0, the whole unit is a personal residence). The rental part
+  carries all the depreciation taken:
+    rental gain   = r x (net proceeds - cost basis) + depreciation taken
+    personal gain = (1 - r) x (net proceeds - cost basis)
+  GAINS. Held MORE than 12 months (federal.yaml property_sale): the rental part's gain up to the
+  depreciation taken is recapture (unrecaptured 1250, ordinary rates capped at 25%); the rest of both
+  parts' gains is long-term, less the section 121 exclusion (only if loan_occupancy_class ==
+  "primary_residence" AND held >= the federal minimum years; never the depreciation). Held 12 months or
+  less (a 1-year horizon sells at exactly month 12): the WHOLE gain is short-term, at ordinary rates.
+  LOSSES. The personal part's loss is NOT deductible (a personal loss). The rental part's loss is an
+  ORDINARY loss in the sale year (IRS Pub. 544: real property used in a business and held more than a
+  year is section 1231 property, and a net 1231 loss is ordinary; held a year or less, depreciable
+  business property isn't a capital asset, so the loss is ordinary too). No $3,000 cap, and as a full
+  disposition the passive rules don't hold it back. No section 1231 five-year lookback (the household is
+  assumed to have no other 1231 activity). A loss can make the sale's tax effect NEGATIVE (a saving).
+  Also: released suspended passive losses (an ordinary loss); 280A carryforwards are lost.
+  Engine items: recapture -> unrecaptured_1250; long-term -> ltcg; short-term gain and the ordinary loss
+  -> rental_income (ordinary, property-source, net investment income for NIIT).
 
 gross_rent: each year's EXPECTED (mean) gross rental revenue from scenario["rental_operations"],
 before lodging tax (guest-paid) and fees. Taxes are POINT estimates on these means; propagating revenue
@@ -63,6 +66,7 @@ state pays that state nothing on it; the residence state taxes it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -90,6 +94,10 @@ NO_PROPERTY: dict[str, float] = {
     "qualified_dividends": 0.0,
     "investment_ltcg": 0.0,
 }
+
+
+# The portfolio items (rent branch: section 11; buy branch: the ΔW difference fund when it holds it).
+INVESTMENT_ITEMS = ("interest_income", "qualified_dividends", "investment_ltcg")
 
 
 def get_scenario_tax_jurisdiction(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> TaxJurisdiction:
@@ -180,6 +188,19 @@ def _tax_effect(
     return effect
 
 
+def tax_effect(
+    jurisdiction: TaxJurisdiction,
+    taxes_inputs: dict[str, Any],
+    tax_year: int,
+    with_items: dict[str, float],
+    without_items: dict[str, float] = NO_PROPERTY,
+) -> dict[str, float]:
+    """Public: the household's tax with `with_items` minus with `without_items` (federal, property_state,
+    residence_state, total, itemizes) -- for stages that stack their own items on another stage's (delta_w's
+    difference fund on top of the section 11 portfolio)."""
+    return _tax_effect(jurisdiction, taxes_inputs, tax_year, with_items, without_items)
+
+
 def tax_rules_applied(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:
     """The derived rules this scenario's taxes use (for the schedule and the report): use class,
     depreciation period, passive status, and the shares/basis they act on."""
@@ -211,11 +232,22 @@ def tax_rules_applied(scenario: dict[str, Any], deck: dict[str, Any] | None = No
     }
 
 
-def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
+def compute_owner_tax_schedule(
+    scenario: dict[str, Any],
+    deck: dict[str, Any] | None = None,
+    investment_income_by_year: dict[int, dict[str, float]] | None = None,
+) -> pd.DataFrame:
     """Per-year OWN-tenure tax effects for scenario["horizon_years"] (see the module docstring for the
     rules by use class). Threads depreciation taken, suspended passive losses, and 280A carryforwards
     through the loop as CUMULATIVE columns, so the last row is the ending state
     compute_owner_sale_tax needs.
+
+    investment_income_by_year (ΔW stage, delta_w.py): {year: {"interest_income", "qualified_dividends",
+    "investment_ltcg"}} -- portfolio income the BUY household holds that year (the difference fund, when the
+    buy branch is ahead). It goes on the same return as the condo (brackets, NIIT, SALT phase-down all see
+    both), and into the MAGI the rental special allowance phases out on (household_agi + that income).
+    Each row's tax is then the condo AND that income vs neither; delta_w subtracts the plain schedule to get
+    the fund's own share. Default None = no portfolio on the owner's return (every other caller).
 
     Returns a DataFrame indexed by year (1..horizon_years) with columns: tax_year, use_class,
     mortgage_interest, property_tax, gross_rent, shared_expenses, direct_rental_expenses,
@@ -261,6 +293,8 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
     rows = []
     for year in range(1, horizon_years + 1):
         tax_year = closing_year + year - 1
+        investment = {key: float((investment_income_by_year or {}).get(year, {}).get(key, 0.0)) for key in INVESTMENT_ITEMS}
+        magi = taxes_inputs["household_agi"] + sum(investment.values())
         mortgage_interest = mortgage_interest_by_year[year - 1]
         property_tax = float(property_tax_by_year.loc[year])
         shared_expenses = float(shared_expenses_by_year.loc[year])
@@ -284,7 +318,7 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
                 if status == "nonpassive":
                     allowed = loss
                 elif status == "passive_rental_activity":
-                    allowed = min(loss, federal.rental_special_allowance(taxes_inputs["household_agi"]))
+                    allowed = min(loss, federal.rental_special_allowance(magi))
                 else:
                     allowed = 0.0
                 suspended_passive += loss - allowed
@@ -308,6 +342,7 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
 
         items = {
             **NO_PROPERTY,
+            **investment,
             "rental_income": rental_income,
             "itemized_interest": personal_share * mortgage_interest if rules["personal_interest_deductible"] else 0.0,
             "personal_property_tax": personal_share * property_tax,
@@ -326,6 +361,7 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
                 "taxable_rental": rental_income,
                 "itemized_interest": items["itemized_interest"],
                 "personal_property_tax": items["personal_property_tax"],
+                **investment,
                 "itemizes": effect["itemizes"],
                 "federal": effect["federal"],
                 "property_state": effect["property_state"],
@@ -341,75 +377,100 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
     return pd.DataFrame(rows, index=pd.Index(range(1, horizon_years + 1), name="year"))
 
 
+def owner_sale_tax_function(
+    scenario: dict[str, Any], annual_schedule: pd.DataFrame, deck: dict[str, Any] | None = None
+) -> Callable[[float], dict[str, float]]:
+    """The sale's tax effect as a function of the sale price (see the module docstring, SALE): loads the
+    jurisdiction and the ending state off annual_schedule's LAST row once, so exit.py can evaluate it at
+    many prices. Each call returns compute_owner_sale_tax's dict."""
+    deck = deck if deck is not None else load_deck()
+    taxes_inputs = get_taxes_inputs(deck)
+    jurisdiction = get_scenario_tax_jurisdiction(scenario, deck)
+    federal = jurisdiction.federal
+    section_121 = federal.section_121
+    rules = tax_rules_applied(scenario, deck)
+    r = 0.0 if rules["tax_use_class"] == "personal_use" else rules["rental_share"]
+    held_months = 12 * scenario["horizon_years"]
+    long_term = held_months > federal.long_term_holding_months
+
+    cost_basis = rules["cost_basis"]
+    ending = annual_schedule.iloc[-1]
+    depr_taken = float(ending["cumulative_depr_taken"])
+    released_passive = float(ending["suspended_passive_balance"])
+    is_primary_residence = scenario["classification"]["loan_occupancy_class"] == "primary_residence"
+    held_long_enough = scenario["horizon_years"] >= section_121["min_ownership_and_use_years"]
+    tax_year = int(ending["tax_year"])
+    final_year_items = {
+        **NO_PROPERTY,
+        **{key: float(ending.get(key, 0.0)) for key in INVESTMENT_ITEMS},
+        "rental_income": float(ending["taxable_rental"]),
+        "itemized_interest": float(ending["itemized_interest"]),
+        "personal_property_tax": float(ending["personal_property_tax"]),
+    }
+
+    def sale_tax(sale_price: float) -> dict[str, float]:
+        proceeds = estimate_sale_proceeds(sale_price, deck)
+        over_cost = proceeds["net_sale_proceeds"] - cost_basis
+        rental_gain = r * over_cost + depr_taken
+        personal_gain = (1 - r) * over_cost
+        depreciation_gain = min(max(0.0, rental_gain), depr_taken)
+        other_gain = max(0.0, rental_gain) - depreciation_gain + max(0.0, personal_gain)
+        excluded_121 = min(other_gain, section_121["exclusion"]) if (is_primary_residence and held_long_enough) else 0.0
+        if long_term:
+            recapture, ltcg, short_term = depreciation_gain, other_gain - excluded_121, 0.0
+        else:
+            recapture, ltcg, short_term = 0.0, 0.0, depreciation_gain + other_gain - excluded_121
+        ordinary_loss = max(0.0, -rental_gain)
+        with_sale_items = {
+            **final_year_items,
+            "rental_income": final_year_items["rental_income"] - released_passive + short_term - ordinary_loss,
+            "ltcg": ltcg,
+            "unrecaptured_1250": recapture,
+        }
+        effect = _tax_effect(jurisdiction, taxes_inputs, tax_year, with_sale_items, final_year_items)
+        return {
+            "sale_price": proceeds["sale_price"],
+            "selling_costs_total": proceeds["selling_costs_total"],
+            "net_sale_proceeds": proceeds["net_sale_proceeds"],
+            "gain": proceeds["net_sale_proceeds"] - (cost_basis - depr_taken),
+            "rental_share": r,
+            "held_months": float(held_months),
+            "long_term": float(long_term),
+            "rental_gain": rental_gain,
+            "personal_gain": personal_gain,
+            "recapture": recapture,
+            "excluded_121": excluded_121,
+            "ltcg": ltcg,
+            "short_term_gain": short_term,
+            "ordinary_loss": ordinary_loss,
+            "nondeductible_personal_loss": max(0.0, -personal_gain),
+            "released_passive": released_passive,
+            "lost_280a_carry": float(ending["carry_280a_balance"] + ending["carry_280a_depr_balance"]),
+            "federal": effect["federal"],
+            "property_state": effect["property_state"],
+            "residence_state": effect["residence_state"],
+            "tax": effect["total"],
+        }
+
+    return sale_tax
+
+
 def compute_owner_sale_tax(
     scenario: dict[str, Any],
     annual_schedule: pd.DataFrame,
     deck: dict[str, Any] | None = None,
     sale_price: float | None = None,
 ) -> dict[str, float]:
-    """The sale's tax effect, as an increment on top of the final year's return: depreciation recapture
-    (unrecaptured 1250 gain), the section 121 exclusion (only if loan_occupancy_class ==
-    "primary_residence" AND held >= the federal minimum years), the remaining long-term gain, and the
-    release of suspended passive losses (an ordinary loss); 280A carryforwards are lost. Reads the
-    ending state off annual_schedule's LAST row. sale_price defaults to the EXPECTED sale price
-    (carrying_costs.project_sale_price's mean).
-
-    A LOSS (gain < 0) is taxed $0: the rental share's section 1231 ordinary-loss deduction is NOT modeled,
-    so the tax is overstated in that case (see the module docstring's KNOWN LIMITATION). A 1-year horizon
-    is held exactly 12 months, yet is still taxed under the long-term rules (same note)."""
+    """The sale's tax effect at one price (see the module docstring, SALE): sale_price, selling_costs_total,
+    net_sale_proceeds, gain (whole property, over the adjusted basis), rental_share, held_months, long_term
+    (0/1), rental_gain, personal_gain, recapture, excluded_121, ltcg, short_term_gain, ordinary_loss (the
+    rental part's deducted loss), nondeductible_personal_loss, released_passive, lost_280a_carry, federal,
+    property_state, residence_state, tax (negative = the sale saves tax). sale_price defaults to the
+    EXPECTED sale price (carrying_costs.project_sale_price's mean)."""
     deck = deck if deck is not None else load_deck()
-    taxes_inputs = get_taxes_inputs(deck)
-    jurisdiction = get_scenario_tax_jurisdiction(scenario, deck)
-    section_121 = jurisdiction.federal.section_121
-
-    cost_basis = scenario["acquisition"]["purchase_price"] + scenario["acquisition"]["closing_costs_total"]
-    ending = annual_schedule.iloc[-1]
-    depr_taken = float(ending["cumulative_depr_taken"])
-
     if sale_price is None:
         sale_price = project_sale_price(scenario, deck)["mean"]
-    proceeds = estimate_sale_proceeds(sale_price, deck)
-
-    adj_basis = cost_basis - depr_taken
-    gain = proceeds["net_sale_proceeds"] - adj_basis
-    recapture = max(0.0, min(gain, depr_taken))
-    rest = max(0.0, gain - recapture)
-
-    is_primary_residence = scenario["classification"]["loan_occupancy_class"] == "primary_residence"
-    held_long_enough = scenario["horizon_years"] >= section_121["min_ownership_and_use_years"]
-    excluded_121 = min(rest, section_121["exclusion"]) if (is_primary_residence and held_long_enough) else 0.0
-    ltcg = rest - excluded_121
-    released_passive = float(ending["suspended_passive_balance"])
-
-    final_year_items = {
-        **NO_PROPERTY,
-        "rental_income": float(ending["taxable_rental"]),
-        "itemized_interest": float(ending["itemized_interest"]),
-        "personal_property_tax": float(ending["personal_property_tax"]),
-    }
-    with_sale_items = {
-        **final_year_items,
-        "rental_income": final_year_items["rental_income"] - released_passive,
-        "ltcg": ltcg,
-        "unrecaptured_1250": recapture,
-    }
-    effect = _tax_effect(jurisdiction, taxes_inputs, int(ending["tax_year"]), with_sale_items, final_year_items)
-
-    return {
-        "sale_price": proceeds["sale_price"],
-        "selling_costs_total": proceeds["selling_costs_total"],
-        "net_sale_proceeds": proceeds["net_sale_proceeds"],
-        "gain": gain,
-        "recapture": recapture,
-        "excluded_121": excluded_121,
-        "ltcg": ltcg,
-        "released_passive": released_passive,
-        "lost_280a_carry": float(ending["carry_280a_balance"] + ending["carry_280a_depr_balance"]),
-        "federal": effect["federal"],
-        "property_state": effect["property_state"],
-        "residence_state": effect["residence_state"],
-        "tax": effect["total"],
-    }
+    return owner_sale_tax_function(scenario, annual_schedule, deck)(sale_price)
 
 
 def compute_owner_taxes(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -431,18 +492,6 @@ def compute_owner_taxes(scenario: dict[str, Any], deck: dict[str, Any] | None = 
         flags.append(
             f"WARNING: annual_personal_days={personal_days:g} >= {residency_days:g} -- "
             f"{scenario['residency_state']} residency claim at risk ({jurisdiction.property_state.name} statutory-resident test)."
-        )
-    if sale["gain"] < 0:
-        flags.append(
-            f"NOTE: the expected sale is at a LOSS (${sale['gain']:,.0f}). The model taxes it $0 and does NOT deduct "
-            "the rental share as a section 1231 ordinary loss, so the buy branch's tax is overstated here "
-            "(see taxes.py, KNOWN LIMITATION)."
-        )
-    if scenario["horizon_years"] <= 1:
-        flags.append(
-            "NOTE: a 1-year horizon sells after exactly 12 months, not MORE than 1 year: a gain would really be "
-            "short-term (ordinary rates) and a loss not section 1231. The model still uses the long-term rules "
-            "(see taxes.py, KNOWN LIMITATION)."
         )
 
     return {

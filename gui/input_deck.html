@@ -10,6 +10,7 @@
 <style>
 /* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
    One narrow column: sticky section nav, then one panel per deck section (1-12 built, 13 placeholder).
+   The ΔW stage (buy vs rent) has no inputs of its own: it reads sections 1-12; its results surface here later.
    Every section is rendered from the SECTIONS schema in the script below, and all values live in one
    `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
 :root {
@@ -642,7 +643,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     },
     {
       n: 11, id: "capital_markets", title: "Capital markets",
-      intro: "The rent branch keeps your own cash instead of buying, and invests it: split at closing between a market account and a cash account, held to the horizon with no rebalancing, then sold. Interest and dividends are taxed every year and reinvested after tax; the market account's gain is taxed at the sale. Taxes use your residence state and the section 9 household facts.",
+      intro: "The rent branch keeps your own cash instead of buying, and invests it: split at closing between a market account and a cash account, held to the horizon with no rebalancing, then sold. Interest and dividends are taxed every year and reinvested after tax; the market account's gain is taxed at the sale. Taxes use your residence state and the section 9 household facts. The same split, cash yield and dividends also hold the buy-vs-rent difference fund: each month, whichever household spends less invests the gap.",
       groups: [
         { title: "What's invested and how it's split", fields: [
           { path: "capital_markets.initial_investment", label: "Invested at closing", kind: "constant", type: "custom", render: investedAmount,
@@ -665,7 +666,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     },
     {
       n: 12, id: "exit", title: "Exit",
-      intro: "The buy branch's money at the sale: sale price − selling costs − mortgage payoff − family loan (if repaid, section 1) − sale tax. The sale price is your purchase price grown by forecast_models.home_price, with its full uncertainty band; the sale tax (recapture, capital gain, NIIT, state) comes from the section 9 engine at the expected price. Known limitation: a sale at a LOSS is taxed $0. The personal-use share of a loss isn't deductible (correct), but the rental share is a deductible section 1231 loss (IRS Pub. 527/544) that the model leaves out, so a loss-making sale looks slightly worse for buying than it is. A 1-year horizon (held exactly 12 months, not long-term) is also still taxed under the long-term rules. The run flags both.",
+      intro: "The buy branch's money at the sale: sale price − selling costs − mortgage payoff − family loan (if repaid, section 1) − sale tax. The sale price is your purchase price grown by forecast_models.home_price, with its full uncertainty band; the sale tax (recapture, capital gain, NIIT, state) comes from the section 9 engine, worked out at every price across the band. The unit is split by its rental share into a rental part and a personal part (IRS Pub. 527): a gain is taxed as usual when held more than 12 months (recapture, then long-term) and at ordinary rates when held 12 months or less (a 1-year horizon); a loss is deductible only on the rental part, as an ordinary loss (section 1231, IRS Pub. 544), so a loss-making sale can save tax.",
       groups: [
         { title: "Selling costs · total = fixed fees + percent × sale price", fields: [
           { path: "exit.selling_costs.fixed_fees", label: "Fixed fees", kind: "constant", type: "money", step: 100, hint: "Seller-side title, escrow and similar costs that don't scale with price." },
@@ -676,7 +677,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       preview: previewExit
     },
     { n: 13, id: "run", title: "Run", soon: true,
-      desc: "Run settings and reporting.",
+      desc: "Run settings and reporting. The report quantiles also set the band shown for the buy-vs-rent result (ΔW). The results themselves (P(buy beats rent), ΔW's distribution, what drives it) will appear here once the GUI is wired to the model.",
       keys: ["report_quantiles"] }
   ];
 

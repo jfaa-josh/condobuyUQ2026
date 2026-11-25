@@ -190,7 +190,7 @@ def compute_rental_operations(scenario: dict[str, Any], deck: dict[str, Any] | N
         channel_commissions_mean, mgmt_fee_mean, net_mean and net_* bands;
       "horizon": {"gross_mean", "gross_sd", "net_mean", gross_*/net_* bands};
       "fees": {"channel_commission_fraction", "mgmt_fee_fraction", "keep_fraction"};
-      "ci", "outer_ci"."""
+      "ci", "outer_ci"; "terms" (the log-space structure, for the ΔW stage -- see the comment at the return)."""
     deck = deck if deck is not None else load_deck()
     inputs = get_rental_operations_inputs(deck)
     priors = load_rental_priors()
@@ -307,4 +307,12 @@ def compute_rental_operations(scenario: dict[str, Any], deck: dict[str, Any] | N
         },
         "ci": ci,
         "outer_ci": outer_ci,
+        # The log-space structure behind every number above, for the ΔW stage (delta_w.py) to rebuild each
+        # month's gross revenue as a lognormal term on shared factors: log gross_h = mu[h] + a_h x occ_yy(year)
+        # + b_h x occ_level + c_h x adr_yy(year) + d_h x adr_level + (log G_h of growth_latent - its median),
+        # corr(occ_yy, adr_yy) = rho, everything else independent. Inactive months have no revenue.
+        "terms": {
+            "mu": mu_safe, "active": active, "occ_yy": a, "occ_level": b, "adr_yy": c, "adr_level": d,
+            "rho": rho, "growth_latent": inputs["adr_growth_latent"], "keep_fraction": keep,
+        },
     }
