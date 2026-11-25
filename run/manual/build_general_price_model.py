@@ -18,7 +18,7 @@ as part of routine testing.
 
 from datetime import datetime
 
-from condobuyuq2026.input_deck import get_report_quantiles
+from condobuyuq2026.input_deck import get_build_horizon_months, get_outer_band, get_report_quantiles
 from condobuyuq2026.plotting.forecast_plots import plot_monthly_rate, plot_term_structure
 from condobuyuq2026.raw_data import load_raw_csv, raw_csv_path, save_raw_csv, to_monthly_series
 from condobuyuq2026.utils.manual_utils import fetch_bls_series, filter_monthly, model_fit_path, model_plots_dir
@@ -33,9 +33,9 @@ START_YEAR = 1984                  # one year before the intended 1985 fit windo
                                     # ou_fitting.fit_annual_ou
 END_YEAR = datetime.now().year
 MODEL_NAME = "bls_cpi_all_nsa_1984_1_2026_8"   # saved to data/raw/<MODEL_NAME>.csv and models/<MODEL_NAME>/
-PROJECTION_HORIZON_MONTHS = 120    # 10 years -- matches a plausible scenario.horizon_years max
-OUTER_CI = (0.01, 0.99)            # wide reference band every plot shows (dashed), regardless of
-                                    # report_quantiles -- see plotting.forecast_plots module docstring
+PROJECTION_HORIZON_MONTHS = get_build_horizon_months()  # the sweep's longest scenario.horizon_years (run section)
+OUTER_CI = get_outer_band()       # run.outer_band: the wide reference band every plot shows (dashed),
+                                    # regardless of report_quantiles -- see plotting.forecast_plots
 # =============================================================================
 
 

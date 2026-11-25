@@ -41,6 +41,7 @@ from condobuyuq2026.input_deck import (
     MONTH_KEYS,
     get_closing_date,
     get_forecast_model_name,
+    get_outer_band,
     get_rental_operations_sources,
     get_report_quantiles,
 )
@@ -334,7 +335,7 @@ def build_rental_operations_prior_models(deck: dict[str, Any] | None = None) -> 
     all_factors, _ = cpi_restatement_factors({s["year"] for s in all_sources}, deck)
     report_quantiles = get_report_quantiles(deck)
     ci = (report_quantiles[0], report_quantiles[-1])
-    quantiles = _band_quantiles(ci, (0.01, 0.99))
+    quantiles = _band_quantiles(ci, get_outer_band(deck))
     rentable = rentable_nights_by_month(deck)
     days = {m: float(d) for m, d in DAYS_IN_MONTH.items()}
 

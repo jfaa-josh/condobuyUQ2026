@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
-   One narrow column: sticky section nav, then one panel per deck section (1-12 built, 13 placeholder).
+   One narrow column: sticky section nav, then one panel per deck section (1-13 built) and a results placeholder.
    The ΔW stage (buy vs rent) has no inputs of its own: it reads sections 1-12; its results surface here later.
    Every section is rendered from the SECTIONS schema in the script below, and all values live in one
    `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
@@ -213,7 +213,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   <header>
     <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
     <h1>Buy vs. Rent Input Deck</h1>
-    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–12 are editable here. Section 13 is a placeholder. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–13 are editable here; the results view is a placeholder. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
   </header>
 
   <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
@@ -375,6 +375,16 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       other_salt_paid: 6000,
       average_guest_stay_nights: 4,
       owner_materially_participates: false
+    },
+    run: {
+      report_quantiles: [0.1, 0.5, 0.9],
+      outer_band: { lo: 0.01, hi: 0.99 },
+      solver: {
+        exit_price_integration_points: 40,
+        delta_w_moment_grouping_months: 12,
+        cornish_fisher: { z_range: 6, grid_points: 4801, check_z: 3.5 }
+      },
+      warning_thresholds: { special_assessment_tail: 0.01 }
     }
   };
 
@@ -383,7 +393,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
 
   const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   const usdK = (v) => v >= 1e6 ? "$" + (v / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M" : "$" + Math.round(v / 1000) + "k";
-  const pct = (f, d = 2) => (f * 100).toFixed(d).replace(/\.?0+$/, "") + "%";
+  // Trims trailing zeros only after a decimal point (20% stays "20%", 12.50% -> "12.5%").
+  const pct = (f, d = 2) => { const t = (f * 100).toFixed(d); return (d > 0 ? t.replace(/\.?0+$/, "") : t) + "%"; };
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const MONTH_KEYS = MONTHS.map((m) => m.toLowerCase());
   const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -676,9 +687,41 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       ],
       preview: previewExit
     },
-    { n: 13, id: "run", title: "Run", soon: true,
-      desc: "Run settings and reporting. The report quantiles also set the band shown for the buy-vs-rent result (ΔW). The results themselves (P(buy beats rent), ΔW's distribution, what drives it) will appear here once the GUI is wired to the model.",
-      keys: ["report_quantiles"] }
+    {
+      n: 13, id: "run", title: "Run",
+      intro: "How the run reports results and how precisely it computes them. Nothing here describes the condo or your finances: changing it never changes what is modeled, only how results are summarized and how finely the closed-form math is evaluated. Every run also writes results/summary.csv and summary.png (all scenarios side by side) and results/run_info.json (the run manifest: when it ran, the code version, the deck's fingerprint, data dates, every warning). Result folders the run didn't write are listed in a warning, never deleted. The model builds project as far as your longest horizon (section 1), so there's no horizon setting here.",
+      groups: [
+        { title: "Reporting", fields: [
+          { path: "run.report_quantiles", label: "Report quantiles", kind: "constant", type: "custom", render: quantileList, wide: true,
+            hint: "Percentages, strictly increasing, at least two. The first and last set every reported band (the 10%–90% bands on plots and in summaries, ΔW's included); the median is always shown. Kept as a list for now; it may become a two-value band later." },
+          { path: "run.outer_band.lo", label: "Outer band, low", kind: "constant", type: "percent", step: 0.5, max: 50,
+            hint: "The dashed wide band on every plot and ΔW's outer band. Must be below the first report quantile." },
+          { path: "run.outer_band.hi", label: "Outer band, high", kind: "constant", type: "percent", step: 0.5, max: 100,
+            hint: "Must be above the last report quantile." }
+        ]},
+        { title: "Solver · the defaults are accurate to well under a dollar; raise to check a result doesn't move, lower only to save time", fields: [
+          { path: "run.solver.exit_price_integration_points", label: "Sale-price integration points", kind: "constant", type: "number", min: 5, max: 400, step: 1,
+            hint: "Net equity (section 12) averages the sale tax over every possible sale price with a Gauss-Hermite rule of this many points. The tax has kinks (loss vs gain, brackets), so it's averaged, not straight-lined." },
+          { path: "run.solver.delta_w_moment_grouping_months", label: "ΔW moment grouping", kind: "constant", type: "number", min: 1, max: 600, step: 1, unit: "months",
+            hint: "ΔW's mean and spread are always exact. Its shape (skew, tail weight) groups each item's months into blocks this long: 12 = yearly, 3 = quarterly, 1 = none. Cost grows with the 4th power of the piece count: see the preview." },
+          { path: "run.solver.cornish_fisher.z_range", label: "Cornish-Fisher range", kind: "constant", type: "number", min: 1, max: 12, step: 0.5, unit: "sd",
+            hint: "How far into the tails ΔW's distribution is traced (it comes from its four moments via the Cornish-Fisher expansion)." },
+          { path: "run.solver.cornish_fisher.grid_points", label: "Cornish-Fisher grid points", kind: "constant", type: "number", min: 101, max: 100001, step: 100,
+            hint: "Resolution of that trace. Finer = smoother probabilities and plots." },
+          { path: "run.solver.cornish_fisher.check_z", label: "Cornish-Fisher check range", kind: "constant", type: "number", min: 0.5, max: 12, step: 0.5, unit: "sd",
+            hint: "If the expansion doesn't increase over ± this range, the run flags ΔW's tail quantiles as unreliable. Must be below the range above." }
+        ]},
+        { title: "Warning thresholds", fields: [
+          { path: "run.warning_thresholds.special_assessment_tail", label: "Special-assessment tail", kind: "constant", type: "percent", step: 0.5, max: 100,
+            hint: "The special-assessment model folds the chance of more than k_max assessments into k_max (section 6). Above this chance, the run warns you to raise k_max." }
+        ]}
+      ],
+      preview: previewRun
+    },
+    { n: "R", id: "results", title: "Results", soon: true,
+      eyebrow: "Not built yet · a later step, with connecting this page to the model",
+      desc: "Where the run's results will show: the buy-vs-rent headline (P(buy beats rent), with and without special assessments), ΔW's distribution and band, what drives its uncertainty, expected wealth buy vs rent, the difference fund, the cross-scenario summary, every stage's plots, and the run's warnings. Until then they are in results/ (see results/summary.png and results/run_info.json).",
+      keys: ["results/summary.csv", "results/summary.png", "results/run_info.json", "results/<scenario>/delta_w/", "results/<scenario>/…"] }
   ];
 
   // ---------------------------------------------------------------------------
@@ -1371,7 +1414,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     box.append(stats,
       table([["Residence · loan class"], ["Price", 1], ["Horizon", 1], ["Selling costs", 1], ["Loan balance", 1], ["Family loan", 1], ["Equity before tax", 1]], rows),
       el("p", "hint", "At TODAY's price (no appreciation) and before the sale tax, to show the known deductions. The run grows the price by forecast_models.home_price, "
-        + "adds its uncertainty band, takes the sale tax at the expected price, and saves results/<scenario>/exit/sale_proceeds.png."));
+        + "adds its uncertainty band, works out the sale tax at every price across it, and saves results/<scenario>/exit/sale_proceeds.png."));
   }
 
   // ---------------------------------------------------------------------------
@@ -1617,6 +1660,112 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   }
 
   // ---------------------------------------------------------------------------
+  // Section 13 editor and preview
+  // ---------------------------------------------------------------------------
+  // run.report_quantiles as a comma-separated list of percentages ("10, 50, 90").
+  function quantileList(wrap, onChange, err) {
+    const i = el("input"); i.type = "text"; i.spellcheck = false; i.setAttribute("aria-label", "Report quantiles, percent, comma-separated");
+    i.value = deck.run.report_quantiles.map((q) => +(q * 100).toFixed(4)).join(", ");
+    i.addEventListener("input", () => {
+      const parts = i.value.split(",").map((t) => t.trim()).filter((t) => t !== "");
+      const vals = parts.map(Number);
+      if (vals.length < 2 || vals.some((v) => !Number.isFinite(v) || v <= 0 || v >= 100)) { err.textContent = "Enter at least two percentages between 0 and 100, separated by commas."; return; }
+      if (vals.some((v, k) => k > 0 && v <= vals[k - 1])) { err.textContent = "Must be strictly increasing."; return; }
+      err.textContent = "";
+      deck.run.report_quantiles = vals.map((v) => v / 100);
+      onChange();
+    });
+    const a = el("div", "affix"); a.append(i, el("span", null, "%"));
+    wrap.append(a);
+  }
+
+  // Run-setting checks, mirroring input_deck.get_report_quantiles / get_outer_band / get_solver_settings /
+  // get_warning_thresholds.
+  function runChecks() {
+    const r = deck.run, q = r.report_quantiles, ob = r.outer_band, sv = r.solver, cf = sv.cornish_fisher;
+    const isInt = (v) => Number.isInteger(v);
+    return [
+      ["Report quantiles: 2+, increasing, within 0–100%", q.length >= 2 && q.every((v, k) => v > 0 && v < 1 && (k === 0 || v > q[k - 1]))],
+      ["Outer band outside the report band", ob.lo > 0 && ob.lo < q[0] && ob.hi > q[q.length - 1] && ob.hi < 1],
+      ["Integration points: whole number ≥ 5", isInt(sv.exit_price_integration_points) && sv.exit_price_integration_points >= 5],
+      ["Moment grouping: whole months ≥ 1", isInt(sv.delta_w_moment_grouping_months) && sv.delta_w_moment_grouping_months >= 1],
+      ["Cornish-Fisher grid: whole number ≥ 101", isInt(cf.grid_points) && cf.grid_points >= 101],
+      ["Cornish-Fisher: 0 < check range < range", cf.check_z > 0 && cf.check_z < cf.z_range],
+      ["Special-assessment threshold within 0–100%", r.warning_thresholds.special_assessment_tail > 0 && r.warning_thresholds.special_assessment_tail < 1]
+    ];
+  }
+
+  // An illustrative right-skewed distribution with the report band shaded and the outer band dashed.
+  function bandSketch() {
+    const NS = "http://www.w3.org/2000/svg", W = 560, H = 150, pad = 18;
+    const q = deck.run.report_quantiles, ob = deck.run.outer_band;
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H); svg.setAttribute("width", "100%"); svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Illustration: report band " + pct(q[0], 1) + " to " + pct(q[q.length - 1], 1) + " shaded, outer band " + pct(ob.lo, 1) + " to " + pct(ob.hi, 1) + " dashed");
+    const sigma = 0.45, mu = 0;
+    // Inverse normal CDF (Acklam) for the band positions.
+    const inv = (p) => {
+      const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+      const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+      const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+      const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+      const pl = 0.02425;
+      if (p < pl) { const t = Math.sqrt(-2 * Math.log(p)); return (((((c[0] * t + c[1]) * t + c[2]) * t + c[3]) * t + c[4]) * t + c[5]) / ((((d[0] * t + d[1]) * t + d[2]) * t + d[3]) * t + 1); }
+      if (p > 1 - pl) { const t = Math.sqrt(-2 * Math.log(1 - p)); return -(((((c[0] * t + c[1]) * t + c[2]) * t + c[3]) * t + c[4]) * t + c[5]) / ((((d[0] * t + d[1]) * t + d[2]) * t + d[3]) * t + 1); }
+      const t = p - 0.5, r = t * t;
+      return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * t / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+    };
+    const xq = (p) => Math.exp(mu + sigma * inv(p));
+    const x0 = xq(0.0005), x1 = xq(0.9995);
+    const sx = (x) => pad + (x - x0) / (x1 - x0) * (W - 2 * pad);
+    const dens = (x) => Math.exp(-Math.pow(Math.log(x) - mu, 2) / (2 * sigma * sigma)) / (x * sigma * Math.sqrt(2 * Math.PI));
+    const peak = dens(Math.exp(mu - sigma * sigma));
+    const sy = (y) => H - pad - y / peak * (H - 2 * pad - 14);
+    const path = (from, to) => {
+      let d = "M" + sx(from) + "," + sy(0);
+      for (let k = 0; k <= 120; k++) { const x = from + (to - from) * k / 120; d += " L" + sx(x).toFixed(1) + "," + sy(dens(x)).toFixed(1); }
+      return d + " L" + sx(to) + "," + sy(0) + " Z";
+    };
+    const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); return e; };
+    const valid = q.length >= 2 && ob.lo > 0 && ob.hi < 1;
+    if (valid) svg.append(mk("path", { d: path(xq(q[0]), xq(q[q.length - 1])), fill: "var(--accent)", "fill-opacity": "0.18" }));
+    svg.append(mk("path", { d: path(x0, x1), fill: "none", stroke: "var(--accent)", "stroke-width": "2" }));
+    const label = (x, text, anchor) => { const t = mk("text", { x: sx(x), y: 12, "text-anchor": anchor, "font-size": "11", fill: "var(--muted)" }); t.textContent = text; svg.append(t); };
+    if (valid) {
+      [ob.lo, ob.hi].forEach((p) => svg.append(mk("line", { x1: sx(xq(p)), x2: sx(xq(p)), y1: 18, y2: sy(0), stroke: "var(--muted)", "stroke-dasharray": "4 3" })));
+      svg.append(mk("line", { x1: sx(xq(0.5)), x2: sx(xq(0.5)), y1: 18, y2: sy(0), stroke: "var(--accent)", "stroke-width": "1.5" }));
+      label(xq(ob.lo), pct(ob.lo, 1), "middle"); label(xq(ob.hi), pct(ob.hi, 1), "middle"); label(xq(0.5), "median", "middle");
+    }
+    svg.append(mk("line", { x1: pad, x2: W - pad, y1: sy(0), y2: sy(0), stroke: "var(--line)" }));
+    return svg;
+  }
+
+  function previewRun(box) {
+    const s = deck.scenario, r = deck.run, q = r.report_quantiles, sv = r.solver;
+    const checks = runChecks();
+    const pills = el("div", "ids");
+    checks.forEach(([label, ok]) => pills.append(el("span", "pill " + (ok ? "ok" : "bad"), (ok ? "✓ " : "✗ ") + label)));
+    // Scenario folders the run writes (same names as results.scenario_results_dir / reference_results_dir).
+    const folders = el("div", "ids");
+    s.alternatives.forEach((a) => s.horizon_years.forEach((h) => s.residency_state.forEach((res) => s.purchase_price.forEach((p) =>
+      s.family_loan_repaid_at_sale.forEach((lr) => folders.append(el("span", "pill neutral mono", a + "_h" + h + "y_p" + p + "_" + res + (lr ? "" : "_loan_kept"))))))));
+    const maxH = Math.max(...s.horizon_years);
+    // ΔW shape cost relative to the default grouping, for the longest horizon: ~ (pieces)^4, pieces ∝ months / grouping.
+    const pieces = (g) => 2 * 8 * Math.ceil(maxH * 12 / g) + 2;
+    const rel = Math.pow(pieces(sv.delta_w_moment_grouping_months) / pieces(12), 4);
+    const stats = el("div", "stat-row");
+    [[pct(q[0], 1) + "–" + pct(q[q.length - 1], 1), "report band (median always)"], [pct(r.outer_band.lo, 1) + "–" + pct(r.outer_band.hi, 1), "outer band"],
+     [maxH * 12 + " months", "model builds project to (longest horizon)"],
+     [rel < 1.05 && rel > 0.95 ? "default" : (rel >= 1 ? "~" + Math.round(rel).toLocaleString() + "× slower" : "~" + (1 / rel).toFixed(0) + "× faster"), "ΔW shape cost vs yearly grouping"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+    box.append(stats, bandSketch(),
+      el("p", "hint", "Illustration only (a generic skewed distribution): the shaded area is the report band, the dashed lines the outer band."),
+      pills,
+      el("p", "hint", "Result folders this run will write under results/ (plus one rent_ref<id>_h<years>y_<state>/ per distinct rent case), next to summary.csv, summary.png and run_info.json:"),
+      folders);
+  }
+
+  // ---------------------------------------------------------------------------
   // Build page
   // ---------------------------------------------------------------------------
   const previews = [];
@@ -1639,8 +1788,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     s.append(head);
 
     if (sec.soon) {
-      const p = el("div", "placeholder" + (sec.n === 13 ? " next" : ""));
-      p.append(el("span", "eyebrow", sec.n === 13 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const p = el("div", "placeholder");
+      p.append(el("span", "eyebrow", sec.eyebrow || "Not built yet"), el("p", null, sec.desc));
       const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
       s.append(p);
       host.append(s);

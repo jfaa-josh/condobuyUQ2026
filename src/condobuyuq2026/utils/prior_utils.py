@@ -59,7 +59,9 @@ from condobuyuq2026.input_deck import (
     UTILITIES_CALIBRATION_OCCUPANCY_FROM_HISTORY,
     get_closing_date,
     get_forecast_model_name,
+    get_build_horizon_months,
     get_growth_fit,
+    get_outer_band,
     get_hoa_dues_config,
     get_insurance_config,
     get_maintenance_config,
@@ -83,7 +85,6 @@ from condobuyuq2026.rental_operations import expected_occupied_days_by_month, lo
 from condobuyuq2026.utils.manual_utils import model_fit_path, model_plots_dir
 from condobuyuq2026.utils.ou_fitting import project_term_structure
 
-_CARRYING_COST_PRIOR_OUTER_CI = (0.01, 0.99)  # wide reference band, same convention as other build scripts
 
 REASSESSMENT_AVERAGING_WINDOW_MONTHS = 18  # 1.5 years -- Colorado's own real assessment-cycle
                                             # convention (see input_deck.yaml's market_value comment
@@ -287,7 +288,7 @@ def build_market_value_naive_reference(
     ci = (report_quantiles[0], report_quantiles[-1])
     projection = project_term_structure(latent_fit, p0=denver_level_at_closing, horizon_months=horizon_months, ci=ci)
     outer_projection = project_term_structure(
-        latent_fit, p0=denver_level_at_closing, horizon_months=horizon_months, ci=_CARRYING_COST_PRIOR_OUTER_CI
+        latent_fit, p0=denver_level_at_closing, horizon_months=horizon_months, ci=get_outer_band(deck)
     )
 
     months = history_months + list(projection.index)
@@ -669,7 +670,7 @@ def build_hoa_dues_prior_model(deck: dict[str, Any] | None = None, horizon_month
     plot_periods_stairstep(
         periods,
         ci,
-        _CARRYING_COST_PRIOR_OUTER_CI,
+        get_outer_band(deck),
         horizon_months,
         title=(
             "HOA Dues (Monthly) — Uninformed Carrying-Cost Prior\nJanuary payments include the annual association charge "
@@ -726,7 +727,7 @@ def _build_guess_plus_growth_model(
     plot_periods_projection(
         periods,
         ci,
-        _CARRYING_COST_PRIOR_OUTER_CI,
+        get_outer_band(deck),
         horizon_months,
         title=f"{name.replace('_', ' ').title()} — Uninformed Carrying-Cost Prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% Band)",
         save_path=plot_path,
@@ -1254,7 +1255,7 @@ def build_utilities_prior_model(deck: dict[str, Any] | None = None, horizon_mont
     plot_periods_projection(
         periods,
         ci,
-        _CARRYING_COST_PRIOR_OUTER_CI,
+        get_outer_band(deck),
         horizon_months,
         title=(
             f"Utilities (Monthly) — Uninformed Carrying-Cost Prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% Band)\n"
@@ -1336,7 +1337,7 @@ def build_market_value_informed_model(deck: dict[str, Any] | None = None, horizo
     plot_periods_stairstep(
         change_magnitude["periods"],
         ci,
-        _CARRYING_COST_PRIOR_OUTER_CI,
+        get_outer_band(deck),
         horizon_months=horizon_months,
         title=f"Market Value (Stair-Stepped) — Informed Carrying-Cost Prior ({int(ci[0] * 100)}-{int(ci[1] * 100)}% Band)",
         save_path=plot_path,
@@ -1368,7 +1369,7 @@ def build_market_value_informed_model(deck: dict[str, Any] | None = None, horizo
             change_magnitude["periods"],
             observations_with_timing,
             ci,
-            _CARRYING_COST_PRIOR_OUTER_CI,
+            get_outer_band(deck),
             horizon_months=horizon_months,
             title="Market Value: Latent (home price) vs. Linearly Calibrated Model",
             save_path=diagnostic_plot_path,
@@ -1377,7 +1378,9 @@ def build_market_value_informed_model(deck: dict[str, Any] | None = None, horizo
     return result
 
 
-def build_all_carrying_cost_prior_models(deck: dict[str, Any] | None = None, horizon_months: int = 120) -> dict[str, dict[str, Any]]:
+def build_all_carrying_cost_prior_models(
+    deck: dict[str, Any] | None = None, horizon_months: int | None = None
+) -> dict[str, dict[str, Any]]:
     """Builds every carrying_costs prior: the five UNINFORMED entries (hoa_dues_annual/
     insurance_annual/maintenance_annual each now their own dedicated build_* function since their
     2026-09-29 redesign gave each a genuinely different shape -- see build_hoa_dues_prior_model/
@@ -1385,8 +1388,11 @@ def build_all_carrying_cost_prior_models(deck: dict[str, Any] | None = None, hor
     its own frequency x size model, see build_special_assessment_prior_model; utilities also
     uninformed, its own seasonal shape), and market_value's INFORMED build
     (see build_market_value_informed_model). See carrying_costs.INFORMED_CARRYING_COST_PRIORS for
-    which is which. Returns {name: {"fit_path": ..., "plot_path": ..., ...}}."""
+    which is which. Returns {name: {"fit_path": ..., "plot_path": ..., ...}}. horizon_months defaults to the
+    sweep's longest horizon (input_deck.get_build_horizon_months); each build_* below keeps 120 as its own
+    default only for one-off calls."""
     deck = deck if deck is not None else _load_deck()
+    horizon_months = horizon_months if horizon_months is not None else get_build_horizon_months(deck)
     return {
         "hoa_dues_annual": build_hoa_dues_prior_model(deck, horizon_months),
         "insurance_annual": build_insurance_prior_model(deck, horizon_months),

@@ -35,6 +35,7 @@ from condobuyuq2026.classification import compute_occupancy_classification
 from condobuyuq2026.delta_w import compute_delta_w
 from condobuyuq2026.exit import compute_exit
 from condobuyuq2026.financing import compute_financing
+from condobuyuq2026.input_deck import get_warning_thresholds
 from condobuyuq2026.reporting import (
     print_acquisition_report,
     print_capital_markets_report,
@@ -139,7 +140,8 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         carrying_costs = compute_carrying_costs(scenario, deck)
         scenario["carrying_costs"] = carrying_costs
         print_carrying_costs_report(carrying_costs)
-        print_special_assessment_report(carrying_costs["special_assessment"])
+        print_special_assessment_report(carrying_costs["special_assessment"],
+                                        get_warning_thresholds(deck)["special_assessment_tail"])
 
         result_plots = save_carrying_cost_result_plots(scenario, deck)
         print_carrying_cost_result_plots_report(result_plots)

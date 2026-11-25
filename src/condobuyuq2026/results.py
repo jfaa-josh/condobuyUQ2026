@@ -27,7 +27,7 @@ from condobuyuq2026.carrying_costs import (
     market_value_periods_to_tax_periods,
     resolve_period,
 )
-from condobuyuq2026.input_deck import get_report_quantiles, load_deck
+from condobuyuq2026.input_deck import format_band, get_outer_band, get_report_quantiles, load_deck
 from condobuyuq2026.paths import RESULTS_DIR
 from condobuyuq2026.plotting.forecast_plots import (
     plot_periods_stairstep,
@@ -354,7 +354,7 @@ def save_carrying_cost_result_plots(scenario: dict[str, Any], deck: dict[str, An
     horizon_months = horizon_years * 12
     report_quantiles = get_report_quantiles(deck)
     ci = (report_quantiles[0], report_quantiles[-1])
-    outer_ci = (0.01, 0.99)
+    outer_ci = get_outer_band(deck)
 
     paths: dict[str, Path] = {}
     for result_name, prior_name, title, ylabel, aggregate_final_year in (
@@ -427,7 +427,7 @@ def _draw_monthly_stairstep(
 ) -> None:
     """Draws one monthly quantity from rental_operations.compute_rental_operations' "monthly" DataFrame
     (columns <prefix>_median/_lo/_hi/_lo_outer/_hi_outer, index = scenario month h) as a stair-step: each
-    month its own flat box (main band), flat median bar and dashed 1-99% bars, over [h, h + 1] -- the
+    month its own flat box (main band), flat median bar and dashed outer-band (run.outer_band) bars, over [h, h + 1] -- the
     same style as total_carrying_costs.png. Months with no value (NaN: e.g. no bookings, so no ADR) are
     left blank."""
     data = monthly[[f"{prefix}_{band}" for band in ("median", "lo", "hi", "lo_outer", "hi_outer")]].dropna()
@@ -501,7 +501,7 @@ def _plot_net_rental_income(
 ) -> Path:
     """Per scenario year: EXPECTED gross revenue as a stacked bar split into net rental income (bottom) and
     each deduction (management fee, channel commissions); net's own main band as a solid whisker and its
-    1-99% band as a dashed whisker. Title and caption state every deduction explicitly."""
+    outer band (run.outer_band) as a dashed whisker. Title and caption state every deduction explicitly."""
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     years = annual.index.to_numpy()
@@ -756,8 +756,8 @@ def save_exit_result_plots(scenario: dict[str, Any]) -> dict[str, Path]:
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"${v:,.0f}"))
     ax.set_ylabel("USD")
     ax.set_title(
-        f"Buy Branch at the Sale (year {scenario['horizon_years']}) — expected values; whiskers: 10-90% (solid), "
-        f"1-99% (dashed)\nSale price = purchase price grown by forecast_models.home_price; sale tax = its expected "
+        f"Buy Branch at the Sale (year {scenario['horizon_years']}) — expected values; whiskers: "
+        f"{format_band(*price['report_band'])} (solid), {format_band(*price['outer_band'])} (dashed)\nSale price = purchase price grown by forecast_models.home_price; sale tax = its expected "
         f"value over the price distribution\n(negative = a saving, e.g. a deductible loss); marginal "
         f"{ex['marginal_sale_tax_rate']:.1%} across the price band"
     )
@@ -1009,5 +1009,52 @@ def save_delta_w_result_plots(scenario: dict[str, Any]) -> dict[str, Path]:
     fig.tight_layout()
     paths["difference_fund"] = out_dir / "difference_fund.png"
     fig.savefig(paths["difference_fund"])
+    plt.close(fig)
+    return paths
+
+
+def save_run_summary(table: pd.DataFrame) -> dict[str, Path]:
+    """Saves the cross-scenario summary (deck section 13, run_outputs.summary_table):
+      results/summary.csv  one row per buy scenario (see run_outputs.summary_table for the columns);
+      results/summary.png  P(buy beats rent) vs horizon, one line per purchase price (solid; dashed = with the
+                           special-assessment overlay), a 50% reference line, one panel per combination of
+                           the OTHER swept fields that take more than one value (residency, loan switch, ...).
+    A first cut (user, 2026-11-25: "I won't know until I see it"); easy to change."""
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    paths = {"summary_csv": RESULTS_DIR / "summary.csv", "summary_png": RESULTS_DIR / "summary.png"}
+    table.to_csv(paths["summary_csv"], index=False, float_format="%.6g")
+
+    facet_fields = [f for f in ("alternative", "residency_state", "family_loan_repaid_at_sale")
+                    if table[f].nunique() > 1]
+    facets = list(table.groupby(facet_fields)) if facet_fields else [((), table)]
+    fig, axes = plt.subplots(1, len(facets), figsize=(6.5 * len(facets) + 1, 5.5), sharey=True, squeeze=False)
+    prices = sorted(table["purchase_price"].unique())
+    colors = {price: f"C{i % 10}" for i, price in enumerate(prices)}
+    for ax, (key, rows) in zip(axes[0], facets, strict=True):
+        for price in prices:
+            sub = rows[rows["purchase_price"] == price].sort_values("horizon_years")
+            if sub.empty:
+                continue
+            ax.plot(sub["horizon_years"], sub["p_buy_beats_rent"] * 100, "-o", color=colors[price], linewidth=2,
+                    label=f"${price:,.0f}")
+            with_sa = sub["p_buy_beats_rent_with_special_assessments"]
+            if with_sa.notna().any():
+                ax.plot(sub["horizon_years"], with_sa.astype(float) * 100, "--", color=colors[price], linewidth=1.2,
+                        alpha=0.8)
+        ax.axhline(50, color="k", linewidth=0.8, linestyle=":")
+        ax.text(ax.get_xlim()[0], 50, " 50%: a coin flip", va="bottom", fontsize=8)
+        ax.set_ylim(0, 100)
+        ax.set_xticks(sorted(table["horizon_years"].unique()))
+        ax.set_xlabel("Horizon (years held before selling)")
+        ax.grid(alpha=0.3)
+        keys = key if isinstance(key, tuple) else (key,)
+        label = ", ".join(f"{field.replace('_', ' ')}: {value}" for field, value in zip(facet_fields, keys, strict=True))
+        ax.set_title(label or "All scenarios", fontsize=10)
+    axes[0][0].set_ylabel("P(buy beats rent), %")
+    axes[0][0].legend(title="Purchase price (solid; dashed = with special assessments)", fontsize="small",
+                      title_fontsize="small", loc="upper left")
+    fig.suptitle("Buy vs Rent across scenarios — chance that buying leaves you wealthier at the sale")
+    fig.tight_layout()
+    fig.savefig(paths["summary_png"])
     plt.close(fig)
     return paths

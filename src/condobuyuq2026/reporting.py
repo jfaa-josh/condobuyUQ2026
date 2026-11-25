@@ -209,15 +209,14 @@ def print_personal_use_result_plots_report(result_plots: dict[str, Path]) -> Non
     print(f"  saved {len(result_plots)} personal_use result plot to {result_plots['alternate_lodging_cost'].parent}")
 
 
-SPECIAL_ASSESSMENT_FOLDED_TAIL_WARNING_THRESHOLD = 0.01  # warn when P(N > k_max) exceeds 1%
 
 
-def print_special_assessment_report(special_assessment: dict[str, Any]) -> None:
+def print_special_assessment_report(special_assessment: dict[str, Any], threshold: float) -> None:
     """Prints one buy scenario's special-assessment model (see carrying_costs.
     compute_special_assessment) on its own line, labeled as EXCLUDED from the totals above so the
     two are never read as one number. Adds a WARNING line when the chance of more than k_max
     assessments -- which the model folds into the k_max outcome, slightly understating cost there
-    -- is above 1%, since that's the signal to raise k_max in the deck."""
+    -- is above `threshold` (run.warning_thresholds.special_assessment_tail), the signal to raise k_max."""
     sa = special_assessment
     if not sa["enabled"]:
         print("  special_assessment: off (annual_rate: 0) -- no tail-risk overlay")
@@ -233,10 +232,10 @@ def print_special_assessment_report(special_assessment: dict[str, Any]) -> None:
         f"expected count={sa['expected_count']:.2f}, {counts}; sizes ({sa['timing']} timing): {sizes}; "
         f"expected total=${sa['expected_total_cost_usd']:,.0f}"
     )
-    if sa["folded_tail_probability"] > SPECIAL_ASSESSMENT_FOLDED_TAIL_WARNING_THRESHOLD:
+    if sa["folded_tail_probability"] > threshold:
         print(
             f"  WARNING: special_assessment P(more than k_max={k_max} assessments)="
-            f"{sa['folded_tail_probability'] * 100:.1f}% (> 1%) is folded into the N>={k_max} outcome, "
+            f"{sa['folded_tail_probability'] * 100:.1f}% (> {threshold:.1%}) is folded into the N>={k_max} outcome, "
             f"understating cost there -- raise carrying_costs.special_assessment.k_max"
         )
 
@@ -431,3 +430,23 @@ def print_stale_forecast_models_warning(stale: list[str]) -> None:
         f"WARNING: stale forecast_models not refreshed ({', '.join(stale)}) -- "
         "using saved models; pass --refresh to update"
     )
+
+
+def print_run_summary_report(paths: dict[str, Path], scenario_count: int) -> None:
+    """One developer line: where the cross-scenario summary went (results.save_run_summary)."""
+    print(f"run summary: {scenario_count} scenario(s) -> {paths['summary_csv']} and {paths['summary_png'].name}")
+
+
+def print_stale_results_warning(stale_folders: list[Path]) -> None:
+    """Warns about results/ folders this run didn't write (run_outputs.find_stale_results_folders). Never
+    deletes them (user, 2026-11-25)."""
+    if stale_folders:
+        print(
+            f"WARNING: {len(stale_folders)} folder(s) in results/ were not written by this run (scenarios no longer "
+            f"in the sweeps?), left as they are: {', '.join(p.name for p in stale_folders)}"
+        )
+
+
+def print_run_manifest_report(path: Path, warning_count: int) -> None:
+    """One developer line: where the run manifest went (run_outputs.write_run_manifest)."""
+    print(f"run manifest: {path} ({warning_count} warning(s)/note(s) recorded)")

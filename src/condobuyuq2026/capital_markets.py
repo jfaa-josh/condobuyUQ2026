@@ -45,6 +45,7 @@ from condobuyuq2026.input_deck import (
     get_capital_markets_inputs,
     get_closing_date,
     get_growth_fit,
+    get_outer_band,
     get_report_quantiles,
     get_taxes_inputs,
     load_deck,
@@ -79,7 +80,7 @@ def project_portfolio(
     closing_year = get_closing_date(deck)["closing_year"]
     report_quantiles = get_report_quantiles(deck)
     ci = (report_quantiles[0], report_quantiles[-1])
-    outer_ci = (0.01, 0.99)
+    outer_ci = get_outer_band(deck)
     quantiles = {"median": 0.5, "lo": ci[0], "hi": ci[1], "lo_outer": outer_ci[0], "hi_outer": outer_ci[1]}
 
     horizon_years = int(case["horizon_years"])

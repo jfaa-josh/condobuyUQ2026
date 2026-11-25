@@ -39,6 +39,7 @@ from scipy.stats import norm, poisson
 from condobuyuq2026.input_deck import (
     get_closing_date,
     get_forecast_model_home_price,
+    get_outer_band,
     get_property_tax_inputs,
     get_report_quantiles,
     get_tax_jurisdiction_selection,
@@ -148,12 +149,13 @@ def resolve_period(periods: list[dict[str, Any]], h_months: int) -> dict[str, An
     )
 
 
-def project_sale_price(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, float]:
+def project_sale_price(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:
     """The condo's sale price at the horizon (month 12 x horizon_years) as a LOGNORMAL: purchase_price grown
     by forecast_models.home_price's fit (ou_fitting.project_term_structure with p0 = purchase_price),
     proportionally -- the user chose this (2026-11-25) over reusing the property-tax market_value line
     calibration (fitted from only 2 points). Returns {"mu", "sigma"} (log scale), "median", "mean", "sd",
-    and the report bands "lo"/"hi" (report_quantiles) and "lo_outer"/"hi_outer" (1%/99%). Not the same
+    and the report bands "lo"/"hi" (report_quantiles) and "lo_outer"/"hi_outer" (run.outer_band), plus
+    "report_band"/"outer_band" (the probabilities themselves, for labels). Not the same
     quantity as project_market_value_schedule (the assessor's periodic determination, for property tax)."""
     deck = deck if deck is not None else load_deck()
     report_quantiles = get_report_quantiles(deck)
@@ -167,10 +169,11 @@ def project_sale_price(scenario: dict[str, Any], deck: dict[str, Any] | None = N
     sigma = float(math.log(projection.loc[horizon_months, "hi"] / median) / norm.ppf(ci[1]))
     mu = math.log(median)
     mean = math.exp(mu + sigma**2 / 2)
+    outer = get_outer_band(deck)
     bands = {name: math.exp(mu + norm.ppf(p) * sigma)
-             for name, p in (("lo", ci[0]), ("hi", ci[1]), ("lo_outer", 0.01), ("hi_outer", 0.99))}
+             for name, p in (("lo", ci[0]), ("hi", ci[1]), ("lo_outer", outer[0]), ("hi_outer", outer[1]))}
     return {"mu": mu, "sigma": sigma, "median": median, "mean": mean, "sd": mean * math.sqrt(math.expm1(sigma**2)),
-            **bands}
+            **bands, "report_band": ci, "outer_band": outer}
 
 
 def project_market_value_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
@@ -373,7 +376,7 @@ def special_assessment_count_probabilities(annual_rate: float, horizon_years: in
     means "k_max OR MORE" (P(N >= k_max)). That keeps the probabilities summing to exactly 1, at the
     cost of slightly understating the cost in those rare cases (e.g. 4 assessments get costed as 3).
     See special_assessment_folded_tail_probability for how big that folded-in chance is, which
-    reporting.print_special_assessment_report warns about above 1%.
+    reporting.print_special_assessment_report warns about above run.warning_thresholds.special_assessment_tail.
 
     Shared by the per-scenario model (compute_special_assessment) and the build-time model.png
     (utils.prior_utils.build_special_assessment_prior_model), so both always agree."""
@@ -564,7 +567,7 @@ def compute_carrying_costs(scenario: dict[str, Any], deck: dict[str, Any] | None
 
 
 def compute_total_carrying_costs_schedule(
-    scenario: dict[str, Any], deck: dict[str, Any] | None = None, outer_ci: tuple[float, float] = (0.01, 0.99)
+    scenario: dict[str, Any], deck: dict[str, Any] | None = None, outer_ci: tuple[float, float] | None = None
 ) -> pd.DataFrame:
     """Combines property_tax + hoa_dues + insurance + maintenance + utilities into ONE MONTHLY total
     cost distribution (1..horizon_months). DELIBERATELY EXCLUDES special_assessment -- its own rare,
@@ -591,13 +594,14 @@ def compute_total_carrying_costs_schedule(
     mean/variance (solving for the equivalent median/sigma) -- closed-form throughout, no Monte Carlo.
 
     Returns a DataFrame indexed by month (1..horizon_months) with columns "median", "lo", "hi" (the
-    deck's report quantiles) and "lo_outer", "hi_outer" (outer_ci, default 1-99% -- the wide reference
+    deck's report quantiles) and "lo_outer", "hi_outer" (outer_ci, default run.outer_band -- the wide reference
     band the results plots show alongside the main one).
     """
     deck = deck if deck is not None else load_deck()
     horizon_months = scenario["horizon_years"] * 12
     report_quantiles = get_report_quantiles(deck)
     z_lo, z_hi = norm.ppf((report_quantiles[0], report_quantiles[-1]))
+    outer_ci = outer_ci if outer_ci is not None else get_outer_band(deck)
     z_lo_outer, z_hi_outer = norm.ppf(outer_ci)
 
     tax_periods = market_value_periods_to_tax_periods(load_market_value_change_magnitude()["periods"], deck)

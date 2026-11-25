@@ -54,9 +54,10 @@ normals, plus constants:
   - The rent portfolio: section 11's market lots (capital_markets' "terms").
 
 THE DISTRIBUTION (step 4): exact mean and variance over all terms (E[exp] algebra). Skewness and excess
-kurtosis from exact 3rd/4th moments of the terms AGGREGATED by (source, part, year) -- each group's
-months are merged into one lognormal with the mean-weighted loading (flagged approximation; ~200 terms keep
-the 4th moment's O(n^4) cost low). Quantiles and P(ΔW > 0) by CORNISH-FISHER from those four moments
+kurtosis from exact 3rd/4th moments of the terms AGGREGATED by (source, part, block of
+run.solver.delta_w_moment_grouping_months months; default 12 = by year) -- each group's months are merged into
+one lognormal with the mean-weighted loading (flagged approximation; ~200 terms keep the 4th moment's O(n^4) cost
+low). Cornish-Fisher's grid and monotonicity check come from run.solver.cornish_fisher. Quantiles and P(ΔW > 0) by CORNISH-FISHER from those four moments
 (flagged approximation; a warning is recorded if its expansion isn't monotone over the reported range).
 VARIANCE BREAKDOWN: first-order (delta-method) shares by factor group, scaled to the exact variance.
 SPECIAL-ASSESSMENT OVERLAY (plan's "Final reporting"): ΔW_total = ΔW - A, A each outcome's total
@@ -94,8 +95,10 @@ from condobuyuq2026.input_deck import (
     get_closing_date,
     get_derived_latents,
     get_growth_fit,
+    get_outer_band,
     get_personal_use_inputs,
     get_rent_reference_inputs,
+    get_solver_settings,
     get_report_quantiles,
     get_taxes_inputs,
     load_deck,
@@ -115,7 +118,6 @@ MARKET_LATENT = "market"
 RENT, BUY = 1, -1  # fund holder: +1 = the rent household, -1 = the buy household
 LONG_TERM_HOLDING_MONTHS = 12  # matches federal.yaml property_sale (the same IRS holding-period rule)
 BAND_NAMES = ("median", "lo", "hi", "lo_outer", "hi_outer")
-CF_Z_RANGE = 6.0  # Cornish-Fisher grid: z in [-6, 6]
 
 # Carrying costs: (label, saved prior name, monthly scale). property_tax/insurance/maintenance are saved as
 # annual-cadence amounts (/12 per month); hoa_dues/utilities are monthly bills (same as
@@ -192,7 +194,8 @@ class _Factors:
 
 class _Terms:
     """Signed lognormal terms coef x exp(mu + l0 . Z0 + l1 . Z1) plus constants, each tagged with its
-    source (for the variance and component breakdowns), its fund part (cash / market / none) and year."""
+    source (for the variance and component breakdowns), its fund part (cash / market / none) and the month its
+    cash flow happens (for the higher-moment grouping)."""
 
     def __init__(self, factors: _Factors) -> None:
         self.factors = factors
@@ -202,11 +205,11 @@ class _Terms:
         self.l1: list[dict[int, float]] = []
         self.source: list[str] = []
         self.part: list[str] = []
-        self.year: list[int] = []
+        self.month: list[int] = []
         self.constants: dict[str, float] = defaultdict(float)
 
     def add(self, coef: float, mu: float, l0: np.ndarray | None, l1: dict[int, float] | None, source: str,
-            part: str, year: int) -> None:
+            part: str, month: int) -> None:
         if coef == 0:
             return
         if (l0 is None or not np.any(l0)) and not any(l1 or {}):
@@ -218,7 +221,7 @@ class _Terms:
         self.l1.append(dict(l1 or {}))
         self.source.append(source)
         self.part.append(part)
-        self.year.append(year)
+        self.month.append(month)
 
     def matrix(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """(coef x exp(mu) as weights at the median, the n x K loading matrix, the column groups)."""
@@ -637,14 +640,17 @@ def _shape(means: np.ndarray, loadings: np.ndarray) -> tuple[float, float]:
 
 
 class CornishFisher:
-    """x(z) = mean + sd x [z + (z^2-1) g1/6 + (z^3-3z) g2/24 - (2z^3-5z) g1^2/36] on a z grid; the CDF
-    inverts it. If the expansion isn't monotone over the grid it's made monotone (and `monotone` is False)."""
+    """x(z) = mean + sd x [z + (z^2-1) g1/6 + (z^3-3z) g2/24 - (2z^3-5z) g1^2/36] on a z grid (z_range,
+    grid_points: run.solver.cornish_fisher); the CDF inverts it. If the expansion isn't increasing over
+    |z| <= check_z it's flagged (`monotone` False); it's always made non-decreasing over the whole grid."""
 
-    def __init__(self, mean: float, sd: float, skew: float, excess_kurtosis: float) -> None:
-        self.z = np.linspace(-CF_Z_RANGE, CF_Z_RANGE, 4801)
+    def __init__(self, mean: float, sd: float, skew: float, excess_kurtosis: float, z_range: float = 6.0,
+                 grid_points: int = 4801, check_z: float = 3.5) -> None:
+        self.z_range, self.check_z = z_range, check_z
+        self.z = np.linspace(-z_range, z_range, grid_points)
         z, g1, g2 = self.z, skew, excess_kurtosis
         x = mean + sd * (z + (z**2 - 1) * g1 / 6 + (z**3 - 3 * z) * g2 / 24 - (2 * z**3 - 5 * z) * g1**2 / 36)
-        inner = np.abs(z) <= 3.5  # the 0.02%-99.98% range: where reported numbers come from
+        inner = np.abs(z) <= check_z  # where reported numbers come from
         self.monotone = bool(np.all(np.diff(x[inner]) > 0)) if sd > 0 else True
         self.x = np.maximum.accumulate(x)
         self.mean, self.sd = mean, sd
@@ -655,7 +661,7 @@ class CornishFisher:
     def cdf(self, x: np.ndarray | float) -> np.ndarray:
         if self.sd <= 0:
             return np.where(np.asarray(x) >= self.mean, 1.0, 0.0)
-        return norm.cdf(np.interp(x, self.x, self.z, left=-CF_Z_RANGE, right=CF_Z_RANGE))
+        return norm.cdf(np.interp(x, self.x, self.z, left=-self.z_range, right=self.z_range))
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -681,7 +687,8 @@ def compute_delta_w(scenario: dict[str, Any], reference_result: dict[str, Any],
     deck = deck if deck is not None else load_deck()
     hm = int(scenario["horizon_years"]) * 12
     factors = _Factors(hm, deck)
-    ci, outer_ci = factors.ci, (0.01, 0.99)
+    solver = get_solver_settings(deck)
+    ci, outer_ci = factors.ci, get_outer_band(deck)
     quantiles = {"median": 0.5, "lo": ci[0], "hi": ci[1], "lo_outer": outer_ci[0], "hi_outer": outer_ci[1]}
     flags: list[str] = []
 
@@ -700,11 +707,10 @@ def compute_delta_w(scenario: dict[str, Any], reference_result: dict[str, Any],
 
     def add_fund(h: int, coef: float, mu: float, l0: np.ndarray | None, l1: dict[int, float], source: str,
                  phi: float) -> None:
-        year = min(h // 12 + 1, hm // 12)
-        terms.add(-coef * (1 - phi) * (1 + cash_rate) ** (hm - h), mu, l0, l1, source, "fund cash", year)
+        terms.add(-coef * (1 - phi) * (1 + cash_rate) ** (hm - h), mu, l0, l1, source, "fund cash", h)
         market_l0 = market_loadings[hm] - market_loadings[h] + (l0 if l0 is not None else 0.0)
         terms.add(-coef * phi * (1 + dividend_rate) ** (hm - h) * keep_after_sale,
-                  mu + mu_m[hm] - mu_m[h], market_l0, l1, source, "fund market", year)
+                  mu + mu_m[hm] - mu_m[h], market_l0, l1, source, "fund market", h)
 
     phi_by_month = np.where(np.abs(expected_flows) > 1e-9,
                             ledger["market_flow"] / np.where(np.abs(expected_flows) > 1e-9, expected_flows, 1.0),
@@ -722,14 +728,14 @@ def compute_delta_w(scenario: dict[str, Any], reference_result: dict[str, Any],
     portfolio = reference_result["capital_markets"]["terms"]
     for start, log_factor in zip(portfolio["start_month"], portfolio["log_mean_factor"], strict=True):
         terms.add(-(1 - portfolio["sale_rate"]), float(log_factor), market_loadings[hm] - market_loadings[int(start)],
-                  {}, "rent portfolio", "portfolio", hm // 12)
+                  {}, "rent portfolio", "portfolio", hm)
     terms.constants["rent portfolio"] -= portfolio["cash"] + portfolio["sale_rate"] * portfolio["basis"]
 
     exit_result = scenario["exit"]
     price, linear = exit_result["sale_price"], exit_result["linear"]
     _, hp_var, hp_loadings = factors.latent("home_price")
     hp_scale = price["sigma"] / math.sqrt(hp_var[hm]) if hp_var[hm] > 0 else 0.0
-    terms.add(linear["a"], price["mu"], hp_loadings[hm] * hp_scale, {}, "sale price", "equity", hm // 12)
+    terms.add(linear["a"], price["mu"], hp_loadings[hm] * hp_scale, {}, "sale price", "equity", hm)
     terms.constants["sale price"] += linear["b"]
 
     # Step 4: moments.
@@ -737,12 +743,16 @@ def compute_delta_w(scenario: dict[str, Any], reference_result: dict[str, Any],
     constant = float(sum(terms.constants.values()))
     random_mean, variance, term_means = _mean_var(weights, loadings)
     mean, sd = constant + random_mean, math.sqrt(variance)
-    keys = list(zip(terms.source, terms.part, terms.year, strict=True))
+    grouping = solver["delta_w_moment_grouping_months"]
+    keys = [(source, part, month // grouping) for source, part, month in zip(terms.source, terms.part, terms.month,
+                                                                             strict=True)]
     agg_means, agg_loadings = _aggregate(term_means, loadings, keys)
     skew, kurt = _shape(agg_means, agg_loadings)
-    cf = CornishFisher(mean, sd, skew, kurt)
+    cf = CornishFisher(mean, sd, skew, kurt, solver["cornish_fisher_z_range"], solver["cornish_fisher_grid_points"],
+                       solver["cornish_fisher_check_z"])
     if not cf.monotone:
-        flags.append("Cornish-Fisher expansion not monotone over z in [-3.5, 3.5]: tail quantiles are unreliable.")
+        flags.append(f"Cornish-Fisher expansion not monotone over z in [-{cf.check_z:g}, {cf.check_z:g}] "
+                     "(run.solver.cornish_fisher.check_z): tail quantiles are unreliable.")
     bands = {band: cf.quantile(p) for band, p in quantiles.items()}
     p_buy = float(1 - cf.cdf(0.0))
 
@@ -787,6 +797,7 @@ def compute_delta_w(scenario: dict[str, Any], reference_result: dict[str, Any],
         "variance_breakdown": breakdown,
         "overlay": overlay,
         "term_count": {"exact": int(weights.size), "aggregated": int(agg_means.size)},
+        "solver": solver, "outer_band": outer_ci,
         "flags": flags, "ci": ci, "outer_ci": outer_ci,
     }
 

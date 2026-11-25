@@ -25,7 +25,13 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-from condobuyuq2026.input_deck import MONTH_KEYS, get_closing_date, get_growth_fit, get_report_quantiles
+from condobuyuq2026.input_deck import (
+    MONTH_KEYS,
+    get_closing_date,
+    get_growth_fit,
+    get_outer_band,
+    get_report_quantiles,
+)
 from condobuyuq2026.rental_operations import (
     BAND_NAMES,
     _lognormal_from_moments,
@@ -52,7 +58,7 @@ def project_grown_monthly_cost(
     closing_month = get_closing_date(deck)["closing_month"]
     report_quantiles = get_report_quantiles(deck)
     ci = (report_quantiles[0], report_quantiles[-1])
-    outer_ci = (0.01, 0.99)
+    outer_ci = get_outer_band(deck)
     quantiles = {"median": 0.5, "lo": ci[0], "hi": ci[1], "lo_outer": outer_ci[0], "hi_outer": outer_ci[1]}
 
     horizon_months = int(horizon_years) * 12

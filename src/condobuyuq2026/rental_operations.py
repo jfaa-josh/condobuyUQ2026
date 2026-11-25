@@ -28,6 +28,7 @@ from condobuyuq2026.input_deck import (
     MONTH_KEYS,
     get_closing_date,
     get_growth_fit,
+    get_outer_band,
     get_personal_use_days_by_month,
     get_rental_operations_inputs,
     get_report_quantiles,
@@ -198,7 +199,7 @@ def compute_rental_operations(scenario: dict[str, Any], deck: dict[str, Any] | N
     closing_month = get_closing_date(deck)["closing_month"]
     report_quantiles = get_report_quantiles(deck)
     ci = (report_quantiles[0], report_quantiles[-1])
-    outer_ci = (0.01, 0.99)
+    outer_ci = get_outer_band(deck)
     quantiles = {"median": 0.5, "lo": ci[0], "hi": ci[1], "lo_outer": outer_ci[0], "hi_outer": outer_ci[1]}
     rho = inputs["occupancy_adr_correlation"]
 

@@ -4,8 +4,8 @@ was fit from, or on the rate's own path with no price level involved.
 
 Every plot here draws two bands: the "main" one (projection's own "lo"/"hi", shaded -- whatever CI
 the caller chose, typically run.report_quantiles' outer two) and a wider reference band (dashed,
-"outer_projection", by convention the model's own (0.01, 0.99) band -- see each build script) so a
-1-99% range is always visible for scale, regardless of what the shaded band's own CI happens to be.
+"outer_projection", run.outer_band -- see each build script) so the wide range is always visible for
+scale, regardless of what the shaded band's own CI happens to be. Legends read the band's own numbers.
 """
 
 from __future__ import annotations
@@ -21,11 +21,14 @@ from scipy.stats import norm
 matplotlib.use("Agg")  # headless-safe: these scripts only ever save figures, never display them
 import matplotlib.pyplot as plt
 
+from condobuyuq2026.input_deck import format_band, get_outer_band
+
 
 def _plot_outer_band(ax, x, outer_projection: pd.DataFrame) -> None:
-    """Draws outer_projection's lo/hi as dashed reference lines -- the wide (0.01, 0.99) band every
-    plot in this module shows alongside its own (typically narrower) shaded confidence band."""
-    ax.plot(x, outer_projection["lo"], linestyle="--", color="C1", alpha=0.6, linewidth=1, label="1-99% Band")
+    """Draws outer_projection's lo/hi as dashed reference lines -- the wide run.outer_band every plot in
+    this module shows alongside its own (typically narrower) shaded confidence band."""
+    label = f"{format_band(*get_outer_band())} Band"
+    ax.plot(x, outer_projection["lo"], linestyle="--", color="C1", alpha=0.6, linewidth=1, label=label)
     ax.plot(x, outer_projection["hi"], linestyle="--", color="C1", alpha=0.6, linewidth=1)
 
 
@@ -191,7 +194,7 @@ def _draw_periods_stairstep(
         ax.fill_between(x, [lo, lo], [hi, hi], color="C1", alpha=0.2, label="Confidence Band" if i == 0 else None)
         ax.plot(x, [median, median], color="C1", linewidth=2, label="Projected Median" if i == 0 else None)
         ax.plot(
-            x, [lo_outer, lo_outer], linestyle="--", color="C1", alpha=0.6, linewidth=1, label="1-99% Band" if i == 0 else None
+            x, [lo_outer, lo_outer], linestyle="--", color="C1", alpha=0.6, linewidth=1, label=f"{format_band(*outer_ci)} Band" if i == 0 else None
         )
         ax.plot(x, [hi_outer, hi_outer], linestyle="--", color="C1", alpha=0.6, linewidth=1)
 
@@ -309,7 +312,7 @@ def plot_market_value_correction_diagnostic(
     ax_naive.fill_between(
         naive_projection.index, naive_projection["lo"], naive_projection["hi"], color="C1", alpha=0.2, label="Confidence Band"
     )
-    ax_naive.plot(naive_projection.index, naive_projection["lo_outer"], linestyle="--", color="C1", alpha=0.6, linewidth=1, label="1-99% Band")
+    ax_naive.plot(naive_projection.index, naive_projection["lo_outer"], linestyle="--", color="C1", alpha=0.6, linewidth=1, label=f"{format_band(*outer_ci)} Band")
     ax_naive.plot(naive_projection.index, naive_projection["hi_outer"], linestyle="--", color="C1", alpha=0.6, linewidth=1)
     if len(naive_history) > 0:
         ax_naive.plot(naive_history.index, naive_history["median"], color="C0", alpha=0.5, label="Raw Denver History")
@@ -401,7 +404,7 @@ def plot_periods_projection(
         fig, ax = plt.subplots(figsize=(12, 5))
     ax.plot(months, medians, color="C1", label="Projected Median")
     ax.fill_between(months, los, his, color="C1", alpha=0.2, label="Confidence Band")
-    ax.plot(months, los_outer, linestyle="--", color="C1", alpha=0.6, linewidth=1, label="1-99% Band")
+    ax.plot(months, los_outer, linestyle="--", color="C1", alpha=0.6, linewidth=1, label=f"{format_band(*outer_ci)} Band")
     ax.plot(months, his_outer, linestyle="--", color="C1", alpha=0.6, linewidth=1)
     ax.set_title(title)
     ax.set_xlabel("Months Ahead")

@@ -1,0 +1,83 @@
+{
+  "run_started": "2026-11-25T15:58:19-05:00",
+  "run_finished": "2026-11-25T16:00:51-05:00",
+  "duration_seconds": 152.3,
+  "code": {
+    "git_commit": "bda9151a985398a26884ee29d9316cc6778ac684",
+    "uncommitted_changes": true
+  },
+  "deck": {
+    "path": "input_deck.yaml",
+    "sha256": "3010e2bddb423ab1792984f6dd4b88757c419471b8cefaf76cf8749361d9c00a"
+  },
+  "run_settings": {
+    "report_quantiles": [
+      0.1,
+      0.5,
+      0.9
+    ],
+    "outer_band": [
+      0.01,
+      0.99
+    ],
+    "solver": {
+      "exit_price_integration_points": 40,
+      "delta_w_moment_grouping_months": 12,
+      "cornish_fisher_z_range": 6.0,
+      "cornish_fisher_grid_points": 4801,
+      "cornish_fisher_check_z": 3.5
+    },
+    "warning_thresholds": {
+      "special_assessment_tail": 0.01
+    },
+    "build_horizon_months": 120
+  },
+  "forecast_data": {
+    "general": {
+      "model_name": "bls_cpi_all_nsa_1984_1_2026_8",
+      "latest_data_month": "2026-08",
+      "expected_by_now": "2026-10",
+      "stale": true
+    },
+    "home_price": {
+      "model_name": "fred_denver_homes_1987_1_2026_8",
+      "latest_data_month": "2026-06",
+      "expected_by_now": "2026-08",
+      "stale": true
+    },
+    "market": {
+      "model_name": "yfinance_spx_1984_1_2026_9",
+      "latest_data_month": "2026-09",
+      "expected_by_now": "2026-10",
+      "stale": true
+    }
+  },
+  "scenario_count": 6,
+  "reference_case_count": 3,
+  "outputs": {
+    "summary_csv": "results/summary.csv",
+    "summary_png": "results/summary.png"
+  },
+  "folders_written": [
+    "results/buy_h10y_p375000_FL",
+    "results/buy_h10y_p400000_FL",
+    "results/buy_h1y_p375000_FL",
+    "results/buy_h1y_p400000_FL",
+    "results/buy_h5y_p375000_FL",
+    "results/buy_h5y_p400000_FL",
+    "results/rent_ref1_h1y_FL",
+    "results/rent_ref2_h5y_FL",
+    "results/rent_ref3_h10y_FL"
+  ],
+  "stale_folders": [],
+  "warnings": [
+    {
+      "where": "forecast_models",
+      "message": "stale, not refreshed: general, home_price, market"
+    },
+    {
+      "where": "rental_operations priors",
+      "message": "CPI for the closing month (2026-10) isn't in the general CPI data yet -- ADR restated to 2026-08 dollars instead"
+    }
+  ]
+}

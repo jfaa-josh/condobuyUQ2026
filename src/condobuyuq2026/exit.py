@@ -16,7 +16,7 @@ capital_markets' after-tax portfolio for the rent branch, so the ΔW stage can c
 
 EXACT (since 2026-11-25, ΔW plan Step 0): net equity rises with P (every marginal rate is below 100%), so
 its quantiles are net equity at the sale price's quantiles, each with its own sale tax. Its mean and sd
-come from a Gauss-Hermite rule over log P (GAUSS_HERMITE_NODES points), so the sale tax's kinks (loss vs
+come from a Gauss-Hermite rule over log P (run.solver.exit_price_integration_points points), so the sale tax's kinks (loss vs
 gain, brackets, NIIT) are averaged properly instead of linearized.
 
 For the ΔW stage only: "linear" = {a, b} with net equity ~ a x P + b, the slope from the SECANT marginal
@@ -32,11 +32,10 @@ from typing import Any
 import numpy as np
 
 from condobuyuq2026.carrying_costs import project_sale_price
-from condobuyuq2026.input_deck import get_acquisition_inputs, get_exit_inputs, load_deck
+from condobuyuq2026.input_deck import get_acquisition_inputs, get_exit_inputs, get_solver_settings, load_deck
 from condobuyuq2026.taxes import compute_owner_taxes, owner_sale_tax_function
 
 BAND_NAMES = ("median", "lo", "hi", "lo_outer", "hi_outer")
-GAUSS_HERMITE_NODES = 40
 
 
 def compute_exit(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -70,7 +69,7 @@ def compute_exit(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -
 
     tax_by_band = {band: sale_tax(price[band])["tax"] for band in BAND_NAMES}
 
-    nodes, weights = np.polynomial.hermite_e.hermegauss(GAUSS_HERMITE_NODES)
+    nodes, weights = np.polynomial.hermite_e.hermegauss(get_solver_settings(deck)["exit_price_integration_points"])
     weights = weights / math.sqrt(2 * math.pi)
     node_prices = np.exp(price["mu"] + price["sigma"] * nodes)
     node_taxes = np.array([sale_tax(float(p))["tax"] for p in node_prices])

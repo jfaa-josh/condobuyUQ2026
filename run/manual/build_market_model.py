@@ -22,7 +22,7 @@ NOTE: this makes a real call against Yahoo Finance via yfinance. No API key, but
 loop/hammer it needlessly.
 """
 
-from condobuyuq2026.input_deck import get_report_quantiles
+from condobuyuq2026.input_deck import get_build_horizon_months, get_outer_band, get_report_quantiles
 from condobuyuq2026.plotting.forecast_plots import plot_monthly_rate, plot_term_structure
 from condobuyuq2026.raw_data import load_raw_csv, raw_csv_path, save_raw_csv, to_monthly_series
 from condobuyuq2026.utils.manual_utils import fetch_yfinance_series, filter_monthly, model_fit_path, model_plots_dir
@@ -37,9 +37,9 @@ START_DATE = "1984-01-01"          # one year before the intended 1985 fit windo
                                     # first annual (12-month) change needs a prior year of data,
                                     # see ou_fitting.fit_annual_ou)
 MODEL_NAME = "yfinance_spx_1984_1_2026_9"   # saved to data/raw/<MODEL_NAME>.csv and models/<MODEL_NAME>/
-PROJECTION_HORIZON_MONTHS = 120    # 10 years -- matches a plausible scenario.horizon_years max
-OUTER_CI = (0.01, 0.99)            # wide reference band every plot shows (dashed), regardless of
-                                    # report_quantiles -- see plotting.forecast_plots module docstring
+PROJECTION_HORIZON_MONTHS = get_build_horizon_months()  # the sweep's longest scenario.horizon_years (run section)
+OUTER_CI = get_outer_band()       # run.outer_band: the wide reference band every plot shows (dashed),
+                                    # regardless of report_quantiles -- see plotting.forecast_plots
 # =============================================================================
 
 

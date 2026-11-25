@@ -32,10 +32,12 @@ import requests
 import yfinance as yf
 
 from condobuyuq2026.input_deck import (
+    get_build_horizon_months,
     get_derived_latents,
     get_forecast_model_general,
     get_forecast_model_home_price,
     get_forecast_model_market,
+    get_outer_band,
     get_report_quantiles,
 )
 from condobuyuq2026.input_deck import load_deck as _load_deck
@@ -286,7 +288,7 @@ def build_derived_latent_model(
 
     report_quantiles = get_report_quantiles(deck)
     ci = (report_quantiles[0], report_quantiles[-1])
-    outer_ci = (0.01, 0.99)  # wide reference band, same convention as the other build scripts
+    outer_ci = get_outer_band(deck)  # run.outer_band: the wide reference band every plot shows
 
     effective_fit = fit_effective_ou(component_fits, weights)
 
@@ -310,10 +312,12 @@ def build_derived_latent_model(
 
 
 def build_all_derived_latent_models(
-    deck: dict[str, Any] | None = None, horizon_months: int = 120
+    deck: dict[str, Any] | None = None, horizon_months: int | None = None
 ) -> dict[str, dict[str, Path]]:
     """Calls build_derived_latent_model for every entry in derived_latents. Returns {name:
-    {"fit_path": ..., "plot_path": ...}}."""
+    {"fit_path": ..., "plot_path": ...}}. horizon_months defaults to the sweep's longest horizon
+    (input_deck.get_build_horizon_months)."""
     deck = deck if deck is not None else _load_deck()
+    horizon_months = horizon_months if horizon_months is not None else get_build_horizon_months(deck)
     names = get_derived_latents(deck)
     return {name: build_derived_latent_model(name, deck, horizon_months) for name in names}

@@ -1203,9 +1203,85 @@ exit:
 # -----------------------------------------------------------------------------
 # 13. run
 # -----------------------------------------------------------------------------
+# WHAT THIS SECTION DOES: how the run reports its results and how precisely it computes them. Nothing
+# here describes the property or your finances; changing it never changes what is being modeled, only
+# how results are summarized and how finely the closed-form math is evaluated.
+# OUTPUTS EVERY RUN WRITES (besides each stage's own plots): results/summary.csv and
+# results/summary.png (every scenario side by side: P(buy beats rent), ΔW's band, W_buy vs W_rent), and
+# results/run_info.json (the run manifest: when it ran, the code's git commit, the deck's fingerprint,
+# how current each forecast model's data is, every warning raised, and the folders this run wrote).
+# Folders under results/ that this run did NOT write (scenarios since removed from the sweeps) are
+# listed in a warning and in the manifest, never deleted.
+# NOTE (2026-11-25): automated results-storage management (archiving or pruning old result folders)
+# may be worth adding later; for now old folders are only reported.
+# The model builds that run every time (derived latents, carrying-cost priors) project as far as the
+# LONGEST scenario.horizon_years in the sweep: there is no separate horizon setting here.
 run:
   report_quantiles:
-    # Quantiles to report in outputs (probability, 0-1). The first and last also set ΔW's reported band
-    # (alongside P(buy beats rent) and a fixed 1%-99% outer band).
+    # WHAT TO ENTER: probabilities (0-1, strictly increasing, at least 2) to report.
+    # HOW IT'S USED: the FIRST and LAST set every reported uncertainty band (the "10%-90%" bands on every
+    # plot and in every summary, ΔW's included). The median (50%) is always reported on its own, so values
+    # in between don't change anything today.
+    # NOTE (user, 2026-11-25): kept as a list for now; it may become a two-value report_band {lo, hi} later,
+    # since only the ends are used.
     kind: constant
     value: [0.1, 0.5, 0.9]
+
+  outer_band:
+    # WHAT TO ENTER: the wide reference band's lower and upper probabilities (0-1). It must lie OUTSIDE
+    # report_quantiles' first and last values (lo below the first, hi above the last).
+    # HOW IT'S USED: the dashed "outer" whiskers and lines on every plot (stages and model builds, including
+    # the run/manual forecast-model scripts), and ΔW's outer band in the summary.
+    lo:
+      kind: constant
+      value: 0.01
+    hi:
+      kind: constant
+      value: 0.99
+
+  solver:
+    # Numerical settings of the closed-form math. The defaults are accurate to well under a dollar or a
+    # tenth of a percentage point for this model; raise them to check that a result doesn't move, lower
+    # them only to save time.
+    exit_price_integration_points:
+      # WHAT TO ENTER: a whole number >= 5 (default 40).
+      # HOW IT'S USED: net equity at the sale (section 12) averages the sale tax over every possible sale
+      # price with a Gauss-Hermite rule of this many points. The tax has kinks (loss vs gain, brackets), so
+      # it is averaged, not straight-lined. More points = a slightly more exact mean and spread.
+      kind: constant
+      value: 40
+    delta_w_moment_grouping_months:
+      # WHAT TO ENTER: a whole number of months >= 1 (default 12 = each item's months grouped by year).
+      # HOW IT'S USED: ΔW's mean and spread are always exact. Its SHAPE (skewness, tail weight) comes from
+      # exact 3rd and 4th moments of the cash-flow pieces after each item's months are grouped into blocks
+      # of this many months (one block = one combined piece). 12 = yearly, 3 = quarterly, 1 = no grouping.
+      # Cost grows with the 4th power of the piece count: quarterly takes ~250x longer than yearly over a
+      # 10-year horizon, monthly is impractical beyond a couple of years.
+      kind: constant
+      value: 12
+    cornish_fisher:
+      # ΔW's distribution comes from its first four moments via the Cornish-Fisher expansion (quantile =
+      # mean + sd x a polynomial in the normal quantile z), traced on a grid of z values.
+      z_range:
+        # WHAT TO ENTER: how far into the tails to trace, in standard deviations (> check_z; default 6).
+        kind: constant
+        value: 6.0
+      grid_points:
+        # WHAT TO ENTER: points on that grid, a whole number >= 101 (default 4801). Finer = smoother
+        # probabilities and plots.
+        kind: constant
+        value: 4801
+      check_z:
+        # WHAT TO ENTER: the range (in standard deviations, 0 < check_z < z_range; default 3.5) over which
+        # the expansion must increase. If it doesn't, the run flags ΔW's tail quantiles as unreliable (the
+        # expansion is then forced to be increasing).
+        kind: constant
+        value: 3.5
+
+  warning_thresholds:
+    special_assessment_tail:
+      # WHAT TO ENTER: a probability (0-1, default 0.01).
+      # HOW IT'S USED: the special-assessment model lists 0..k_max assessments and folds the chance of MORE
+      # into k_max. When that folded-in chance exceeds this, the run warns you to raise k_max.
+      kind: constant
+      value: 0.01

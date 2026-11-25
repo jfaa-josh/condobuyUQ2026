@@ -1,0 +1,7 @@
+folder,alternative,horizon_years,residency_state,purchase_price,family_loan_repaid_at_sale,reference_id,p_buy_beats_rent,p_buy_beats_rent_with_special_assessments,delta_w_mean,delta_w_median,delta_w_p10,delta_w_p90,delta_w_sd,w_buy_expected,w_rent_expected,fund_holder_at_sale,top_variance_source,top_variance_share
+buy_h1y_p375000_FL,buy,1,FL,375000,True,1,0.00063753,0.000611451,-46742.7,-46351.4,-66786.2,-27202.1,15485.6,180990,227733,rent,market,0.713932
+buy_h1y_p400000_FL,buy,1,FL,400000,True,1,0.000454132,0.000435604,-49355.5,-48981.8,-69822.4,-29368.5,15824,180486,229841,rent,market,0.68975
+buy_h5y_p375000_FL,buy,5,FL,375000,True,2,0.0415173,0.0385346,-130906,-128383,-231170,-33883.1,78516.2,227738,358644,rent,market,0.552603
+buy_h5y_p400000_FL,buy,5,FL,400000,True,2,0.0411626,0.0383334,-137567,-135380,-241747,-36195.5,81760.5,233484,371051,rent,market,0.53078
+buy_h10y_p375000_FL,buy,10,FL,375000,True,3,0.0464144,0.0418797,-283352,-269825,-517623,-66460.4,185346,316803,600156,rent,market,0.636983
+buy_h10y_p400000_FL,buy,10,FL,400000,True,3,0.0465553,0.0422345,-297281,-284316,-540853,-70365,193108,333320,630601,rent,market,0.624562

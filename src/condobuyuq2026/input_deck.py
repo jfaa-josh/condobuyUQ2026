@@ -771,10 +771,89 @@ def get_capital_markets_inputs(deck: dict[str, Any] | None = None) -> dict[str, 
 
 
 def get_report_quantiles(deck: dict[str, Any] | None = None) -> list[float]:
-    """Returns run.report_quantiles (e.g. [0.1, 0.5, 0.9]) -- the probability quantiles the model
-    should report in its outputs."""
+    """Returns run.report_quantiles (e.g. [0.1, 0.5, 0.9]), validated: at least 2 probabilities, each in
+    (0, 1), strictly increasing. Only the FIRST and LAST are used (every reported band); the median is
+    always reported separately. (May become a two-value report_band later -- see the deck note.)"""
     deck = deck if deck is not None else load_deck()
-    return _constant(deck["run"]["report_quantiles"])
+    quantiles = _constant(deck["run"]["report_quantiles"])
+    if (not isinstance(quantiles, list) or len(quantiles) < 2 or not all(_is_number(q) and 0 < q < 1 for q in quantiles)
+            or any(b <= a for a, b in zip(quantiles, quantiles[1:], strict=False))):
+        raise ValueError(f"run.report_quantiles must be >= 2 strictly increasing probabilities in (0, 1), got {quantiles!r}")
+    return [float(q) for q in quantiles]
+
+
+def get_report_band(deck: dict[str, Any] | None = None) -> tuple[float, float]:
+    """(first, last) of run.report_quantiles: the reported uncertainty band."""
+    quantiles = get_report_quantiles(deck)
+    return quantiles[0], quantiles[-1]
+
+
+def get_outer_band(deck: dict[str, Any] | None = None) -> tuple[float, float]:
+    """run.outer_band (lo, hi): the wide reference band on every plot and ΔW's outer band. Validated: both in
+    (0, 1), lo below report_quantiles' first value, hi above its last."""
+    deck = deck if deck is not None else load_deck()
+    band = deck["run"]["outer_band"]
+    lo, hi = _constant(band["lo"]), _constant(band["hi"])
+    report_lo, report_hi = get_report_band(deck)
+    if not (_is_number(lo) and _is_number(hi) and 0 < lo < report_lo and report_hi < hi < 1):
+        raise ValueError(
+            f"run.outer_band must satisfy 0 < lo < {report_lo:g} (report_quantiles' first) and "
+            f"{report_hi:g} (its last) < hi < 1, got lo={lo!r}, hi={hi!r}"
+        )
+    return float(lo), float(hi)
+
+
+def format_band(lo: float, hi: float) -> str:
+    """'1-99%' style label for a probability band (plot legends and titles)."""
+    return f"{lo * 100:g}-{hi * 100:g}%"
+
+
+def get_solver_settings(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """run.solver, validated. Returns {"exit_price_integration_points" (int >= 5), "delta_w_moment_grouping_months"
+    (int >= 1), "cornish_fisher_z_range" (float > check_z), "cornish_fisher_grid_points" (int >= 101),
+    "cornish_fisher_check_z" (float, 0 < check_z < z_range)}. See the deck's comments for what each does."""
+    deck = deck if deck is not None else load_deck()
+    solver = deck["run"]["solver"]
+    cf = solver["cornish_fisher"]
+    points = _constant(solver["exit_price_integration_points"])
+    grouping = _constant(solver["delta_w_moment_grouping_months"])
+    z_range, grid, check_z = _constant(cf["z_range"]), _constant(cf["grid_points"]), _constant(cf["check_z"])
+    if not (isinstance(points, int) and not isinstance(points, bool) and points >= 5):
+        raise ValueError(f"run.solver.exit_price_integration_points must be a whole number >= 5, got {points!r}")
+    if not (isinstance(grouping, int) and not isinstance(grouping, bool) and grouping >= 1):
+        raise ValueError(f"run.solver.delta_w_moment_grouping_months must be a whole number >= 1, got {grouping!r}")
+    if not (isinstance(grid, int) and not isinstance(grid, bool) and grid >= 101):
+        raise ValueError(f"run.solver.cornish_fisher.grid_points must be a whole number >= 101, got {grid!r}")
+    if not (_is_number(z_range) and _is_number(check_z) and 0 < check_z < z_range):
+        raise ValueError(
+            f"run.solver.cornish_fisher needs 0 < check_z < z_range, got check_z={check_z!r}, z_range={z_range!r}"
+        )
+    return {
+        "exit_price_integration_points": points,
+        "delta_w_moment_grouping_months": grouping,
+        "cornish_fisher_z_range": float(z_range),
+        "cornish_fisher_grid_points": grid,
+        "cornish_fisher_check_z": float(check_z),
+    }
+
+
+def get_warning_thresholds(deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """run.warning_thresholds, validated: {"special_assessment_tail": probability in (0, 1)}."""
+    deck = deck if deck is not None else load_deck()
+    tail = _constant(deck["run"]["warning_thresholds"]["special_assessment_tail"])
+    if not (_is_number(tail) and 0 < tail < 1):
+        raise ValueError(f"run.warning_thresholds.special_assessment_tail must be a probability in (0, 1), got {tail!r}")
+    return {"special_assessment_tail": float(tail)}
+
+
+def get_build_horizon_months(deck: dict[str, Any] | None = None) -> int:
+    """How far (months) the every-run model builds must project: the longest scenario.horizon_years in the
+    sweep x 12. Replaces the old hardcoded 120."""
+    deck = deck if deck is not None else load_deck()
+    horizons = _sweep(deck["scenario"]["horizon_years"])
+    if not horizons or not all(isinstance(h, int) and not isinstance(h, bool) and h >= 1 for h in horizons):
+        raise ValueError(f"scenario.horizon_years must list whole numbers >= 1, got {horizons!r}")
+    return 12 * max(horizons)
 
 
 def _load_checked_fit(model_name: str) -> dict[str, float]:

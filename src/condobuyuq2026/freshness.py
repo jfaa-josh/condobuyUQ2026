@@ -78,15 +78,19 @@ def expected_latest_month(name: str, today: date | None = None) -> tuple[int, in
     return _month_offset(today or date.today(), EXPECTED_LAG_MONTHS.get(name, 1))
 
 
+def latest_data_month(model_name: str) -> tuple[int, int]:
+    """(year, month) of the last observation in data/raw/<model_name>.csv (sorted ascending)."""
+    last_row = load_raw_csv(model_name)[-1]
+    return int(last_row["year"]), int(last_row["period"][1:])
+
+
 def is_forecast_model_stale(name: str, model_name: str, today: date | None = None) -> bool:
     """True if forecast_models.<name>'s raw data (data/raw/<model_name>.csv, see
     manual_utils.load_raw_csv -- already sorted chronologically ascending, so its last row is the
     latest observation) doesn't yet reach that source's own expected latest month (see
     expected_latest_month) -- i.e. its build script hasn't been (re-)run since new data should have
     become available."""
-    last_row = load_raw_csv(model_name)[-1]
-    last_point = (int(last_row["year"]), int(last_row["period"][1:]))
-    return last_point < expected_latest_month(name, today)
+    return latest_data_month(model_name) < expected_latest_month(name, today)
 
 
 def _run_build_script(script_path: Path) -> None:
