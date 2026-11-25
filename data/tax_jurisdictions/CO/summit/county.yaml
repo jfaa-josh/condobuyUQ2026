@@ -1,0 +1,21 @@
+# Summit County, Colorado: county tax layer (under CO/). Read by src/condobuyuq2026/jurisdictions/
+# (CountyLayer). Turn it on with input_deck.yaml's taxes.jurisdiction.county: summit.
+# Statutory values only; each one's source is listed under `sources`. Bump `as_of` when updated.
+
+name: Summit County
+level: county
+model: county
+as_of: 2026-11-24
+
+local_income_tax: null             # no county income or occupational-privilege tax
+
+# Information only: county-wide taxes charged to STR guests (<30 nights) -- pass-throughs, not owner income.
+guest_taxes:
+  county_sales_tax: 0.02
+  summit_stage_transit_tax: 0.0075
+  summit_combined_housing_authority_tax: 0.00725
+notes:
+  - "Mill levies vary by tax area (county, school district, fire, water/sanitation and metro districts covering the parcel); enter the parcel's own levies in carrying_costs.property_tax.mill_levy."
+
+sources:
+  guest_taxes: https://keystone.colorado.gov/departments/finance-department

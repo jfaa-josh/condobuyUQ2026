@@ -109,8 +109,9 @@ scenario:
     values: [1, 5, 10]
 
   residency_state:
-    # Tax domicile (categorical). OPTIONS: FL | CO. Applies to both branches symmetrically —
-    # see taxes.state_tax_profiles.
+    # Tax domicile (categorical). OPTIONS: FL | CO (any state with a data/tax_jurisdictions/<STATE>/
+    # state.yaml). Applies to both branches symmetrically: your residence state's income tax is
+    # loaded from that file (FL: none) -- see the taxes section.
     kind: sweep
     values: [FL]
 
@@ -278,16 +279,14 @@ acquisition:
       kind: constant
       value: 0.0                   # example — 1.5%
 
-  land_fraction:
-    # Share of the purchase price attributable to LAND, not the building (fraction) — needed
-    # because the IRS only lets you depreciate the BUILDING/structure, never the land under it,
-    # so purchase_price must be split into a depreciable (building) and non-depreciable (land)
-    # portion for tax purposes. Find this on your county assessor's property record: it
-    # typically shows an assessed "land value" and "improvement value" (building) separately —
-    # use that SAME ratio here regardless of what you actually paid. Example: assessor shows
-    # $80k land / $320k building on a $400k assessed value -> land_fraction = 0.20.
+  percent_improved:
+    # "% Improved" from the property/listing sheet (percent, 0-100): the share of the value that is
+    # the building (improvements) rather than land. Only the building can be depreciated for taxes, so
+    # the depreciable basis is percent_improved% of (purchase_price + purchase closing costs).
+    # A condo sheet typically shows 100. If a sheet shows land and improvement values instead, enter
+    # improvement / (land + improvement) x 100.
     kind: constant
-    value: 0.0      # Opposite of % improved
+    value: 100
 
   personal_cash_at_closing:
     # YOUR OWN money going toward closing (down payment, not from family_loan below) -- this IS the
@@ -391,24 +390,14 @@ carrying_costs:
     # purpose, not an oversight. Revisit acquisition.purchase_closing_costs if precise closing-day
     # cash timing (rather than a reasonable rolling annual estimate) ever becomes the goal.
     #
-    # Colorado's REAL two-step system (assessed value = market_value x assessment_rate, then tax =
-    # assessed value x mill_levy), with LOCAL and SCHOOL each their own assessment_rate/mill_levy
-    # (see assessment_rate below) applied to a different FRACTION of market_value (see
-    # carrying_costs.py's LOCAL_ASSESSED_VALUE_FRACTION/SCHOOL_ASSESSED_VALUE_FRACTION -- 90%/100%
-    # respectively, hardcoded there rather than deck fields, same reasoning as classification just
-    # below). Only the COMBINED total (local + school) is ever passed on to a scenario -- the
-    # local/school split itself is an internal computation detail, not exposed.
-    #
-    # classification (residential | lodging) and the lodging assessment rate are HARDCODED in
-    # carrying_costs.py (PROPERTY_TAX_CLASSIFICATION/LODGING_ASSESSMENT_RATE), NOT deck fields, and
-    # NOT auto-derived from rental_operations.managed_by/financing.loan_occupancy_class: there is NO
-    # current CO law tying property-tax classification to rental activity -- two bills that would
-    # have (HB24-1299: owner-occupancy test; SB24-033: a 90-rented-days/year threshold) both DIED in
-    # committee in 2024, and Summit County STRs are still taxed at the residential rate today
-    # regardless of rental activity -- see
-    # https://propertytaxrates.org/blog/colorado-property-tax-guide-2026 and
-    # https://leg.colorado.gov/bills/sb24-033. "residential" is simply the only currently-real
-    # option, so hardcoding it needs no deck-level toggle; revisit if that law ever changes.
+    # THE MECHANIC COMES FROM THE PROPERTY'S STATE (taxes.jurisdiction.state), not from this deck: for CO,
+    # data/tax_jurisdictions/CO/state.yaml's property_tax block -- each component's assessed value =
+    # (market_value - its value reduction) x its assessment rate, then tax = assessed value x that
+    # component's mill_levy. For 2026 on: local 6.8% after subtracting the lesser of 10% of value or
+    # $70,000; school 7.05% of full value (HB24B-1001). Classification is residential: no current CO law
+    # ties it to rental activity (HB24-1299 and SB24-033 both died in 2024). Only the combined total
+    # (local + school) is passed on to a scenario. What stays HERE is property-specific: market_value
+    # below and mill_levy (the parcel's own levies).
     market_value:
       # The COUNTY ASSESSOR'S OWN determination of market value for property-tax purposes -- NOT
       # the same thing as this model's own sale-price projection (carrying_costs.
@@ -479,26 +468,19 @@ carrying_costs:
                                       # the CSV. With only 1 known point (no CSV data yet), the line
                                       # degenerates to a plain proportional scaling; with 2 it passes
                                       # through both exactly; with more, a real least-squares fit.
-    assessment_rate:
-      # LOCAL and SCHOOL are Colorado's own two, separately-set components (each its own
-      # assessment_rate AND mill_levy -- see this field's own header comment for how they combine).
+    mill_levy:
+      # The parcel's own mill levies, one per component of the state's property-tax model (CO: local,
+      # school), as plain fractions of ASSESSED value (not "mills" per $1,000): 38.219 mills = 0.038219.
+      # Copy them from the parcel's tax bill or assessor page: levies are set per tax area (the county,
+      # school district, fire, water/sanitation and metro districts covering the parcel), so they can
+      # differ within one town. local = every levy that isn't the school district's. The Town of
+      # Keystone itself levies 0 mills.
       local:
-        rate:
-          kind: constant
-          value: 0.068                # example — CO 2026 local-government residential assessment rate
-        mill_levy:
-          # Summit County's own local-government mill levy, expressed as a plain fraction of
-          # ASSESSED value (not a dollars-per-$1000 "mills" figure) -- e.g. 38.219 mills = 0.038219.
-          kind: constant
-          value: 0.038219             # example
+        kind: constant
+        value: 0.038219               # example
       school:
-        rate:
-          kind: constant
-          value: 0.0705               # example — CO 2026 school-district residential assessment rate
-        mill_levy:
-          # Summit County's own school-district mill levy, same units as local's above.
-          kind: constant
-          value: 0.015343             # example
+        kind: constant
+        value: 0.015343               # example
 
   hoa_dues_annual:
     # KNOWN-VALUE+GROWTH. initial_annual_dues and initial_annual_association_dues are both REAL truth
@@ -752,16 +734,18 @@ carrying_costs:
 # and manager projections report them). Lodging tax (state + county + town sales/lodging taxes) is
 # charged to the GUEST on top of the nightly rate and collected and remitted by the manager or
 # booking platform, so it never reduces your income. (If you ever self-manage, you register and
-# remit it yourself, but it's still the guest's money added on top of your rate.)
+# remit it yourself, but it's still the guest's money added on top of your rate.) The selected tax
+# jurisdiction's layers list these guest taxes for reference (Keystone: 8.375% in total) -- see the
+# run report and data/tax_jurisdictions/.
 #
 # tax_use_class (OPTIONS: personal_use | mixed_use | rental) is DERIVED -- not set anywhere in this
 # deck (see classification.get_tax_use_class) -- from annual rented days (the fitted MEDIAN rented
 # nights, summed over the year) and annual personal days (personal_use.personal_use_days_by_month,
 # summed): rented <=14 days/year -> personal_use (rental income is tax-free); else personal use >14
 # days/year OR >10% of rented days -> mixed_use (deductions capped at rental income, no loss
-# allowed); else -> rental (a pure rental -- losses suspended, released at sale). Independent of
-# loan_occupancy_class and of taxes.passive_loss_treatment (a DIFFERENT IRS test -- average guest
-# stay length, not day counts).
+# allowed); else -> rental (a pure rental -- a loss is passive unless you materially participate;
+# see taxes.average_guest_stay_nights). Thresholds come from data/tax_jurisdictions/federal.yaml.
+# Independent of loan_occupancy_class.
 rental_operations:
   managed_by:
     # Who runs the day-to-day rental (categorical). OPTIONS: self | company. Drives financing's
@@ -965,97 +949,82 @@ personal_use:
 # -----------------------------------------------------------------------------
 # 9. taxes
 # -----------------------------------------------------------------------------
-# DISCLAIMER: this is NOT a full IRS return simulation. `federal_marginal_rate` below is a
-# single fixed rate applied throughout — if rental income/gains actually push you into a HIGHER
-# federal bracket, that escalation is NOT captured here. Treat all tax outputs as directional,
-# not authoritative; use a real tax professional before relying on this for a filing decision.
+# WHAT THIS SECTION DOES: works out how much the condo changes your household's income taxes, year by
+# year and at the sale. Each year it computes your whole federal + state return twice, once WITHOUT the
+# condo and once WITH it, and the difference is the condo's tax effect. That captures bracket jumps
+# (e.g. a sale year pushing you into a higher bracket), the 0/15/20% capital-gain rates, the 3.8%
+# investment-income tax, itemizing vs. the standard deduction, and the SALT cap, all automatically.
+#
+# THE LAW vs. YOUR FACTS: tax LAW (brackets, rates, caps, depreciation periods, property-tax mechanics,
+# local taxes) is NOT entered here. It lives in sourced data files under data/tax_jurisdictions/, one
+# per level (federal -> state -> county -> municipality), and `jurisdiction` below picks which ones
+# apply. This section holds only facts about YOUR household and how the unit is rented.
+#
+# DISCLAIMER: directional, not a filing. Simplifications: tax tables held at 2026 values (in today's
+# dollars, like household_agi); scenario years treated as calendar tax years; no other investment
+# income assumed for the 3.8% tax; state additions/subtractions that don't involve this property
+# ignored. Use a tax professional before relying on this for a filing decision.
 taxes:
+  jurisdiction:
+    # Which tax layers apply to the PROPERTY, outermost first. Each names a folder under
+    # data/tax_jurisdictions/: state -> <STATE>/state.yaml, county -> <STATE>/<county>/county.yaml,
+    # municipality -> <STATE>/<county>/<municipality>/municipality.yaml. Federal is always on. Set county
+    # or municipality to null to leave that layer off (unincorporated area, or a city that is its own
+    # county). Available now: state CO; county summit; municipality keystone. state must match
+    # scenario.property_state. Your residence state's own income tax (scenario.residency_state) is
+    # loaded automatically from <STATE>/state.yaml (FL: none).
+    kind: constant
+    value:
+      state: CO
+      county: summit
+      municipality: keystone
+
   filing_status:
-    # OPTIONS: mfj (others not yet supported).
+    # OPTIONS: mfj (the only status the federal tables cover).
     kind: constant
     value: mfj
 
-  federal_marginal_rate:
-    # Your top federal tax bracket rate (fraction) — the rate on your LAST dollar of income,
-    # used to value deductions (mortgage interest, depreciation, rental losses). See the
-    # disclaimer above — this is fixed, not a simulated bracket schedule.
+  household_agi:
+    # Your household's adjusted gross income (USD/year) from everything EXCEPT this condo: wages,
+    # business, other investments. Held flat over the horizon (in today's dollars). The model adds the
+    # condo's rental income and sale gain on top of this to find which brackets they land in.
     kind: constant
-    value: 0.32                      # example
+    value: 450000                    # placeholder
 
-  niit_applies:
-    # Whether household MAGI exceeds the Net Investment Income Tax threshold ($250k MFJ) --
-    # a fixed structural assumption, same spirit as federal_marginal_rate (not derived from an
-    # actual income simulation, which is out of scope -- see this section's disclaimer).
+  other_itemized_deductions:
+    # Itemized deductions you'd have WITHOUT this condo, other than state/local taxes (USD/year):
+    # e.g. mortgage interest on your main home, charitable gifts. Used to decide each year whether
+    # itemizing beats the standard deduction, with and without the condo.
     kind: constant
-    value: true                      # example
+    value: 0                         # placeholder
 
-  niit_rate:
-    # Net Investment Income Tax rate (fraction) -- applies to net rental income and capital gains
-    # when niit_applies above.
+  other_salt_paid:
+    # State and local taxes you already pay WITHOUT this condo (USD/year): your main home's property
+    # tax, any state income tax on your other income. They share the SALT cap with the condo's
+    # personal-share property tax. (FL residents: your Florida home's property tax.)
     kind: constant
-    value: 0.038
+    value: 6000                      # placeholder
 
-  itemizes_deductions:
-    # Whether the household itemizes deductions (Schedule A) rather than taking the standard
-    # deduction -- determines whether the PERSONAL share of mortgage interest/property tax
-    # (the share NOT allocated to rental use) yields any tax benefit at all.
+  average_guest_stay_nights:
+    # Your expected average guest booking length (nights per stay) once you own it. Decides two
+    # federal rules (thresholds in data/tax_jurisdictions/federal.yaml):
+    #   - <= 7 nights: NOT a "rental activity" for the passive-loss rules -> a pure-rental loss is passive
+    #     unless you materially participate (see below); longer stays are a rental activity (passive, with
+    #     a $25k allowance that phases out above $100k-$150k of income).
+    #   - <= 30 nights: the unit is used on a "transient" basis -> the building depreciates over 39 years
+    #     (nonresidential), not 27.5.
+    # Keystone ski stays are typically a few nights, so any value <= 7 gives the same result.
     kind: constant
-    value: false                     # example
+    value: 4                         # placeholder
 
-  state_tax_profiles:
-    # One bundle per state, looked up via scenario.residency_state — replaces a bare tax-rate
-    # field with everything state-specific in one place, so picking CO automatically pulls in
-    # CO's whole tax treatment rather than several separately-scattered fields.
+  owner_materially_participates:
+    # Whether YOU materially participate in running the rental (e.g. more than 500 hours/year, or at
+    # least 100 hours and more than anyone else, managers and cleaners included). With a full-service
+    # property manager (rental_operations.managed_by: company) this is essentially always false. Only
+    # matters in the `rental` tax use class with average stays <= 7 nights: true lets a rental loss
+    # offset your other income now; false suspends it until the sale.
     kind: constant
-    value:
-      FL:
-        income_tax_rate: 0.0
-        capital_gains_as_ordinary_income: false
-      CO:
-        income_tax_rate: 0.044       # example — flat rate, TABOR refunds have lowered it some years
-        capital_gains_as_ordinary_income: true   # CO taxes gains as ordinary income at the rate above
-
-  salt_cap:
-    # SALT = the federal itemized-deduction cap on state + local taxes (property tax, state
-    # income tax) you can deduct against FEDERAL taxable income. Simplified to one flat number
-    # rather than a year-indexed schedule — this has been genuinely unsettled in recent tax
-    # law, so treat this as a placeholder to double-check against current law, not a firm fact.
-    kind: constant
-    value: 10000                     # example — verify against current-year law
-
-  depreciation_years_building:
-    kind: constant
-    value: 27.5                      # residential rental, per current law
-
-  recapture_rate:
-    kind: constant
-    value: 0.25                      # max on unrecaptured Section 1250 gain
-
-  ltcg_rate:
-    # Federal only; applies to both the condo sale and portfolio liquidation. CO's capital-gains
-    # treatment is handled via state_tax_profiles above.
-    kind: constant
-    value: 0.15                      # example
-
-  sec121_exclusion:
-    # Section 121 primary-residence capital-gains exclusion (USD, MFJ) -- only applies when
-    # loan_occupancy_class (see financing section) is primary_residence AND the property's been
-    # held >= sec121_min_years below. Verify against current-year law, same spirit as salt_cap.
-    kind: constant
-    value: 500000
-
-  sec121_min_years:
-    # Ownership-and-use test for the exclusion above.
-    kind: constant
-    value: 2
-
-  passive_loss_treatment:
-    # Largely DETERMINED, not a free choice: an average stay of 7 days or less (a fixed fact for
-    # this STR, not modeled as a variable) takes the activity outside the "rental activity"
-    # passive-loss rules entirely, regardless of participation hours. Participation level can
-    # still matter for other classifications, hence still a field rather than fully hardcoded.
-    kind: constant
-    value: non_passive_short_term_rental   # example — confirm with a tax professional
+    value: false
 
 # -----------------------------------------------------------------------------
 # 10. rent_reference
@@ -1130,7 +1099,7 @@ capital_markets:
 # -----------------------------------------------------------------------------
 # BOTH branches realize a taxable event here, always, not just the buy branch: the condo sells
 # (selling_costs + recapture + capital gains) AND the rent branch's capital_markets.
-# initial_investment portfolio is liquidated (capital gains via taxes.ltcg_rate). Taxing the
+# initial_investment portfolio is liquidated (capital gains taxed by the same jurisdiction layers). Taxing the
 # portfolio's liquidation too — not just letting its gains sit unrealized — is what makes ΔW an
 # apples-to-apples comparison; otherwise the rent branch would look artificially better by never
 # paying tax on its gains.

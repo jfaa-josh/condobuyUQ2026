@@ -1,0 +1,13 @@
+# Florida state tax layer. Used only as a RESIDENCE state (scenario.residency_state = FL): Florida has no
+# personal income tax, so it adds nothing on top of the property state's tax. It has no property-tax model
+# here, so it can't be selected as taxes.jurisdiction.state (the property's state) yet.
+
+name: Florida
+level: state
+model: state
+as_of: 2026-11-24
+
+income_tax: null                   # no personal income tax
+
+sources:
+  income_tax: https://floridarevenue.com/Forms_library/current/brochure/gt800025.pdf

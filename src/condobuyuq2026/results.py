@@ -605,3 +605,98 @@ def save_personal_use_result_plots(scenario: dict[str, Any], deck: dict[str, Any
             ylabel="USD/month", save_path=out_dir / "alternate_lodging_cost.png", final_year=final_year,
         ),
     }
+
+
+def save_tax_result_plots(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Path]:
+    """Saves this scenario's taxes plot (section 9):
+      results/<scenario>/taxes/tax_effects_by_year.png  the condo's tax effect each year + at the sale,
+                                                        split federal / property state / residence state
+    Each bar is the household's tax WITH the condo minus WITHOUT it (taxes.py): above zero the condo
+    adds tax, below zero it saves tax. Reads scenario["taxes"] (taxes.compute_owner_taxes), computed
+    here if the runner hasn't stored it yet."""
+    from condobuyuq2026.taxes import compute_owner_taxes
+
+    deck = deck if deck is not None else load_deck()
+    taxes = scenario.get("taxes") or compute_owner_taxes(scenario, deck)
+    schedule, sale, jurisdiction, rules = taxes["annual_schedule"], taxes["sale"], taxes["jurisdiction"], taxes["rules"]
+    lines = [
+        ("federal", "Federal", "C0"),
+        ("property_state", jurisdiction.property_state.name, "C2"),
+        ("residence_state", f"{jurisdiction.residence_state.name} (residence)", "C4"),
+    ]
+    lines = [
+        line
+        for line in lines
+        if line[0] != "residence_state"
+        or jurisdiction.residence_state.has_income_tax
+        and not jurisdiction.resident_of_property_state
+    ]
+    labels = [str(int(year)) for year in schedule["tax_year"]] + ["Sale"]
+    values = {key: [*schedule[key].tolist(), sale[key]] for key, _, _ in lines}
+    x = np.arange(len(labels))
+
+    fig, (ax, ax_rent) = plt.subplots(2, 1, figsize=(11, 8.5), height_ratios=[3, 2], sharex=True)
+    pos_base, neg_base = np.zeros(len(x)), np.zeros(len(x))
+    for key, label, color in lines:
+        v = np.asarray(values[key], dtype=float)
+        base = np.where(v >= 0, pos_base, neg_base)
+        ax.bar(x, v, bottom=base, width=0.7, color=color, edgecolor="white", linewidth=1.5, label=label)
+        pos_base += np.where(v >= 0, v, 0)
+        neg_base += np.where(v < 0, v, 0)
+    net = pos_base + neg_base
+    ax.scatter(x, net, marker="_", s=400, color="k", linewidths=2, zorder=3, label="Net effect")
+    ax.axhline(0, color="k", linewidth=0.8)
+    ax.axvline(len(x) - 1.5, color="gray", linewidth=0.8, linestyle=":")
+    span = max(abs(float(net.max())), abs(float(net.min())), 1.0)
+    ax.annotate(
+        f"${net[-1]:,.0f}",
+        (x[-1], net[-1]),
+        xytext=(0, 8 if net[-1] >= 0 else -14),
+        textcoords="offset points",
+        ha="center",
+        fontsize=9,
+    )
+    ax.set_ylim(min(float(neg_base.min()), 0) - 0.12 * span, max(float(pos_base.max()), 0) + 0.12 * span)
+    ax.set_ylabel("USD (above 0 = the condo adds tax; below 0 = it saves tax)")
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda value, _: f"${value:,.0f}"))
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_axisbelow(True)
+    passive = "" if rules["passive_status"] == "n/a" else f", losses {rules['passive_status']}"
+    ax.set_title(
+        f"Condo Tax Effect by Year — {jurisdiction.label}; residence {jurisdiction.residence_state.name}\n"
+        f"total ${taxes['total_tax']:,.0f} (annual ${schedule['tax'].sum():,.0f} + sale ${sale['tax']:,.0f}); "
+        f"use class {rules['tax_use_class']}, depreciation {rules['depreciation_years']:g} yr{passive}",
+        fontsize=11,
+    )
+    ax.legend(loc="best", fontsize=9)
+
+    # Lower panel: where the rent went -- gross rent vs. the part that became taxable, and the deductions
+    # carried forward (280A, lost at sale) or losses suspended (passive, released at sale).
+    years = np.arange(len(schedule))
+    ax_rent.bar(years - 0.18, schedule["gross_rent"], width=0.36, color="C7", edgecolor="white", linewidth=1.5,
+                label="Expected gross rent")
+    ax_rent.bar(years + 0.18, schedule["taxable_rental"], width=0.36, color="C1", edgecolor="white", linewidth=1.5,
+                label="Taxable rental income (in AGI)")
+    carried = schedule["carry_280a_balance"] + schedule["carry_280a_depr_balance"]
+    if carried.abs().sum() > 0:
+        ax_rent.plot(years, carried, color="C3", marker="o", linewidth=2, label="280A deductions carried forward (lost at sale)")
+    if schedule["suspended_passive_balance"].abs().sum() > 0:
+        ax_rent.plot(years, schedule["suspended_passive_balance"], color="C9", marker="s", linewidth=2,
+                     label="Suspended passive losses (released at sale)")
+    ax_rent.axhline(0, color="k", linewidth=0.8)
+    ax_rent.axvline(len(x) - 1.5, color="gray", linewidth=0.8, linestyle=":")
+    ax_rent.set_xticks(x, labels)
+    ax_rent.set_xlabel("Tax year")
+    ax_rent.set_ylabel("USD per year")
+    ax_rent.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda value, _: f"${value:,.0f}"))
+    ax_rent.grid(axis="y", alpha=0.3)
+    ax_rent.set_axisbelow(True)
+    ax_rent.set_title("Where the rent went", fontsize=10)
+    ax_rent.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    out_dir = scenario_results_dir(scenario).parent / "taxes"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_path = out_dir / "tax_effects_by_year.png"
+    fig.savefig(save_path, dpi=120)
+    plt.close(fig)
+    return {"tax_effects_by_year": save_path}

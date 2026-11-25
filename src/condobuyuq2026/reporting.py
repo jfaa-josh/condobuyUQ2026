@@ -251,16 +251,45 @@ def print_carrying_cost_result_plots_report(result_plots: dict[str, Path]) -> No
 
 
 def print_taxes_report(taxes: dict[str, Any]) -> None:
-    """Prints one buy scenario's tax results (see taxes.compute_owner_taxes) as a single line (with the
-    expected gross rent and taxable rental income it was computed from), plus any residency flags (taxes.
-    compute_owner_taxes' "flags") on their own lines so they're hard to miss."""
+    """Prints one buy scenario's tax results (see taxes.compute_owner_taxes): the jurisdiction layers
+    used, the derived rules applied, then the totals; residency flags on their own lines so they're hard
+    to miss."""
     schedule = taxes["annual_schedule"]
+    rules = taxes["rules"]
+    jurisdiction = taxes["jurisdiction"]
+    sale = taxes["sale"]
+    residence = jurisdiction.residence_state
     print(
-        f"total_tax=${taxes['total_tax']:,.0f} over the horizon (annual + sale); use class {schedule['use_class'].iloc[0]}, "
-        f"expected gross rent ${schedule['gross_rent'].sum():,.0f}, taxable rental income ${schedule['taxable_rental'].sum():,.0f}"
+        f"tax jurisdiction: {jurisdiction.label} (data as of {jurisdiction.as_of}); residence {residence.name} "
+        f"({residence.describe_income_tax(int(schedule['tax_year'].iloc[0]))}); STR guest taxes "
+        f"{jurisdiction.guest_tax_total():.3%} (guest-paid, not income)"
+    )
+    passive = "" if rules["passive_status"] == "n/a" else f", losses {rules['passive_status']}"
+    print(
+        f"  rules: use class {rules['tax_use_class']} (rental share {rules['rental_share']:.0%}); depreciation "
+        f"{rules['depreciation_years']:g} yr on {rules['building_fraction']:.0%} of basis (avg guest stay "
+        f"{rules['average_guest_stay_nights']:g} nights){passive}; itemizes in {int(schedule['itemizes'].sum())} of "
+        f"{len(schedule)} years"
+    )
+    print(
+        f"total_tax=${taxes['total_tax']:,.0f} over the horizon (annual ${schedule['tax'].sum():,.0f} + sale "
+        f"${sale['tax']:,.0f}); federal ${schedule['federal'].sum() + sale['federal']:,.0f}, "
+        f"{jurisdiction.property_state.name} ${schedule['property_state'].sum() + sale['property_state']:,.0f}; "
+        f"expected gross rent ${schedule['gross_rent'].sum():,.0f}, taxable rental income "
+        f"${schedule['taxable_rental'].sum():,.0f}"
+    )
+    print(
+        f"  sale: gain ${sale['gain']:,.0f} = recapture ${sale['recapture']:,.0f} + long-term ${sale['ltcg']:,.0f} "
+        f"+ excluded ${sale['excluded_121']:,.0f}; released passive losses ${sale['released_passive']:,.0f}; lost 280A "
+        f"carryforward ${sale['lost_280a_carry']:,.0f}"
     )
     for flag in taxes["flags"]:
         print(f"  {flag}")
+
+
+def print_tax_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """One line: where this scenario's taxes plot went (results.save_tax_result_plots)."""
+    print(f"  saved {len(result_plots)} taxes result plot to {result_plots['tax_effects_by_year'].parent}")
 
 
 def print_renter_taxes_report(taxes: dict[str, Any]) -> None:

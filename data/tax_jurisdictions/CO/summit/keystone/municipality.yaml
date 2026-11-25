@@ -1,0 +1,24 @@
+# Town of Keystone, Colorado (Summit County): municipality tax layer (under CO/summit/). Read by
+# src/condobuyuq2026/jurisdictions/ (MunicipalityLayer). Turn it on with input_deck.yaml's
+# taxes.jurisdiction.municipality: keystone. Incorporated 2024.
+# Statutory values only; each one's source is listed under `sources`. Bump `as_of` when updated.
+
+name: Town of Keystone
+level: municipality
+model: municipality
+as_of: 2026-11-24
+
+local_income_tax: null             # no town income or occupational-privilege tax
+
+# Information only: the Town's own tax on STR guests (<30 consecutive nights), effective 2025-01-01,
+# replacing Summit County's 2% lodging tax. Owners collect and remit it monthly; not owner income.
+guest_taxes:
+  town_lodging_tax: 0.02
+notes:
+  - "The Town levies 0.0 mills (2025 budget), so it adds nothing to the parcel's property-tax mill levy."
+  - "Short-term rentals need a Town STR license (the Town took licensing over from Summit County in Oct 2024)."
+
+sources:
+  guest_taxes: https://keystone.colorado.gov/lodging-tax-information
+  town_mill_levy: https://keystone.colorado.gov/sites/keystone/files/documents/Resolution-2024-78_0.pdf
+  str_license: https://keystone.colorado.gov/short-term-rentals

@@ -47,6 +47,7 @@ from condobuyuq2026.reporting import (
     print_renter_taxes_report,
     print_scenario_comparison_placeholder,
     print_special_assessment_report,
+    print_tax_result_plots_report,
     print_taxes_report,
 )
 from condobuyuq2026.personal_use import compute_personal_use
@@ -54,6 +55,7 @@ from condobuyuq2026.rental_operations import compute_rental_operations
 from condobuyuq2026.results import (
     save_carrying_cost_result_plots,
     save_personal_use_result_plots,
+    save_tax_result_plots,
     save_rental_operations_result_plots,
 )
 from condobuyuq2026.scenarios import get_scenario_set
@@ -125,6 +127,7 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         owner_taxes = compute_owner_taxes(scenario, deck)
         scenario["taxes"] = owner_taxes
         print_taxes_report(owner_taxes)
+        print_tax_result_plots_report(save_tax_result_plots(scenario, deck))
 
         print_scenario_comparison_placeholder(scenario, reference_id)
         print()  # blank line -- groups this scenario's reference/alternative/result together

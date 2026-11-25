@@ -1,6 +1,7 @@
-"""Computes one scenario's per-year carrying costs: property tax (REAL, using Colorado's actual
-two-step assessment_rate x mill_levy mechanic, local AND school components separately -- see
-input_deck.yaml's carrying_costs.property_tax comment for the research behind it), plus HOA dues,
+"""Computes one scenario's per-year carrying costs: property tax (REAL, using the property state's own
+mechanic from the selected tax jurisdiction -- for Colorado the two-step assessment-rate x mill-levy
+system, local AND school components separately; see jurisdictions/property_tax.py and
+data/tax_jurisdictions/CO/state.yaml -- with the parcel's own mill levies from the deck), plus HOA dues,
 insurance, maintenance, and utilities -- each projected from its own pre-built carrying_cost_prior
 model (see utils.prior_utils.build_all_carrying_cost_prior_models, wired into run/main.py's build
 stage, the same way derived_latents are). Special assessments get their own separate frequency x
@@ -37,30 +38,16 @@ import pandas as pd
 from scipy.stats import norm, poisson
 
 from condobuyuq2026.input_deck import (
+    get_closing_date,
     get_forecast_model_home_price,
     get_property_tax_inputs,
     get_report_quantiles,
+    get_tax_jurisdiction_selection,
     load_deck,
 )
+from condobuyuq2026.jurisdictions import load_tax_jurisdiction
 from condobuyuq2026.paths import model_fit_path
 from condobuyuq2026.utils.ou_fitting import load_fit, project_term_structure
-
-# classification/lodging assessment rate are HARDCODED here (moved out of the deck 2026-09-26) --
-# NOT a deck field, since no current CO law ties property-tax classification to rental activity
-# (two bills that would have both died in committee in 2024 -- see the "CO property tax STR
-# classification" memory and input_deck.yaml's own property_tax comment for the research).
-# "residential" is simply the only currently-real option; revisit this constant (and the
-# NotImplementedError below) if that law ever changes.
-PROPERTY_TAX_CLASSIFICATION = "residential"
-LODGING_ASSESSMENT_RATE = 0.279  # example -- CO's ~2026 commercial/lodging rate; reference only,
-                                  # unused while PROPERTY_TAX_CLASSIFICATION == "residential" (no
-                                  # lodging-specific local/school mill-levy split is defined below)
-
-# What FRACTION of the assessor's market_value each component's assessment_rate applies to --
-# Colorado's own rule, hardcoded (not deck-configurable) same reasoning as CO_STATUTORY_
-# RESIDENCY_DAYS in taxes.py.
-LOCAL_ASSESSED_VALUE_FRACTION = 0.90
-SCHOOL_ASSESSED_VALUE_FRACTION = 1.00
 
 # Heating systems for carrying_costs.utilities.heating_type (2026-11-22). Hardcoded reference data, not
 # deck fields: these are equipment physics, not property-specific inputs. `carrier` is the utility
@@ -229,76 +216,80 @@ def project_market_value_schedule(scenario: dict[str, Any], deck: dict[str, Any]
     return pd.DataFrame({"median": medians, "lo": los, "hi": his}, index=pd.Index(years))
 
 
-def get_combined_property_tax_rate(deck: dict[str, Any] | None = None) -> float:
-    """The single combined LOCAL+SCHOOL rate that converts a market_value dollar into a property_tax
-    dollar (assessment_rate x mill_levy for each of LOCAL/SCHOOL, weighted by their own
-    ASSESSED_VALUE_FRACTION and summed -- see compute_property_tax_schedule for the full derivation).
-    Exposed separately (not just inlined there) so a caller needing market_value's own saved PERIOD
-    STRUCTURE rescaled into tax dollars (see market_value_periods_to_tax_periods) can reuse this exact
-    rate, rather than recomputing the LOCAL/SCHOOL combination a second time."""
+def property_tax_calendar_year(h_months: int, deck: dict[str, Any] | None = None) -> int:
+    """The calendar (tax) year that scenario month h_months (0 = closing) falls in."""
+    closing = get_closing_date(deck)
+    return closing["closing_year"] + (closing["closing_month"] - 1 + h_months) // 12
+
+
+def property_tax_for_value(
+    market_value: Any, tax_year: int, deck: dict[str, Any] | None = None
+) -> dict[str, np.ndarray]:
+    """Assessed value and tax for an assessor market value (scalar or array) in a tax year: the selected
+    jurisdiction's property-tax model (see jurisdictions.TaxJurisdiction.property_tax_model) applied with
+    the deck's mill levies (input_deck.get_property_tax_inputs). Returns {"assessed_value", "tax"} --
+    the combined local+school totals only (the component split is internal)."""
     deck = deck if deck is not None else load_deck()
-    if PROPERTY_TAX_CLASSIFICATION != "residential":
-        raise NotImplementedError(
-            f"PROPERTY_TAX_CLASSIFICATION={PROPERTY_TAX_CLASSIFICATION!r} has no defined local/school "
-            "assessment_rate/mill_levy split -- only 'residential' is implemented (see that "
-            "constant's own comment for why 'lodging' isn't reachable today anyway)."
+    model = load_tax_jurisdiction(get_tax_jurisdiction_selection(deck)).property_tax_model()
+    mill_levies = get_property_tax_inputs(deck)["mill_levies"]
+    unknown = set(mill_levies) - set(model.components)
+    if unknown:
+        raise ValueError(
+            f"carrying_costs.property_tax.mill_levy has component(s) {sorted(unknown)} the property state's model "
+            f"doesn't use (it expects {list(model.components)})"
         )
-    inputs = get_property_tax_inputs(deck)
-    return (
-        LOCAL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_local"] * inputs["mill_levy_local"]
-        + SCHOOL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_school"] * inputs["mill_levy_school"]
-    )
+    return {
+        "assessed_value": model.assessed_value(market_value, tax_year),
+        "tax": model.tax(market_value, mill_levies, tax_year),
+    }
 
 
 def market_value_periods_to_tax_periods(
     periods: list[dict[str, Any]], deck: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
     """Rescales market_value's own saved periods (see utils.prior_utils.
-    build_market_value_change_magnitude) into property_tax dollar terms: known_value/projected_value
-    scaled by get_combined_property_tax_rate (growth_sigma is a unitless log-space ratio, untouched by
-    the rescale -- same reasoning project_market_value_schedule itself relies on). Exposes the PERIOD
-    STRUCTURE itself, not just compute_property_tax_schedule's own per-year band, for a caller that
-    needs to group by underlying period the way results.py's own distribution plot does."""
-    rate = get_combined_property_tax_rate(deck)
-    return [
-        {**period, "known_value": period["known_value"] * rate, "projected_value": period["projected_value"] * rate}
-        for period in periods
-    ]
+    build_market_value_change_magnitude) into property_tax dollar terms. Each period's known_value/
+    projected_value is scaled by its EFFECTIVE tax rate (tax / value at the period's median value, in
+    the calendar year the period starts); growth_sigma is a unitless log-space ratio, untouched. Exact
+    wherever the model is linear in value (CO: below the $700k point where the local reduction caps),
+    a close linearization above it. Exposes the PERIOD STRUCTURE itself, not just
+    compute_property_tax_schedule's per-year band, for a caller that groups by underlying period the way
+    results.py's own distribution plot does."""
+    deck = deck if deck is not None else load_deck()
+    rescaled = []
+    for period in periods:
+        median = period["known_value"] + period["projected_value"]
+        tax_year = property_tax_calendar_year(period["start_month"], deck)
+        rate = float(property_tax_for_value(median, tax_year, deck)["tax"]) / median if median > 0 else 0.0
+        rescaled.append(
+            {**period, "known_value": period["known_value"] * rate, "projected_value": period["projected_value"] * rate}
+        )
+    return rescaled
 
 
 def compute_property_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
-    """REAL: assessed_value = LOCAL_ASSESSED_VALUE_FRACTION (90%) of market_value at LOCAL's
-    assessment_rate, PLUS SCHOOL_ASSESSED_VALUE_FRACTION (100%) of market_value at SCHOOL's
-    assessment_rate; tax = each component's assessed value x its own mill_levy, summed. Since both
-    components are simple constant multiples of the SAME market_value draw (not independent random
-    variables), assessed_value/tax end up as market_value's own median/lo/hi band, just linearly
-    rescaled -- see get_property_tax_inputs for the local/school rates and mill levies, and
-    project_market_value_schedule for market_value's own band.
+    """REAL: the selected jurisdiction's property-tax model (see property_tax_for_value) applied to
+    market_value's own median/lo/hi band each year, in the calendar year that scenario year starts. Every
+    model is monotone in value, so the band maps straight through -- see project_market_value_schedule
+    for market_value's own band.
 
     Returns a DataFrame indexed by year (1..horizon_years) with columns "assessed_value_median",
     "assessed_value_lo", "assessed_value_hi", "tax_median", "tax_lo", "tax_hi" -- ONLY the combined
     total (local + school collapsed into one) is ever exposed, per the user's explicit request; the
-    local/school split itself is an internal computation detail.
+    component split itself is an internal computation detail.
     """
     deck = deck if deck is not None else load_deck()
-    inputs = get_property_tax_inputs(deck)
-    combined_assessed_rate = (
-        LOCAL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_local"]
-        + SCHOOL_ASSESSED_VALUE_FRACTION * inputs["assessment_rate_school"]
-    )
-    combined_tax_rate = get_combined_property_tax_rate(deck)
-
     market_value_schedule = project_market_value_schedule(scenario, deck)
-    return pd.DataFrame(
-        {
-            "assessed_value_median": market_value_schedule["median"] * combined_assessed_rate,
-            "assessed_value_lo": market_value_schedule["lo"] * combined_assessed_rate,
-            "assessed_value_hi": market_value_schedule["hi"] * combined_assessed_rate,
-            "tax_median": market_value_schedule["median"] * combined_tax_rate,
-            "tax_lo": market_value_schedule["lo"] * combined_tax_rate,
-            "tax_hi": market_value_schedule["hi"] * combined_tax_rate,
-        }
-    )
+    columns: dict[str, list[float]] = {
+        f"{what}_{band}": [] for what in ("assessed_value", "tax") for band in ("median", "lo", "hi")
+    }
+    for year in market_value_schedule.index:
+        tax_year = property_tax_calendar_year((year - 1) * 12, deck)
+        for band in ("median", "lo", "hi"):
+            result = property_tax_for_value(market_value_schedule.loc[year, band], tax_year, deck)
+            columns[f"assessed_value_{band}"].append(float(result["assessed_value"]))
+            columns[f"tax_{band}"].append(float(result["tax"]))
+    return pd.DataFrame(columns, index=market_value_schedule.index)
 
 
 def load_carrying_cost_prior_fit(name: str) -> dict[str, Any]:

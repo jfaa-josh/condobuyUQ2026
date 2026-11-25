@@ -1,43 +1,41 @@
-"""Computes the incremental tax effects of the buy-vs-rent choice -- ONLY taxes caused by the
-real-estate decision itself (mortgage interest, rental income, depreciation, capital gains at
-sale). Work income, and the general household income tax you'd owe on it regardless of this
-decision, are OUT OF SCOPE -- see input_deck.yaml's taxes section disclaimer.
+"""Computes the incremental tax effects of the buy-vs-rent choice: ONLY taxes caused by the real-estate
+decision itself (rental income, depreciation, mortgage interest / property tax deductions, the sale).
 
-Adapted from a reference implementation the user supplied (a `TaxModel` class with mutable
-year-to-year state: depreciation taken, suspended passive losses, section 280A carryforwards) into
-this project's functional style (see acquisition.py/financing.py): one function computes the full
-year-by-year schedule in one call, threading that state through an internal loop -- the same
-pattern as financing.amortize_loan, with the state itself kept as CUMULATIVE columns in the
-returned DataFrame (so the last row IS the "ending state" needed for the sale calculation, exactly
-like amortize_loan's "balance" column) rather than a separate return value.
+HOW: each year, the household's whole federal + state income tax is computed twice from
+taxes.household_agi and the household's other deductions -- once WITHOUT the condo and once WITH it --
+and the difference is the condo's effect (see _household_tax). So bracket jumps, capital-gain
+stacking (0/15/20%), the 3.8% NIIT, itemizing vs. the standard deduction, and the SALT cap all come out
+of the tables rather than a hand-set marginal rate.
 
-SCENARIOS (residency x tenure) -- not a new axis, exactly scenario["residency_state"] (CO|FL) x
-whether this is a buy scenario (alternative="buy" -> OWN, see compute_owner_taxes) or its paired
-reference case (-> RENT, see compute_renter_taxes -- always a real, confirmed ZERO result, not a
-placeholder: renting has no real-estate tax effect at all):
-    CO / RENT -> no real-estate tax effect
-    CO / OWN  -> primary residence (loan_occupancy_class == "primary_residence"): full section 121
-                 exclusion at sale
-    FL / RENT -> no real-estate tax effect
-    FL / OWN  -> second home/investment, CO nonresident: no section 121 exclusion
+THE LAW comes from the selected tax jurisdiction (jurisdictions.load_tax_jurisdiction: federal + the
+property's state + county + municipality data files under data/tax_jurisdictions/, plus the residence
+state). This module holds no statutory numbers of its own.
 
-tax_use_class (personal_use/mixed_use/rental) is NEVER recomputed here -- it's read straight from
-scenario["classification"] (classification.py already applies the exact same day-count rule this
-module's reference implementation used internally). Same for loan_occupancy_class, cost_basis
-(acquisition), mortgage_interest (financing's own amortization_schedule, resampled to annual), and
-property_tax/hoa_dues/insurance/maintenance/utilities (carrying_costs.py's own per-year schedule --
-see carrying_costs.compute_carrying_costs_schedule; special assessments are deliberately excluded,
-see compute_owner_tax_schedule's own comment; property_tax uses
-Colorado's REAL two-step assessment/mill-levy mechanic, and the other four are each projected from
-their own pre-built carrying_cost_prior model, both real, not placeholders, as of 2026-09-26).
+PER-YEAR PROPERTY ITEMS (compute_owner_tax_schedule), by tax_use_class (read from
+scenario["classification"], never recomputed; held constant across years):
+- r = rented / (rented + personal) days splits shared costs (vacant days don't count, IRS method).
+- rental: depreciation r x full; net = rent - r x (interest + property tax + shared) - fees - depr.
+  A loss is passive unless the federal passive rules say otherwise (average_guest_stay_nights,
+  owner_materially_participates): suspended and carried to the sale, released in full then. The
+  personal share of mortgage interest is NOT deductible (not a qualified residence); the personal share
+  of property tax is (SALT).
+- mixed_use (a residence under 280A): deductions capped at rent in the 280A order (interest/tax +
+  fees, then operating costs, then depreciation), the excess carried forward and lost at sale. The
+  personal shares of interest and property tax are itemized deductions.
+- personal_use (rented <= 14 days): rent excluded; interest and property tax are itemized deductions.
+Depreciable basis = (purchase price + closing costs) x building_fraction (acquisition.percent_improved),
+over the federal period for the average stay (39 yr if transient, else 27.5).
 
-gross_rent (REAL since 2026-11-22, section 7 build step 4; was this module's last placeholder): each
-year's EXPECTED (mean) gross rental revenue from scenario["rental_operations"]
-(rental_operations.compute_rental_operations -- fitted occupancy x ADR, grown by the `adr` latent),
-BEFORE lodging tax (guest-paid pass-through, never the owner's income) and before fees.
-direct_rental_expenses = total fee fraction x gross_rent, with total fee fraction = 1 - (1 -
-channel_commission_fraction) x (1 - mgmt_fee_fraction). Taxes stay POINT estimates on these means:
-propagating revenue uncertainty through the nonlinear tax rules is a later (ΔW-stage) concern.
+SALE (compute_owner_sale_tax): recapture (unrecaptured 1250 gain), section 121 exclusion (primary
+residence held >= the minimum years), long-term gain, and released passive losses, taxed as an increment
+on top of the final year's return.
+
+gross_rent: each year's EXPECTED (mean) gross rental revenue from scenario["rental_operations"],
+before lodging tax (guest-paid) and fees. Taxes are POINT estimates on these means; propagating revenue
+uncertainty through the nonlinear tax rules is a later (ΔW-stage) concern.
+
+Tax year for scenario year n = closing_year + n - 1. The renter's case (compute_renter_taxes) is a
+real, confirmed $0: renting has no real-estate tax effect.
 """
 
 from __future__ import annotations
@@ -49,17 +47,29 @@ import pandas as pd
 from condobuyuq2026.carrying_costs import compute_carrying_costs_schedule, project_condo_value_schedule
 from condobuyuq2026.input_deck import (
     get_acquisition_inputs,
+    get_closing_date,
     get_exit_inputs,
     get_rental_operations_inputs,
     get_taxes_inputs,
     load_deck,
 )
+from condobuyuq2026.jurisdictions import TaxJurisdiction, load_tax_jurisdiction
 from condobuyuq2026.rental_operations import compute_rental_operations
 
-# Statutory day-count threshold this module itself owns (a WARNING only, doesn't affect any tax
-# math below) -- kept as a module constant rather than a deck field, the same precedent
-# classification.py already set for its own day-count thresholds (14 days, 10% of rented days).
-CO_STATUTORY_RESIDENCY_DAYS = 183
+NO_PROPERTY: dict[str, float] = {
+    "rental_income": 0.0,
+    "itemized_interest": 0.0,
+    "personal_property_tax": 0.0,
+    "ltcg": 0.0,
+    "unrecaptured_1250": 0.0,
+}
+
+
+def get_scenario_tax_jurisdiction(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> TaxJurisdiction:
+    """The composed tax layers for this scenario: the deck's taxes.jurisdiction + the scenario's
+    residency_state as the residence state."""
+    deck = deck if deck is not None else load_deck()
+    return load_tax_jurisdiction(get_taxes_inputs(deck)["jurisdiction"], scenario["residency_state"])
 
 
 def gross_rent_by_year(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.Series:
@@ -78,7 +88,9 @@ def estimate_sale_proceeds(
     deck = deck if deck is not None else load_deck()
     exit_inputs = get_exit_inputs(deck)
     sale_price = condo_value_schedule.iloc[-1]
-    selling_costs_total = exit_inputs["selling_costs_fixed_fees"] + exit_inputs["selling_costs_percent_of_price"] * sale_price
+    selling_costs_total = (
+        exit_inputs["selling_costs_fixed_fees"] + exit_inputs["selling_costs_percent_of_price"] * sale_price
+    )
     return {
         "sale_price": sale_price,
         "selling_costs_total": selling_costs_total,
@@ -94,49 +106,115 @@ def _annual_mortgage_interest(scenario: dict[str, Any], horizon_years: int) -> l
     return [interest.loc[(year - 1) * 12 + 1 : year * 12].sum() for year in range(1, horizon_years + 1)]
 
 
+def _household_tax(
+    jurisdiction: TaxJurisdiction, taxes_inputs: dict[str, Any], tax_year: int, items: dict[str, float]
+) -> dict[str, float]:
+    """The household's whole-return income tax for one year with the given property items (NO_PROPERTY
+    for the baseline). items: rental_income (ordinary, in AGI; negative only for an allowed loss),
+    itemized_interest (deductible mortgage interest), personal_property_tax (SALT-eligible),
+    ltcg (long-term gain), unrecaptured_1250 (recaptured depreciation). Returns {"federal",
+    "property_state", "residence_state", "total", "itemizes", "taxable_income", "agi"}."""
+    federal = jurisdiction.federal
+    property_income = items["rental_income"] + items["ltcg"] + items["unrecaptured_1250"]
+    agi = taxes_inputs["household_agi"] + property_income
+    salt = min(federal.salt_cap(tax_year, agi), taxes_inputs["other_salt_paid"] + items["personal_property_tax"])
+    itemized = taxes_inputs["other_itemized_deductions"] + items["itemized_interest"] + salt
+    deduction = max(federal.standard_deduction, itemized)
+    taxable_income = max(0.0, agi - deduction)
+    federal_tax = federal.income_tax(taxable_income, items["ltcg"], items["unrecaptured_1250"]) + federal.niit(
+        max(0.0, property_income), agi
+    )
+    state = jurisdiction.state_income_taxes(taxable_income, agi, property_income, tax_year)
+    return {
+        "federal": federal_tax,
+        "property_state": state["property_state"],
+        "residence_state": state["residence_state"],
+        "total": federal_tax + state["property_state"] + state["residence_state"],
+        "itemizes": float(itemized > federal.standard_deduction),
+        "taxable_income": taxable_income,
+        "agi": agi,
+    }
+
+
+def _tax_effect(
+    jurisdiction: TaxJurisdiction,
+    taxes_inputs: dict[str, Any],
+    tax_year: int,
+    with_items: dict[str, float],
+    without_items: dict[str, float] = NO_PROPERTY,
+) -> dict[str, float]:
+    """with - without, per tax line; plus whether the household itemizes in the WITH case."""
+    with_tax = _household_tax(jurisdiction, taxes_inputs, tax_year, with_items)
+    without_tax = _household_tax(jurisdiction, taxes_inputs, tax_year, without_items)
+    effect = {
+        line: with_tax[line] - without_tax[line] for line in ("federal", "property_state", "residence_state", "total")
+    }
+    effect["itemizes"] = with_tax["itemizes"]
+    return effect
+
+
+def tax_rules_applied(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The derived rules this scenario's taxes use (for the schedule and the report): use class,
+    depreciation period, passive status, and the shares/basis they act on."""
+    deck = deck if deck is not None else load_deck()
+    taxes_inputs = get_taxes_inputs(deck)
+    federal = get_scenario_tax_jurisdiction(scenario, deck).federal
+    classification = scenario["classification"]
+    rented, personal = classification["annual_rented_days"], classification["annual_personal_days"]
+    used = rented + personal
+    tax_use_class = classification["tax_use_class"]
+    stay = taxes_inputs["average_guest_stay_nights"]
+    cost_basis = scenario["acquisition"]["purchase_price"] + scenario["acquisition"]["closing_costs_total"]
+    depreciation_years = federal.depreciation_years(stay)
+    building_fraction = get_acquisition_inputs(deck)["building_fraction"]
+    return {
+        "tax_use_class": tax_use_class,
+        "rental_share": rented / used if used else 0.0,
+        "average_guest_stay_nights": stay,
+        "depreciation_years": depreciation_years,
+        "annual_depreciation_full": cost_basis * building_fraction / depreciation_years,
+        "building_fraction": building_fraction,
+        "cost_basis": cost_basis,
+        "passive_status": (
+            federal.passive_status(stay, taxes_inputs["owner_materially_participates"])
+            if tax_use_class == "rental"
+            else "n/a"
+        ),
+        "personal_interest_deductible": tax_use_class in federal.qualified_residence_interest_classes,
+    }
+
+
 def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
-    """Computes the OWN-tenure per-year tax effects for scenario["horizon_years"], mirroring the
-    reference TaxModel.year()'s §280A/passive-loss logic exactly, but functionally: threads
-    depreciation taken, suspended passive losses, and §280A carryforwards through the loop as
-    CUMULATIVE columns (so the last row is the "ending state" compute_owner_sale_tax needs).
+    """Per-year OWN-tenure tax effects for scenario["horizon_years"] (see the module docstring for the
+    rules by use class). Threads depreciation taken, suspended passive losses, and 280A carryforwards
+    through the loop as CUMULATIVE columns, so the last row is the ending state
+    compute_owner_sale_tax needs.
 
-    tax_use_class is read from scenario["classification"] (never recomputed -- see module
-    docstring) and held CONSTANT across every year, matching classification.py's own annual
-    (not year-varying) day-count assumption. gross_rent (expected, per year, see gross_rent_by_year),
-    mortgage_interest, property_tax, and shared_expenses all vary year to year (the rental projection's
-    ADR growth, the amortization schedule, the condo's own projected appreciation, and carrying_costs.py's
-    own per-year schedule, respectively).
-
-    Returns a DataFrame indexed by year (1..horizon_years) with columns: use_class, mortgage_
-    interest, property_tax, gross_rent, shared_expenses, direct_rental_expenses, taxable_rental,
-    fed, co, sch_a_benefit, tax, depr_this_year, cumulative_depr_taken, suspended_passive_balance,
-    carry_280a_balance, carry_280a_depr_balance.
+    Returns a DataFrame indexed by year (1..horizon_years) with columns: tax_year, use_class,
+    mortgage_interest, property_tax, gross_rent, shared_expenses, direct_rental_expenses,
+    depr_this_year, taxable_rental (the rental income that lands in AGI; negative = an allowed loss),
+    itemized_interest, personal_property_tax, itemizes (0/1, with the condo), federal, property_state,
+    residence_state, tax (their sum = the condo's effect that year), cumulative_depr_taken,
+    suspended_passive_balance, carry_280a_balance, carry_280a_depr_balance.
     """
     deck = deck if deck is not None else load_deck()
     taxes_inputs = get_taxes_inputs(deck)
+    jurisdiction = get_scenario_tax_jurisdiction(scenario, deck)
+    federal = jurisdiction.federal
+    rules = tax_rules_applied(scenario, deck)
     rental_operations_inputs = get_rental_operations_inputs(deck)
+    closing_year = get_closing_date(deck)["closing_year"]
 
     horizon_years = scenario["horizon_years"]
-    classification = scenario["classification"]
-    tax_use_class = classification["tax_use_class"]
-    rental_days = classification["annual_rented_days"]
-    personal_days = classification["annual_personal_days"]
-    used_days = rental_days + personal_days
-    r = rental_days / used_days if used_days else 0.0
+    tax_use_class = rules["tax_use_class"]
+    r = rules["rental_share"]
+    annual_depr_full = rules["annual_depreciation_full"]
 
-    purchase_price = scenario["acquisition"]["purchase_price"]
-    cost_basis = purchase_price + scenario["acquisition"]["closing_costs_total"]
-    building_fraction = 1 - get_acquisition_inputs(deck)["land_fraction"]
-    annual_depr_full = cost_basis * building_fraction / taxes_inputs["depreciation_years_building"]
-
-    fed_marginal_rate = taxes_inputs["federal_marginal_rate"]
-    niit_rate = taxes_inputs["niit_rate"] if taxes_inputs["niit_applies"] else 0.0
-    co_income_tax_rate = taxes_inputs["state_tax_profiles"]["CO"]["income_tax_rate"]
-
-    # carrying_costs.py already computed this (runner.run_scenarios stores it before taxes runs) --
-    # reuse it instead of recomputing, same pattern as acquisition/financing's own reuse.
+    # carrying_costs.py already computed this (runner.run_scenarios stores it before taxes runs).
     carrying_costs = scenario.get("carrying_costs")
-    carrying_costs_schedule = carrying_costs["annual_schedule"] if carrying_costs else compute_carrying_costs_schedule(scenario, deck)
+    carrying_costs_schedule = (
+        carrying_costs["annual_schedule"] if carrying_costs else compute_carrying_costs_schedule(scenario, deck)
+    )
     property_tax_by_year = carrying_costs_schedule["property_tax"]
     # Special assessments are deliberately NOT here (2026-11-22): they're excluded from every
     # carrying-cost total and applied later as a tail-risk overlay on ΔW, using PRE-TAX amounts.
@@ -155,25 +233,35 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
     depr_taken, suspended_passive, carry_280a, carry_280a_depr = 0.0, 0.0, 0.0, 0.0
     rows = []
     for year in range(1, horizon_years + 1):
+        tax_year = closing_year + year - 1
         mortgage_interest = mortgage_interest_by_year[year - 1]
-        property_tax = property_tax_by_year.loc[year]  # REAL -- Colorado's own assessment/mill-levy mechanic
-        shared_expenses = shared_expenses_by_year.loc[year]  # REAL -- carrying_costs.py's own per-year schedule
-        gross_rent = float(gross_rent_schedule.loc[year])  # expected gross rent, pre-lodging-tax
+        property_tax = float(property_tax_by_year.loc[year])
+        shared_expenses = float(shared_expenses_by_year.loc[year])
+        gross_rent = float(gross_rent_schedule.loc[year])
         direct_rental_expenses = total_fee_fraction * gross_rent  # channel commissions + management fee
         interest_tax = mortgage_interest + property_tax
-        taxable, personal_it, depr_this_year = 0.0, interest_tax, 0.0
+        rental_income, depr_this_year = 0.0, 0.0
+        personal_share = 1.0 if tax_use_class == "personal_use" else 1 - r
 
         if tax_use_class == "rental":
             depr_this_year = annual_depr_full * r
             depr_taken += depr_this_year
             net = gross_rent - (r * (interest_tax + shared_expenses) + direct_rental_expenses + depr_this_year)
-            personal_it = (1 - r) * interest_tax
             if net >= 0:
                 used_suspended = min(net, suspended_passive)
                 suspended_passive -= used_suspended
-                taxable = net - used_suspended
+                rental_income = net - used_suspended
             else:
-                suspended_passive += -net
+                loss = -net
+                status = rules["passive_status"]
+                if status == "nonpassive":
+                    allowed = loss
+                elif status == "passive_rental_activity":
+                    allowed = min(loss, federal.rental_special_allowance(taxes_inputs["household_agi"]))
+                else:
+                    allowed = 0.0
+                suspended_passive += loss - allowed
+                rental_income = -allowed
 
         elif tax_use_class == "mixed_use":
             # Section 280A ordering: interest/tax + direct costs, then operating costs, then depreciation.
@@ -187,29 +275,35 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
             carry_280a = tier2 - tier2_deducted
             carry_280a_depr = depr_available - depr_this_year
             depr_taken += depr_this_year
-            taxable = max(0.0, gross_rent - tier1 - tier2_deducted - depr_this_year)
-            personal_it = (1 - r) * interest_tax
+            rental_income = max(0.0, gross_rent - tier1 - tier2_deducted - depr_this_year)
 
-        # "personal_use": rent excluded, everything personal -- taxable/personal_it stay as above.
+        # "personal_use": rent excluded, nothing deducted against it -- only the itemized items below.
 
-        fed = taxable * (fed_marginal_rate + niit_rate)
-        co = taxable * co_income_tax_rate  # CO taxes CO-source rental income regardless of residency
-        sch_a_benefit = -(personal_it * fed_marginal_rate) if taxes_inputs["itemizes_deductions"] else 0.0
-
+        items = {
+            **NO_PROPERTY,
+            "rental_income": rental_income,
+            "itemized_interest": personal_share * mortgage_interest if rules["personal_interest_deductible"] else 0.0,
+            "personal_property_tax": personal_share * property_tax,
+        }
+        effect = _tax_effect(jurisdiction, taxes_inputs, tax_year, items)
         rows.append(
             {
+                "tax_year": tax_year,
                 "use_class": tax_use_class,
                 "mortgage_interest": mortgage_interest,
                 "property_tax": property_tax,
                 "gross_rent": gross_rent,
                 "shared_expenses": shared_expenses,
                 "direct_rental_expenses": direct_rental_expenses,
-                "taxable_rental": taxable,
-                "fed": fed,
-                "co": co,
-                "sch_a_benefit": sch_a_benefit,
-                "tax": fed + co + sch_a_benefit,
                 "depr_this_year": depr_this_year,
+                "taxable_rental": rental_income,
+                "itemized_interest": items["itemized_interest"],
+                "personal_property_tax": items["personal_property_tax"],
+                "itemizes": effect["itemizes"],
+                "federal": effect["federal"],
+                "property_state": effect["property_state"],
+                "residence_state": effect["residence_state"],
+                "tax": effect["total"],
                 "cumulative_depr_taken": depr_taken,
                 "suspended_passive_balance": suspended_passive,
                 "carry_280a_balance": carry_280a,
@@ -223,17 +317,19 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
 def compute_owner_sale_tax(
     scenario: dict[str, Any], annual_schedule: pd.DataFrame, deck: dict[str, Any] | None = None
 ) -> dict[str, float]:
-    """Computes the sale-year tax effect: depreciation recapture, section 121 exclusion (only if
-    loan_occupancy_class == "primary_residence" AND held >= taxes.sec121_min_years), remaining
-    long-term capital gain, and the release of any suspended passive losses / lost section 280A
-    carryforwards -- reading the ending state straight off annual_schedule's LAST row (see
-    compute_owner_tax_schedule's own docstring)."""
+    """The sale's tax effect, as an increment on top of the final year's return: depreciation recapture
+    (unrecaptured 1250 gain), the section 121 exclusion (only if loan_occupancy_class ==
+    "primary_residence" AND held >= the federal minimum years), the remaining long-term gain, and the
+    release of suspended passive losses (an ordinary loss); 280A carryforwards are lost. Reads the
+    ending state off annual_schedule's LAST row."""
     deck = deck if deck is not None else load_deck()
     taxes_inputs = get_taxes_inputs(deck)
+    jurisdiction = get_scenario_tax_jurisdiction(scenario, deck)
+    section_121 = jurisdiction.federal.section_121
 
     cost_basis = scenario["acquisition"]["purchase_price"] + scenario["acquisition"]["closing_costs_total"]
     ending = annual_schedule.iloc[-1]
-    depr_taken = ending["cumulative_depr_taken"]
+    depr_taken = float(ending["cumulative_depr_taken"])
 
     condo_value_schedule = project_condo_value_schedule(scenario, deck)
     proceeds = estimate_sale_proceeds(scenario, condo_value_schedule, deck)
@@ -244,26 +340,24 @@ def compute_owner_sale_tax(
     rest = max(0.0, gain - recapture)
 
     is_primary_residence = scenario["classification"]["loan_occupancy_class"] == "primary_residence"
-    held_long_enough = scenario["horizon_years"] >= taxes_inputs["sec121_min_years"]
-    excluded_121 = taxes_inputs["sec121_exclusion"] if (is_primary_residence and held_long_enough) else 0.0
-    excluded_121 = min(rest, excluded_121)
+    held_long_enough = scenario["horizon_years"] >= section_121["min_ownership_and_use_years"]
+    excluded_121 = min(rest, section_121["exclusion"]) if (is_primary_residence and held_long_enough) else 0.0
     ltcg = rest - excluded_121
-    taxable_gain = recapture + ltcg
+    released_passive = float(ending["suspended_passive_balance"])
 
-    fed_marginal_rate = taxes_inputs["federal_marginal_rate"]
-    niit_rate = taxes_inputs["niit_rate"] if taxes_inputs["niit_applies"] else 0.0
-    co_income_tax_rate = taxes_inputs["state_tax_profiles"]["CO"]["income_tax_rate"]
-
-    fed = (
-        recapture * min(fed_marginal_rate, taxes_inputs["recapture_rate"])
-        + ltcg * taxes_inputs["ltcg_rate"]
-        + taxable_gain * niit_rate
-    )
-    co = taxable_gain * co_income_tax_rate
-
-    released_passive = ending["suspended_passive_balance"]
-    release_benefit = -released_passive * (fed_marginal_rate + niit_rate + co_income_tax_rate)
-    lost_280a_carry = ending["carry_280a_balance"] + ending["carry_280a_depr_balance"]
+    final_year_items = {
+        **NO_PROPERTY,
+        "rental_income": float(ending["taxable_rental"]),
+        "itemized_interest": float(ending["itemized_interest"]),
+        "personal_property_tax": float(ending["personal_property_tax"]),
+    }
+    with_sale_items = {
+        **final_year_items,
+        "rental_income": final_year_items["rental_income"] - released_passive,
+        "ltcg": ltcg,
+        "unrecaptured_1250": recapture,
+    }
+    effect = _tax_effect(jurisdiction, taxes_inputs, int(ending["tax_year"]), with_sale_items, final_year_items)
 
     return {
         "sale_price": proceeds["sale_price"],
@@ -273,39 +367,42 @@ def compute_owner_sale_tax(
         "recapture": recapture,
         "excluded_121": excluded_121,
         "ltcg": ltcg,
-        "fed": fed,
-        "co": co,
         "released_passive": released_passive,
-        "release_benefit": release_benefit,
-        "lost_280a_carry": lost_280a_carry,
-        "tax": fed + co + release_benefit,
+        "lost_280a_carry": float(ending["carry_280a_balance"] + ending["carry_280a_depr_balance"]),
+        "federal": effect["federal"],
+        "property_state": effect["property_state"],
+        "residence_state": effect["residence_state"],
+        "tax": effect["total"],
     }
 
 
 def compute_owner_taxes(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Any]:
     """Top-level entry point for a BUY scenario (tenure=OWN). Requires scenario["acquisition"],
     scenario["classification"], scenario["financing"] to already be set (see runner.run_scenarios'
-    ordering). Returns {"annual_schedule" (DataFrame, see compute_owner_tax_schedule), "sale"
-    (dict, see compute_owner_sale_tax), "total_tax" (annual_schedule's "tax" column summed + sale's
-    "tax"), "flags" (CO statutory-residency warning if triggered -- see
-    CO_STATUTORY_RESIDENCY_DAYS; informational only, doesn't affect any number here)."""
+    ordering). Returns {"annual_schedule" (see compute_owner_tax_schedule), "sale" (see
+    compute_owner_sale_tax), "total_tax" (annual "tax" summed + the sale's), "rules" (see
+    tax_rules_applied), "jurisdiction" (the composed TaxJurisdiction), "flags" (e.g. the property
+    state's statutory-residency warning; informational, doesn't change any number)}."""
     deck = deck if deck is not None else load_deck()
     annual_schedule = compute_owner_tax_schedule(scenario, deck)
     sale = compute_owner_sale_tax(scenario, annual_schedule, deck)
+    jurisdiction = get_scenario_tax_jurisdiction(scenario, deck)
 
     flags = []
-    if scenario["residency_state"] == "FL":
-        personal_days = scenario["classification"]["annual_personal_days"]
-        if personal_days >= CO_STATUTORY_RESIDENCY_DAYS:
-            flags.append(
-                f"WARNING: annual_personal_days={personal_days} >= {CO_STATUTORY_RESIDENCY_DAYS} -- "
-                "FL residency claim at risk (CO statutory-resident day test)."
-            )
+    residency_days = jurisdiction.property_state.statutory_residency_days
+    personal_days = scenario["classification"]["annual_personal_days"]
+    if not jurisdiction.resident_of_property_state and residency_days is not None and personal_days >= residency_days:
+        flags.append(
+            f"WARNING: annual_personal_days={personal_days:g} >= {residency_days:g} -- "
+            f"{scenario['residency_state']} residency claim at risk ({jurisdiction.property_state.name} statutory-resident test)."
+        )
 
     return {
         "annual_schedule": annual_schedule,
         "sale": sale,
         "total_tax": annual_schedule["tax"].sum() + sale["tax"],
+        "rules": tax_rules_applied(scenario, deck),
+        "jurisdiction": jurisdiction,
         "flags": flags,
     }
 

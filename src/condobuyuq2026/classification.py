@@ -8,10 +8,9 @@ sets directly (see input_deck.yaml's "derived variables" schema-reference note):
   rental_operations.managed_by decides second_home (self-managed) vs investment (run through a
   property manager).
 - tax_use_class (personal_use | mixed_use | rental): what the IRS cares about -- day-count based
-  (IRC S280A "vacation home" rules), completely independent of loan_occupancy_class and of
-  taxes.passive_loss_treatment (a DIFFERENT test -- average guest-stay length, not day counts).
-  Set now per the user's request even though nothing consumes it yet -- the future taxes module
-  will (see rental_operations section's own deck comment for the exact day-count thresholds).
+  (IRC S280A "vacation home" rules, thresholds read from data/tax_jurisdictions/federal.yaml's
+  vacation_home block), independent of loan_occupancy_class and of the passive-activity rules (a
+  DIFFERENT test -- average guest-stay length, see taxes.py). Consumed by taxes.py.
 
 Both live in one module (rather than loan_occupancy_class in financing.py and tax_use_class in a
 future taxes.py) because they're determined from the same category of scenario/deck inputs
@@ -27,11 +26,8 @@ from condobuyuq2026.input_deck import (
     get_rental_operations_inputs,
     load_deck,
 )
+from condobuyuq2026.jurisdictions import load_federal_layer
 from condobuyuq2026.rental_operations import rented_nights_by_month
-
-MIXED_USE_PERSONAL_DAYS_THRESHOLD = 14
-MIXED_USE_PERSONAL_DAYS_FRACTION_OF_RENTED = 0.10
-PERSONAL_USE_MAX_RENTED_DAYS = 14
 
 
 def get_annual_rented_days(deck: dict[str, Any] | None = None) -> float:
@@ -68,12 +64,10 @@ def get_tax_use_class(
     if annual_personal_days is None:
         annual_personal_days = get_annual_personal_days(deck)
 
-    if annual_rented_days <= PERSONAL_USE_MAX_RENTED_DAYS:
+    rule = load_federal_layer().vacation_home
+    if annual_rented_days <= rule["max_excluded_rented_days"]:
         return "personal_use"
-    if (
-        annual_personal_days > MIXED_USE_PERSONAL_DAYS_THRESHOLD
-        or annual_personal_days > MIXED_USE_PERSONAL_DAYS_FRACTION_OF_RENTED * annual_rented_days
-    ):
+    if annual_personal_days > max(rule["personal_days_floor"], rule["personal_fraction_of_rented_days"] * annual_rented_days):
         return "mixed_use"
     return "rental"
 

@@ -1,0 +1,108 @@
+# Federal (United States) tax layer. ALWAYS ON: every run uses it, whatever state/county/municipality
+# input_deck.yaml's taxes.jurisdiction selects. Read by src/condobuyuq2026/jurisdictions/ (FederalLayer).
+#
+# Statutory values only (the law), never household facts: those live in input_deck.yaml's taxes section.
+# Every value names its source under `sources` (keyed by field). Update this file when the law or the
+# yearly inflation tables change, and bump `as_of`.
+#
+# HORIZON ASSUMPTION: the bracket tables below are tax year 2026's and are used for EVERY year of the
+# horizon. The IRS indexes them for inflation each year and the deck's household_agi is also held flat,
+# so both are effectively in today's dollars. The SALT cap is the exception: its schedule is written into
+# the statute in nominal dollars, so it's applied by calendar year as legislated.
+
+name: United States (federal)
+level: federal
+model: federal_us
+as_of: 2026-11-24
+tax_year_basis: 2026
+filing_status: mfj                 # married filing jointly: the only status the tables below cover
+
+# [taxable income floor (USD), marginal rate] -- MFJ, tax year 2026.
+ordinary_brackets:
+  - [0, 0.10]
+  - [24800, 0.12]
+  - [100800, 0.22]
+  - [211400, 0.24]
+  - [403550, 0.32]
+  - [512450, 0.35]
+  - [768700, 0.37]
+standard_deduction: 32200
+
+# Long-term capital gains are stacked ON TOP of ordinary taxable income: [taxable income floor, rate].
+long_term_capital_gain_brackets:
+  - [0, 0.0]
+  - [98900, 0.15]
+  - [613700, 0.20]
+# Unrecaptured section 1250 gain (gain from depreciation taken, recaptured at sale) is taxed at the
+# ordinary rates, capped at this rate.
+unrecaptured_1250_max_rate: 0.25
+
+# Net Investment Income Tax: rate x the lesser of net investment income or MAGI over the threshold.
+# The threshold is fixed by statute (not inflation-indexed).
+niit:
+  rate: 0.038
+  magi_threshold: 250000
+
+# State-and-local-tax (SALT) itemized-deduction cap. cap_by_year/phasedown_threshold_by_year: 2026 is in
+# the statute; 2027-2029 follow its +1%/year rule (rounded). The cap is reduced by phasedown_rate x
+# (MAGI - threshold), never below floor. From the year after the last listed year it reverts to
+# after_last_year with no phase-down.
+salt_cap:
+  cap_by_year: {2025: 40000, 2026: 40400, 2027: 40804, 2028: 41212, 2029: 41624}
+  phasedown_threshold_by_year: {2025: 500000, 2026: 505000, 2027: 510050, 2028: 515150, 2029: 520302}
+  phasedown_rate: 0.30
+  floor: 10000
+  after_last_year: 10000
+
+# Section 121 primary-residence exclusion (MFJ). Depreciation taken after May 6, 1997 is never excluded
+# (it's recaptured first).
+section_121:
+  exclusion: 500000
+  min_ownership_and_use_years: 2
+
+# Section 280A vacation-home day-count rules (read by classification.py for tax_use_class):
+#   rented <= max_excluded_rented_days            -> personal_use (rent excluded, nothing deducted)
+#   personal days > max(personal_days_floor,
+#       personal_fraction_of_rented_days x rented) -> mixed_use (a residence: deductions capped at rent)
+#   otherwise                                     -> rental
+vacation_home:
+  max_excluded_rented_days: 14
+  personal_days_floor: 14
+  personal_fraction_of_rented_days: 0.10
+
+# Mortgage interest on the PERSONAL share is deductible (itemized) only if the unit is a qualified
+# residence, i.e. it counts as a home under the day-count rule above. In the `rental` class it doesn't.
+qualified_residence_interest_classes: [personal_use, mixed_use]
+
+# Depreciation of the building. A unit whose average guest stay is <= transient_max_average_stay_nights
+# is used "on a transient basis", so it is not a dwelling unit -> nonresidential real property.
+depreciation:
+  residential_rental_years: 27.5
+  nonresidential_years: 39.0
+  transient_max_average_stay_nights: 30
+
+# Passive-activity rules (section 469), used only in the `rental` class (mixed_use is governed by 280A).
+#   average guest stay <= not_rental_activity_max_average_stay_nights -> NOT a "rental activity": losses
+#     are passive unless the owner materially participates (then they offset other income);
+#   longer stays -> a rental activity: passive, with the rental special allowance (active participation),
+#     phased out by allowance_phaseout_rate x (MAGI - allowance_phaseout_start_magi).
+# Suspended passive losses are released in full when the property is sold.
+passive_activity:
+  not_rental_activity_max_average_stay_nights: 7
+  rental_special_allowance: 25000
+  allowance_phaseout_start_magi: 100000
+  allowance_phaseout_rate: 0.5
+
+sources:
+  ordinary_brackets: https://www.irs.gov/newsroom/irs-releases-tax-inflation-adjustments-for-tax-year-2026-including-amendments-from-the-one-big-beautiful-bill
+  standard_deduction: https://www.irs.gov/newsroom/working-families-tax-cuts-individuals-and-workers
+  long_term_capital_gain_brackets: https://www.irs.gov/pub/irs-drop/rp-25-32.pdf
+  unrecaptured_1250_max_rate: https://www.irs.gov/publications/p523
+  niit: https://www.irs.gov/taxtopics/tc559
+  salt_cap: https://www.thetaxadviser.com/issues/2026/mar/cap-raised-strings-attached-the-2025-salt-shake-up.html
+  section_121: https://www.irs.gov/publications/p523
+  vacation_home: https://www.irs.gov/publications/p527
+  qualified_residence_interest_classes: https://www.irs.gov/publications/p936
+  depreciation: https://www.thetaxadviser.com/issues/2012/oct/clinic-story-03.html
+  passive_activity: https://www.irs.gov/publications/p925
+  passive_activity_seven_day_rule: https://www.ecfr.gov/current/title-26/chapter-I/subchapter-A/part-1/subject-group-ECFR53de09ff5f206e9/section-1.469-1T

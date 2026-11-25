@@ -1,0 +1,76 @@
+# Colorado state tax layer. Used two ways by src/condobuyuq2026/jurisdictions/ (ColoradoState):
+#   - as the PROPERTY state when input_deck.yaml's taxes.jurisdiction.state is CO: taxes Colorado-source
+#     income (rent, sale gain) for residents and nonresidents alike, and supplies the property-tax model;
+#   - as the RESIDENCE state when scenario.residency_state is CO.
+# Statutory values only; each one's source is listed under `sources`. Update yearly and bump `as_of`.
+
+name: Colorado
+level: state
+model: colorado
+as_of: 2026-11-24
+
+income_tax:
+  # Colorado taxable income starts from federal taxable income (state additions/subtractions that don't
+  # apply to this property are ignored). Capital gains and depreciation recapture are ordinary income.
+  base: federal_taxable_income
+  capital_gains_as_ordinary_income: true
+  # [Colorado taxable income floor (USD), rate], by tax year; a year after the last listed one uses the
+  # last table. 2026: flat 4.4%. 2027 on: Amendment 87 (passed Nov 2026) graduated rates, the same
+  # brackets for every filing status, not inflation-indexed. Certified result and the Department of
+  # Revenue's own tables still to confirm.
+  brackets_by_year:
+    2026:
+      - [0, 0.044]
+    2027:
+      - [0, 0.037]
+      - [25000, 0.042]
+      - [100000, 0.044]
+      - [500000, 0.074]
+      - [750000, 0.079]
+      - [1000000, 0.084]
+  # Nonresidents (Form DR 0104PN): the tax computed on ALL income as if a resident, times
+  # Colorado-source income / federal AGI.
+  nonresident_method: apportion_by_source_income
+  # Statutory residency: a permanent place of abode here AND more than six months of the year in the
+  # state makes a non-domiciled person a full-year resident. Used only for a warning flag.
+  statutory_residency_days: 183
+
+property_tax:
+  # Colorado's two-step mechanic (see jurisdictions/property_tax.py, ColoradoResidentialPropertyTax):
+  # each component's assessed value = (actual value - its value reduction) x its assessment rate; tax =
+  # assessed value x that component's mill levy. The mill levies themselves are property-specific
+  # (set per tax area, printed on the parcel's tax bill) and entered in input_deck.yaml's
+  # carrying_costs.property_tax.mill_levy, keyed by the component names below.
+  model: colorado_residential
+  # Only residential exists in current law for an STR condo: no Colorado law ties property-tax
+  # classification to rental activity (HB24-1299 and SB24-033 both died in 2024).
+  classification: residential
+  components:
+    local:   # every levy that isn't a school district's
+      # 2026 on: 6.8% (it would have been 6.7% had statewide value growth exceeded 5%; the 2026 school
+      # rate staying at 7.05% confirms the <=5% case).
+      assessment_rate_by_year: {2026: 0.068}
+      # Actual value is first reduced by the lesser of fraction x value or cap (cap inflation-adjusted at
+      # each later reassessment cycle; held at the base figure here).
+      actual_value_reduction: {fraction: 0.10, cap: 70000}
+    school:
+      assessment_rate_by_year: {2026: 0.0705}
+
+# Information only (not used in any calculation): shown in the run report and the GUI.
+guest_taxes:
+  state_sales_tax: 0.029          # charged to STR guests (<30 nights); a pass-through, not owner income
+notes:
+  - "Capital-gain subtraction: none for a condo (since 2022 it covers agricultural land only)."
+  - "Nonresident sellers: the closing agent withholds the lesser of 2% of price or net proceeds on sales over $100,000; it's credited back on the Colorado return (cash timing only, not modeled)."
+
+sources:
+  income_tax: https://tax.colorado.gov/income-tax-topics-part-year-residents-nonresidents
+  brackets_by_year_2026: https://tax.colorado.gov/individual-income-tax-guide
+  brackets_by_year_2027: https://www.hanson-cpa.com/colorado-voters-approve-graduated-income-tax-beginning-in-2027/
+  amendment_87_result: https://coloradosun.com/2026/11/06/amendment-87-results-passes-graduated-income-tax/
+  statutory_residency_days: https://tax.colorado.gov/individual-income-tax-guide
+  property_tax: https://leg.colorado.gov/bills/hb24b-1001
+  classification: https://leg.colorado.gov/bills/sb24-033
+  capital_gain_subtraction: https://Tax.Colorado.Gov/sites/tax/files/documents/ITT_Capital_Gain_Subtraction_Feb_2022.pdf
+  nonresident_sale_withholding: https://tax.colorado.gov/sites/default/files/documents/DR1083_2025.pdf
+  guest_taxes: https://keystone.colorado.gov/departments/finance-department

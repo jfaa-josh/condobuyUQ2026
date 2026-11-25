@@ -7,10 +7,9 @@ deck (see its own docstring), not computing derived business quantities from it.
 be the first of one such computation module per deck section (financing, carrying_costs, exit,
 ...) as the backend gets built out stage by stage -- see .claude/implementation-plan.md.
 
-NOTE on land/building value: acquisition.land_fraction (see input_deck.get_acquisition_inputs) is
-just the assessor's land-vs-improvement RATIO -- on its own it's not an acquisition-stage cost, it
-only matters once something actually depreciates the building over time (the future taxes/exit
-stage). Not computed here; revisit alongside that stage instead of guessing its shape now.
+NOTE on land/building value: acquisition.percent_improved (the listing sheet's "% Improved", read as
+building_fraction by input_deck.get_acquisition_inputs) isn't an acquisition-stage cost; it only sets
+the depreciable share of the basis, used by taxes.py.
 """
 
 from __future__ import annotations

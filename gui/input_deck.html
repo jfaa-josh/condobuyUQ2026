@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
-   One narrow column: sticky section nav, then one panel per deck section (1-7 built, 8-13 placeholders).
+   One narrow column: sticky section nav, then one panel per deck section (1-9 built, 10-13 placeholders).
    Every section is rendered from the SECTIONS schema in the script below, and all values live in one
    `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
 :root {
@@ -212,7 +212,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   <header>
     <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
     <h1>Buy vs. Rent Input Deck</h1>
-    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–8 are editable here. Sections 9–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–9 are editable here. Sections 10–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
   </header>
 
   <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
@@ -259,7 +259,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     },
     acquisition: {
       purchase_closing_costs: { fixed_fees: 2500, percent_of_price: 0.0 },
-      land_fraction: 0.0,
+      percent_improved: 100,
       personal_cash_at_closing: 200000,
       family_loan: 100000,
       initial_furnishing: 0
@@ -278,10 +278,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
           latent: "home_price",
           validation_data_source: "166_Argentine_Ct_Unit1433_keystone_mkt_value.csv"
         },
-        assessment_rate: {
-          local: { rate: 0.068, mill_levy: 0.038219 },
-          school: { rate: 0.0705, mill_levy: 0.015343 }
-        }
+        mill_levy: { local: 0.038219, school: 0.015343 }
       },
       hoa_dues_annual: { initial_annual_dues: 8700, initial_annual_association_dues: 325, growth: { latent: "construction_cost" } },
       special_assessment: {
@@ -354,6 +351,15 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       personal_use_days_by_month: { jan: 7, feb: 0, mar: 0, apr: 0, may: 0, jun: 3, jul: 7, aug: 0, sep: 0, oct: 0, nov: 0, dec: 7 },
       alternate_lodging_cost_by_month: { jan: 3200, feb: 3200, mar: 2800, apr: 1600, may: 1300, jun: 1800, jul: 2100, aug: 2000, sep: 1600, oct: 1300, nov: 1700, dec: 3200 },
       alternate_lodging_growth_latent: "adr"
+    },
+    taxes: {
+      jurisdiction: { state: "CO", county: "summit", municipality: "keystone" },
+      filing_status: "mfj",
+      household_agi: 450000,
+      other_itemized_deductions: 0,
+      other_salt_paid: 6000,
+      average_guest_stay_nights: 4,
+      owner_materially_participates: false
     }
   };
 
@@ -368,6 +374,49 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   // Growth/trend drivers a field can name: the three founding processes, then the derived latents.
   const LATENT_OPTIONS = ["general", "home_price", "market", "construction_cost", "insurance", "maintenance", "adr", "utilities"];
+
+  // Tax law: a hand MIRROR of data/tax_jurisdictions/ (the run reads those files; this page can't yet).
+  // Keep in sync when a data file changes or a place is added. Rates are fractions, tables [[floor, rate], ...].
+  const TAX_FEDERAL = {
+    name: "United States (federal)", as_of: "2026-11-24",
+    ordinary: [[0, 0.10], [24800, 0.12], [100800, 0.22], [211400, 0.24], [403550, 0.32], [512450, 0.35], [768700, 0.37]],
+    standard_deduction: 32200,
+    ltcg: [[0, 0.0], [98900, 0.15], [613700, 0.20]],
+    niit: { rate: 0.038, magi_threshold: 250000 },
+    salt_2026: { cap: 40400, threshold: 505000, rate: 0.30, floor: 10000 },
+    depreciation: { residential: 27.5, nonresidential: 39, transient_max_nights: 30 },
+    not_rental_activity_max_nights: 7,
+    vacation_home: { max_excluded_rented_days: 14, personal_days_floor: 14, personal_fraction_of_rented: 0.10 },
+    source: "https://www.irs.gov/publications/p527"
+  };
+  const TAX_JURISDICTIONS = {
+    CO: {
+      name: "Colorado", as_of: "2026-11-24", file: "CO/state.yaml",
+      income_tax: { 2026: [[0, 0.044]], 2027: [[0, 0.037], [25000, 0.042], [100000, 0.044], [500000, 0.074], [750000, 0.079], [1000000, 0.084]] },
+      property_tax: { local: { rate: 0.068, reduction: { fraction: 0.10, cap: 70000 } }, school: { rate: 0.0705 } },
+      guest_taxes: { "state sales": 0.029 },
+      adds: "Income tax: flat 4.4% in 2026, graduated 3.7–8.4% from 2027 (Amendment 87); nonresidents pay on the Colorado share. Property tax: local 6.8% of value after −min(10%, $70k), school 7.05%.",
+      source: "https://leg.colorado.gov/bills/hb24b-1001",
+      counties: {
+        summit: {
+          name: "Summit County", as_of: "2026-11-24", file: "CO/summit/county.yaml",
+          guest_taxes: { "county sales": 0.02, "Summit Stage transit": 0.0075, "housing authority": 0.00725 },
+          adds: "No county income tax. Mill levies vary by tax area (enter the parcel's in section 6).",
+          source: "https://keystone.colorado.gov/departments/finance-department",
+          municipalities: {
+            keystone: {
+              name: "Town of Keystone", as_of: "2026-11-24", file: "CO/summit/keystone/municipality.yaml",
+              guest_taxes: { "town lodging": 0.02 },
+              adds: "No town income tax; levies 0 mills; STR license from the Town.",
+              source: "https://keystone.colorado.gov/lodging-tax-information"
+            }
+          }
+        }
+      }
+    }
+  };
+  // Residence states (scenario.residency_state): their own income tax on a resident's whole return.
+  const RESIDENCE_STATES = { FL: { name: "Florida", income_tax: null }, CO: { name: "Colorado", income_tax: TAX_JURISDICTIONS.CO.income_tax } };
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -426,7 +475,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
           { path: "acquisition.initial_furnishing", label: "Initial furnishing", kind: "constant", type: "money", step: 500, hint: "One-time STR setup cost. Kept separate from total cash outlay and not depreciated." }
         ]},
         { title: "Tax basis", fields: [
-          { path: "acquisition.land_fraction", label: "Land fraction", kind: "constant", type: "percent", step: 1, max: 100, hint: "The assessor's land ÷ (land + improvements). Land is not depreciable." }
+          { path: "acquisition.percent_improved", label: "% Improved", kind: "constant", type: "number", unit: "%", step: 1, max: 100, hint: "From the property/listing sheet: the building's share of the value. Only the building is depreciated (section 9). A condo sheet typically shows 100." }
         ]}
       ],
       preview: previewAcquisition
@@ -458,11 +507,9 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
           { path: "carrying_costs.property_tax.market_value.latent", label: "Trend driver", kind: "constant", type: "select", options: LATENT_OPTIONS, hint: "Projects later reassessments. Calibrated to this property with the validation file below." },
           { path: "carrying_costs.property_tax.market_value.validation_data_source", label: "Past reassessments file", kind: "constant", type: "text", wide: true, hint: "Filename under data/manual/ with this property's past assessed values (format in data/manual/README.md)." }
         ]},
-        { title: "Property tax · assessment · tax = value × rate × mill levy (local on 90% of value, school on 100%)", fields: [
-          { path: "carrying_costs.property_tax.assessment_rate.local.rate", label: "Local assessment rate", kind: "constant", type: "percent", step: 0.01, max: 100 },
-          { path: "carrying_costs.property_tax.assessment_rate.local.mill_levy", label: "Local mill levy", kind: "constant", type: "number", step: 0.000001, max: 1, hint: "As a fraction of assessed value: 38.219 mills = 0.038219." },
-          { path: "carrying_costs.property_tax.assessment_rate.school.rate", label: "School assessment rate", kind: "constant", type: "percent", step: 0.01, max: 100 },
-          { path: "carrying_costs.property_tax.assessment_rate.school.mill_levy", label: "School mill levy", kind: "constant", type: "number", step: 0.000001, max: 1, hint: "Same units as the local mill levy." }
+        { title: "Property tax · this parcel's mill levies · assessment rates come from the state layer (section 9)", fields: [
+          { path: "carrying_costs.property_tax.mill_levy.local", label: "Local mill levy", kind: "constant", type: "number", step: 0.000001, max: 1, hint: "Every levy except the school district's, from the parcel's tax bill, as a fraction of assessed value: 38.219 mills = 0.038219. Levies are set per tax area, so they can differ within one town. The Town of Keystone itself levies 0." },
+          { path: "carrying_costs.property_tax.mill_levy.school", label: "School mill levy", kind: "constant", type: "number", step: 0.000001, max: 1, hint: "The school district's levy, same units." }
         ]},
         { title: "HOA dues · today's actual bills, grown together", fields: [
           { path: "carrying_costs.hoa_dues_annual.initial_annual_dues", label: "Annual dues", kind: "constant", type: "money", step: 50, hint: "The regular monthly-billed dues, annualized." },
@@ -536,9 +583,33 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       ],
       preview: previewPersonal
     },
-    { n: 9, id: "taxes", title: "Taxes", soon: true,
-      desc: "Federal and state tax treatment of both branches, depreciation, recapture, and passive-loss rules.",
-      keys: ["filing_status", "federal_marginal_rate", "niit_applies", "niit_rate", "itemizes_deductions", "state_tax_profiles", "salt_cap", "depreciation_years_building", "recapture_rate", "ltcg_rate", "passive_loss_treatment"] },
+    {
+      n: 9, id: "taxes", title: "Taxes",
+      intro: "How the condo changes your household's income taxes. Each year the run works out your whole federal and state return twice, without the condo and with it; the difference is the condo's effect, at the sale too. Tax LAW isn't entered here: it comes from sourced data layers (data/tax_jurisdictions/) that you switch on below. Only facts about your household and how the unit is rented go here.",
+      groups: [
+        { title: "Where the property is · tax layers, outermost first (federal is always on)", fields: [
+          { path: "taxes.jurisdiction.state", label: "State", kind: "constant", type: "custom", render: jurisdictionSelect("state"),
+            hint: "Must match the property state (section 1)." },
+          { path: "taxes.jurisdiction.county", label: "County", kind: "constant", type: "custom", render: jurisdictionSelect("county"),
+            hint: "Active once a state is chosen. None = no county layer." },
+          { path: "taxes.jurisdiction.municipality", label: "Municipality", kind: "constant", type: "custom", render: jurisdictionSelect("municipality"),
+            hint: "Active once a county is chosen. None = unincorporated." }
+        ]},
+        { title: "Your household · everything except this condo", fields: [
+          { path: "taxes.household_agi", label: "Household AGI", kind: "constant", type: "money", step: 1000, hint: "Adjusted gross income from everything except this condo, per year, in today's dollars. The condo's income and sale gain are added on top to find their brackets." },
+          { path: "taxes.other_itemized_deductions", label: "Other itemized deductions", kind: "constant", type: "money", step: 500, hint: "Without the condo, excluding state/local taxes: main-home mortgage interest, charity. Decides itemizing vs. the standard deduction each year." },
+          { path: "taxes.other_salt_paid", label: "Other state & local taxes paid", kind: "constant", type: "money", step: 500, hint: "Main-home property tax, state income tax on your other income. Shares the SALT cap with the condo's personal-share property tax." },
+          { path: "taxes.filing_status", label: "Filing status", kind: "constant", type: "fixed", hint: "Married filing jointly: the only status the federal tables cover." }
+        ]},
+        { title: "How the unit is rented", fields: [
+          { path: "taxes.average_guest_stay_nights", label: "Average guest stay", kind: "constant", type: "number", unit: "nights", min: 0.5, max: 365, step: 0.5,
+            hint: "Your expected nights per booking. 7 or fewer: not a \u201crental activity\u201d, so a pure-rental loss is passive unless you materially participate. 30 or fewer: transient use, so the building depreciates over 39 years, not 27.5." },
+          { path: "taxes.owner_materially_participates", label: "You materially participate", kind: "constant", type: "select", bool: true, options: [[false, "no"], [true, "yes"]],
+            hint: "E.g. 500+ hours a year, or 100+ and more than anyone else (managers and cleaners included). With a full-service manager: no. Only matters in the rental class with stays of 7 nights or fewer." }
+        ]}
+      ],
+      preview: previewTaxes
+    },
     { n: 10, id: "rent_reference", title: "Rent reference", soon: true,
       desc: "What renting a comparable place costs in the reference branch.",
       keys: ["seasonal_lease_cost"] },
@@ -586,7 +657,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       const opts = f.type === "month" ? MONTHS.map((m, i) => [i + 1, (i + 1) + " · " + m]) : f.options.map((o) => Array.isArray(o) ? o : [o, o]);
       opts.forEach(([v, t]) => { const o = el("option", null, t); o.value = v; s.append(o); });
       s.value = get(f.path);
-      s.addEventListener("change", () => commit(f.type === "month" || f.numeric ? +s.value : s.value));
+      s.addEventListener("change", () => commit(f.type === "month" || f.numeric ? +s.value : f.bool ? s.value === "true" : s.value));
       wrap.append(s);
     } else if (f.type === "text") {
       const i = el("input"); i.type = "text"; i.id = id; i.value = get(f.path); i.spellcheck = false;
@@ -801,7 +872,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       const r = acqFor(p); const tr = el("tr");
       const loanCell = r.loan < 0 ? (() => { const s = el("span", "pill bad", usd.format(r.loan) + " · invalid"); return s; })() : usd.format(r.loan);
       tr.append(td(usd.format(p), "num"), td(usd.format(r.closing), "num"), td(usd.format(r.outlay), "num"), td(loanCell, "num"),
-        td(pct(r.loan / p, 1), "num dim"), td(usd.format(p * (1 - a.land_fraction)), "num dim"));
+        td(pct(r.loan / p, 1), "num dim"), td(usd.format((p + r.closing) * a.percent_improved / 100), "num dim"));
       return tr;
     });
     box.append(table([["Price", 1], ["Closing costs", 1], ["Cash outlay", 1], ["Loan amount", 1], ["LTV", 1], ["Building basis", 1]], rows));
@@ -1144,6 +1215,17 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     });
   }
 
+  // Tax use class, same rule as classification.get_tax_use_class (IRC 280A day counts, federal layer thresholds),
+  // on section 7's approximate rented nights. Returns { cls, personal, rented } (cls "—" with no sources).
+  function approxTaxClass() {
+    const days = deck.personal_use.personal_use_days_by_month, fit = rentalMonthFit(), vh = TAX_FEDERAL.vacation_home;
+    let personal = 0, rented = 0;
+    MONTH_KEYS.forEach((m, i) => { const avail = DAYS[i] - days[m]; personal += days[m]; if (fit) rented += Math.min(fit[i].occ * avail, avail); });
+    const cls = !fit ? "—" : rented <= vh.max_excluded_rented_days ? "personal_use"
+      : personal > Math.max(vh.personal_days_floor, vh.personal_fraction_of_rented * rented) ? "mixed_use" : "rental";
+    return { cls, personal, rented };
+  }
+
   function previewPersonal(box) {
     const pu = deck.personal_use, days = pu.personal_use_days_by_month, cost = pu.alternate_lodging_cost_by_month;
     const fit = rentalMonthFit();
@@ -1161,8 +1243,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     tot.append(td("Year"), td("365", "num dim"), td(String(personalTot), "num"), td(String(availTot), "num"),
       td(fit ? rentedTot.toFixed(0) : "—", "num dim"), td(usd.format(lodgingTot), "num"));
     rows.push(tot);
-    // Tax use class, same rule as classification.get_tax_use_class (IRC 280A day counts).
-    const cls = !fit ? "—" : rentedTot <= 14 ? "personal_use" : (personalTot > 14 || personalTot > 0.1 * rentedTot) ? "mixed_use" : "rental";
+    const cls = approxTaxClass().cls;
     const stats = el("div", "stat-row");
     [[personalTot + " nights", "your own use per year"], [availTot + " nights", "left available to rent"],
      [usd.format(lodgingTot), "alternate lodging, year 1 (before growth)"], [cls, "tax use class (approx.)"]]
@@ -1174,14 +1255,125 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
         + "else personal nights > 14 or > 10% of rented → mixed_use; else rental. The run classifies on median rented nights, so a borderline case can differ."));
   }
 
+  // ---------------------------------------------------------------------------
+  // Section 9: tax layers (mirror of data/tax_jurisdictions/) and preview
+  // ---------------------------------------------------------------------------
+  const marginalRate = (income, tbl) => tbl.reduce((r, [floor, rate]) => (income >= floor ? rate : r), tbl[0][1]);
+  const ratePct = (r) => (r * 100).toFixed(2).replace(/\.?0+$/, "") + "%";  // 0.2 -> "20%", 0.044 -> "4.4%", 0 -> "0%"
+  const tableFor = (byYear, year) => { const ys = Object.keys(byYear).map(Number).sort((a, b) => a - b); return byYear[ys.filter((y) => y <= year).pop() ?? ys[0]]; };
+
+  // The selected layers (state, county, municipality objects or null), mirroring jurisdictions.load_tax_jurisdiction.
+  function taxLayers() {
+    const j = deck.taxes.jurisdiction;
+    const state = j.state ? TAX_JURISDICTIONS[j.state] : null;
+    const county = state && j.county ? state.counties[j.county] : null;
+    const muni = county && j.municipality ? county.municipalities[j.municipality] : null;
+    return { state, county, muni };
+  }
+
+  // Property tax via the state layer's model (CO: local on value − min(10%, $70k), school on full value) × the deck's mill levies.
+  function propertyTaxFor(value) {
+    const st = taxLayers().state, ml = deck.carrying_costs.property_tax.mill_levy;
+    if (!st) return 0;
+    const lp = st.property_tax.local, sp = st.property_tax.school;
+    const localBase = value - Math.min(lp.reduction.fraction * value, lp.reduction.cap);
+    return localBase * lp.rate * ml.local + value * sp.rate * ml.school;
+  }
+
+  // One cascading combo box per layer: state (only CO) → county enables (only Summit) → municipality enables (only Keystone).
+  function jurisdictionSelect(level) {
+    return (wrap, onChange, err) => {
+      const sel = el("select"); sel.setAttribute("aria-label", "Tax layer: " + level);
+      const j = deck.taxes.jurisdiction;
+      const paint = () => {
+        const { state, county } = taxLayers();
+        let opts, enabled;
+        if (level === "state") {
+          opts = [["", "— choose a state —"]].concat(Object.entries(TAX_JURISDICTIONS).map(([k, v]) => [k, v.name + " (" + k + ")"]));
+          enabled = true;
+        } else if (level === "county") {
+          opts = [["", "— none (no county layer) —"]].concat(state ? Object.entries(state.counties).map(([k, v]) => [k, v.name]) : []);
+          enabled = !!state;
+        } else {
+          opts = [["", "— none (unincorporated) —"]].concat(county ? Object.entries(county.municipalities).map(([k, v]) => [k, v.name]) : []);
+          enabled = !!county;
+        }
+        sel.textContent = "";
+        opts.forEach(([v, t]) => { const o = el("option", null, t); o.value = v; sel.append(o); });
+        sel.value = j[level] || "";
+        sel.disabled = !enabled;
+        err.textContent = level === "state" && !j.state ? "Choose the property's state." : "";
+      };
+      sel.addEventListener("change", () => {
+        j[level] = sel.value || null;
+        if (level === "state") { j.county = null; j.municipality = null; }
+        if (level === "county") j.municipality = null;
+        onChange();
+      });
+      paint(); wrap._repaint = paint;
+      wrap.append(sel);
+    };
+  }
+
+  function previewTaxes(box) {
+    const t = deck.taxes, s = deck.scenario, fed = TAX_FEDERAL;
+    const { state, county, muni } = taxLayers();
+    if (!state) { box.append(el("span", "pill bad", "No state chosen: the run needs taxes.jurisdiction.state.")); return; }
+    const path = el("div", "ids");
+    path.append(el("span", "pill ok", ["Federal", state.name, county && county.name, muni && muni.name].filter(Boolean).join(" › ")));
+    if (t.jurisdiction.state !== s.property_state) path.append(el("span", "pill bad", "state ≠ property state " + s.property_state + " (section 1)"));
+    const layers = [state, county, muni].filter(Boolean);
+    const guest = layers.reduce((a, l) => a + Object.values(l.guest_taxes).reduce((x, y) => x + y, 0), 0);
+
+    const { cls } = approxTaxClass();
+    const stay = t.average_guest_stay_nights;
+    const deprYears = stay <= fed.depreciation.transient_max_nights ? fed.depreciation.nonresidential : fed.depreciation.residential;
+    const losses = cls !== "rental" ? (cls === "mixed_use" ? "capped at rent" : "n/a")
+      : stay <= fed.not_rental_activity_max_nights ? (t.owner_materially_participates ? "nonpassive" : "passive") : "passive, $25k allowance";
+    const stats = el("div", "stat-row");
+    [[cls, "tax use class (approx.)"], [deprYears + " yr", "building depreciation"], [losses, "rental losses"], [pct(guest, 3), "STR guest taxes (guest-paid)"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+
+    const link = (url, text) => { const a = el("a", null, text); a.href = url; a.target = "_blank"; a.rel = "noopener"; return a; };
+    const guestText = (l) => Object.keys(l.guest_taxes).length ? " Guest taxes: " + Object.entries(l.guest_taxes).map(([k, v]) => k + " " + pct(v, 3)).join(", ") + "." : "";
+    const layerRows = [["Federal", fed.as_of, "Brackets, capital gains 0/15/20%, 3.8% NIIT, SALT cap, depreciation, passive and vacation-home rules.", fed.source, "federal.yaml"]]
+      .concat(layers.map((l) => [l.name, l.as_of, l.adds + guestText(l), l.source, l.file]))
+      .map(([n, asOf, adds, src, file]) => {
+        const tr = el("tr"); const c = el("td"); c.style.whiteSpace = "normal"; c.style.minWidth = "260px"; c.textContent = adds;
+        tr.append(td(n), td(asOf, "dim"), c, td(file, "dim"), td(link(src, "source")));
+        return tr;
+      });
+
+    // The household's own position (without the condo): what the condo's income and gains land on.
+    const salt = Math.max(fed.salt_2026.floor, fed.salt_2026.cap - fed.salt_2026.rate * Math.max(0, t.household_agi - fed.salt_2026.threshold));
+    const itemized = t.other_itemized_deductions + Math.min(salt, t.other_salt_paid);
+    const ti = Math.max(0, t.household_agi - Math.max(fed.standard_deduction, itemized));
+    const stRate = (year) => state.income_tax ? ratePct(marginalRate(ti, tableFor(state.income_tax, year))) : "none";
+    const homeRows = s.residency_state.map((r) => {
+      const res = RESIDENCE_STATES[r];
+      const resident = r === t.jurisdiction.state;
+      const tr = el("tr");
+      tr.append(td(res ? res.name : r), td(ratePct(marginalRate(ti, fed.ordinary)), "num"), td(ratePct(marginalRate(ti, fed.ltcg)), "num"),
+        td(t.household_agi > fed.niit.magi_threshold ? "yes" : "no"), td(itemized > fed.standard_deduction ? "itemizes" : "standard", "dim"),
+        td(stRate(2026) + " → " + stRate(2027), "num"), td(resident ? "all income" : "its share of AGI", "dim"));
+      return tr;
+    });
+
+    box.append(path, stats,
+      el("p", "hint", "Layers in use (the run reads the data files; this page shows a copy):"),
+      table([["Layer"], ["As of"], ["Adds"], ["Data file (data/tax_jurisdictions/)"], ["Source"]], layerRows),
+      el("p", "hint", "Your household without the condo: taxable income ≈ " + usd.format(ti) + "; 2026 SALT cap at your income " + usd.format(salt) + ". Marginal rates the condo's income starts from:"),
+      table([["Residence"], ["Federal", 1], ["Cap. gains", 1], ["3.8% NIIT"], ["Deduction"], [state.name + " 2026 → 2027+", 1], [state.name + " taxes"]], homeRows),
+      el("p", "hint", "Approximate: marginal rates at your current income only. The run computes each year's whole return with and without the condo (bracket jumps in a sale year included) and saves results/<scenario>/taxes/tax_effects_by_year.png."));
+  }
+
   function previewCarrying(box) {
     const c = deck.carrying_costs, pt = c.property_tax, u = c.utilities, sa = c.special_assessment;
-    const tax = pt.market_value.initial_price * (0.9 * pt.assessment_rate.local.rate * pt.assessment_rate.local.mill_levy
-      + pt.assessment_rate.school.rate * pt.assessment_rate.school.mill_levy);
+    const tax = propertyTaxFor(pt.market_value.initial_price, deck.scenario.closing_year);
     const hoa = c.hoa_dues_annual.initial_annual_dues + c.hoa_dues_annual.initial_annual_association_dues;
     const addOns = u.additional_flat_monthly.reduce((a, x) => a + (x.amount_usd || 0), 0) * 12;
     const util = u.initial_annual_average_monthly_cost * 12 + addOns;
-    const items = [["Property tax", tax, "assessor's value × rates × mill levies"], ["HOA dues", hoa, "dues + association charge"],
+    const items = [["Property tax", tax, "assessor's value × state rates (section 9) × mill levies"], ["HOA dues", hoa, "dues + association charge"],
       ["Insurance", c.insurance_annual.initial_guess_premium, "guess"], ["Maintenance", c.maintenance_annual.initial_guess_mean, "guess"],
       ["Utilities", util, "previous owner's average × 12" + (addOns ? " + new costs" : "")]];
     const total = items.reduce((a, [, v]) => a + v, 0);
@@ -1264,8 +1456,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     s.append(head);
 
     if (sec.soon) {
-      const p = el("div", "placeholder" + (sec.n === 9 ? " next" : ""));
-      p.append(el("span", "eyebrow", sec.n === 9 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const p = el("div", "placeholder" + (sec.n === 10 ? " next" : ""));
+      p.append(el("span", "eyebrow", sec.n === 10 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
       const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
       s.append(p);
       host.append(s);

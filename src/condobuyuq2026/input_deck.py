@@ -141,10 +141,11 @@ def get_acquisition_inputs(deck: dict[str, Any] | None = None) -> dict[str, floa
     """Unwraps `acquisition`'s own `kind: constant` fields to plain values -- everything except
     purchase_price, which is a discoverability stub only (the real value comes from a scenario's
     own "purchase_price", see get_scenarios). Returns:
-    {"closing_costs_fixed_fees", "closing_costs_percent_of_price", "land_fraction",
+    {"closing_costs_fixed_fees", "closing_costs_percent_of_price", "building_fraction",
     "personal_cash_at_closing", "family_loan", "initial_furnishing"}, straight off
-    acquisition.purchase_closing_costs.fixed_fees/.percent_of_price, acquisition.land_fraction,
-    acquisition.personal_cash_at_closing, acquisition.family_loan, acquisition.initial_furnishing
+    acquisition.purchase_closing_costs.fixed_fees/.percent_of_price, acquisition.percent_improved
+    (the listing sheet's "% Improved", 0-100, returned as a 0-1 building_fraction -- the depreciable
+    share), acquisition.personal_cash_at_closing, acquisition.family_loan, acquisition.initial_furnishing
     respectively. total_cash_outlay (personal_cash_at_closing + family_loan) is DERIVED, not read
     here -- see acquisition.compute_acquisition_costs.
     """
@@ -154,7 +155,10 @@ def get_acquisition_inputs(deck: dict[str, Any] | None = None) -> dict[str, floa
     return {
         "closing_costs_fixed_fees": _constant(closing_costs["fixed_fees"]),
         "closing_costs_percent_of_price": _constant(closing_costs["percent_of_price"]),
-        "land_fraction": _constant(acquisition["land_fraction"]),
+        "building_fraction": _fraction(
+            _constant(acquisition["percent_improved"]), "acquisition.percent_improved", upper=100
+        )
+        / 100,
         "personal_cash_at_closing": _constant(acquisition["personal_cash_at_closing"]),
         "family_loan": _constant(acquisition["family_loan"]),
         "initial_furnishing": _constant(acquisition["initial_furnishing"]),
@@ -344,22 +348,22 @@ def get_personal_use_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any
     }
 
 
-def get_property_tax_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
-    """Unwraps `carrying_costs.property_tax.assessment_rate`'s local/school components (each its
-    own rate + mill_levy -- see that field's own deck comment). classification and the lodging
-    assessment rate are NOT here -- HARDCODED in carrying_costs.py (see that module's
-    PROPERTY_TAX_CLASSIFICATION/LODGING_ASSESSMENT_RATE constants and their own comments for why),
-    not deck fields, since 2026-09-26. Returns {"assessment_rate_local", "mill_levy_local",
-    "assessment_rate_school", "mill_levy_school"}. market_value has its own dedicated shape -- see
-    get_market_value_config."""
+def get_property_tax_inputs(deck: dict[str, Any] | None = None) -> dict[str, dict[str, float]]:
+    """Unwraps `carrying_costs.property_tax.mill_levy` -- the parcel's own levies, one per component of
+    the property state's property-tax model (CO: local, school), each a plain fraction >= 0. The
+    mechanic itself (assessment rates, value reductions, classification) comes from the tax
+    jurisdiction's state layer (jurisdictions.TaxJurisdiction.property_tax_model), which also checks the
+    component names match. Returns {"mill_levies": {component: fraction}}. market_value has its own
+    dedicated shape -- see get_market_value_config."""
     deck = deck if deck is not None else load_deck()
-    assessment_rate = deck["carrying_costs"]["property_tax"]["assessment_rate"]
-    return {
-        "assessment_rate_local": _constant(assessment_rate["local"]["rate"]),
-        "mill_levy_local": _constant(assessment_rate["local"]["mill_levy"]),
-        "assessment_rate_school": _constant(assessment_rate["school"]["rate"]),
-        "mill_levy_school": _constant(assessment_rate["school"]["mill_levy"]),
-    }
+    raw = deck["carrying_costs"]["property_tax"]["mill_levy"]
+    mill_levies = {}
+    for name, entry in raw.items():
+        value = _constant(entry)
+        if not _is_number(value) or value < 0:
+            raise ValueError(f"carrying_costs.property_tax.mill_levy.{name} must be a number >= 0, got {value!r}")
+        mill_levies[str(name)] = float(value)
+    return {"mill_levies": mill_levies}
 
 
 def get_hoa_dues_config(deck: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -623,26 +627,59 @@ def get_utilities_prior_config(deck: dict[str, Any] | None = None) -> dict[str, 
     }
 
 
+TAX_FILING_STATUSES = ("mfj",)
+
+
+def get_tax_jurisdiction_selection(deck: dict[str, Any] | None = None) -> dict[str, str | None]:
+    """Unwraps `taxes.jurisdiction` -> {"state", "county", "municipality"} (county/municipality may be
+    None = that layer off). Checks the shape and that state matches scenario.property_state; whether
+    the layers exist on disk is checked when jurisdictions.load_tax_jurisdiction loads them."""
+    deck = deck if deck is not None else load_deck()
+    raw = _constant(deck["taxes"]["jurisdiction"])
+    if not isinstance(raw, dict) or not raw.get("state"):
+        raise ValueError(f"taxes.jurisdiction must be {{state, county, municipality}} with a state, got {raw!r}")
+    unknown = set(raw) - {"state", "county", "municipality"}
+    if unknown:
+        raise ValueError(f"taxes.jurisdiction has unknown key(s) {sorted(unknown)}")
+    selection = {level: (str(raw[level]) if raw.get(level) else None) for level in ("state", "county", "municipality")}
+    if selection["municipality"] and not selection["county"]:
+        raise ValueError("taxes.jurisdiction: a municipality needs its county selected too")
+    property_state = _constant(deck["scenario"]["property_state"])
+    if selection["state"] != property_state:
+        raise ValueError(
+            f"taxes.jurisdiction.state={selection['state']!r} must match scenario.property_state={property_state!r}"
+        )
+    return selection
+
+
 def get_taxes_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Unwraps `taxes`' own `kind: constant` fields that taxes.py actually uses (not
-    filing_status/passive_loss_treatment/salt_cap -- see that module's docstring for what's
-    deliberately out of scope). Returns {"federal_marginal_rate", "niit_applies", "niit_rate",
-    "itemizes_deductions", "state_tax_profiles" ({"FL": {...}, "CO": {...}}),
-    "depreciation_years_building", "recapture_rate", "ltcg_rate", "sec121_exclusion",
-    "sec121_min_years"}."""
+    """Unwraps `taxes`' household facts (the law lives in data/tax_jurisdictions/, selected by
+    get_tax_jurisdiction_selection). Returns {"jurisdiction" (see get_tax_jurisdiction_selection),
+    "filing_status", "household_agi", "other_itemized_deductions", "other_salt_paid" (USD/year, >= 0),
+    "average_guest_stay_nights" (> 0), "owner_materially_participates" (bool)}."""
     deck = deck if deck is not None else load_deck()
     taxes = deck["taxes"]
+    filing_status = _constant(taxes["filing_status"])
+    if filing_status not in TAX_FILING_STATUSES:
+        raise ValueError(f"taxes.filing_status must be one of {TAX_FILING_STATUSES}, got {filing_status!r}")
+    dollars = {}
+    for name in ("household_agi", "other_itemized_deductions", "other_salt_paid"):
+        value = _constant(taxes[name])
+        if not _is_number(value) or value < 0:
+            raise ValueError(f"taxes.{name} must be a number >= 0 (USD/year), got {value!r}")
+        dollars[name] = float(value)
+    stay = _constant(taxes["average_guest_stay_nights"])
+    if not _is_number(stay) or stay <= 0:
+        raise ValueError(f"taxes.average_guest_stay_nights must be a number > 0, got {stay!r}")
+    participates = _constant(taxes["owner_materially_participates"])
+    if not isinstance(participates, bool):
+        raise ValueError(f"taxes.owner_materially_participates must be true or false, got {participates!r}")
     return {
-        "federal_marginal_rate": _constant(taxes["federal_marginal_rate"]),
-        "niit_applies": _constant(taxes["niit_applies"]),
-        "niit_rate": _constant(taxes["niit_rate"]),
-        "itemizes_deductions": _constant(taxes["itemizes_deductions"]),
-        "state_tax_profiles": _constant(taxes["state_tax_profiles"]),
-        "depreciation_years_building": _constant(taxes["depreciation_years_building"]),
-        "recapture_rate": _constant(taxes["recapture_rate"]),
-        "ltcg_rate": _constant(taxes["ltcg_rate"]),
-        "sec121_exclusion": _constant(taxes["sec121_exclusion"]),
-        "sec121_min_years": _constant(taxes["sec121_min_years"]),
+        "jurisdiction": get_tax_jurisdiction_selection(deck),
+        "filing_status": filing_status,
+        **dollars,
+        "average_guest_stay_nights": float(stay),
+        "owner_materially_participates": participates,
     }
 
 
