@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
-   One narrow column: sticky section nav, then one panel per deck section (1-10 built, 11-13 placeholders).
+   One narrow column: sticky section nav, then one panel per deck section (1-11 built, 12-13 placeholders).
    Every section is rendered from the SECTIONS schema in the script below, and all values live in one
    `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
 :root {
@@ -212,7 +212,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   <header>
     <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
     <h1>Buy vs. Rent Input Deck</h1>
-    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–10 are editable here. Sections 11–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–11 are editable here. Sections 12–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
   </header>
 
   <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
@@ -355,6 +355,12 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     rent_reference: {
       lease_cost_by_month: { jan: 2200, feb: 2200, mar: 2000, apr: 1200, may: 1000, jun: 1400, jul: 1600, aug: 1500, sep: 1200, oct: 1000, nov: 1300, dec: 2200 },
       lease_growth_latent: "adr"
+    },
+    capital_markets: {
+      initial_investment: null,
+      allocation: { market: 0.8, cash: 0.2 },
+      cash_yield: 0.04,
+      dividends: { paying_fraction: 1.0, yield: 0.013 }
     },
     taxes: {
       jurisdiction: { state: "CO", county: "summit", municipality: "keystone" },
@@ -628,9 +634,29 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       ],
       preview: previewRentReference
     },
-    { n: 11, id: "capital_markets", title: "Capital markets", soon: true,
-      desc: "How the rent branch invests personal_cash_at_closing.",
-      keys: ["initial_investment", "cash_allocation_fraction", "cash_yield", "portfolio_tax_drag"] },
+    {
+      n: 11, id: "capital_markets", title: "Capital markets",
+      intro: "The rent branch keeps your own cash instead of buying, and invests it: split at closing between a market account and a cash account, held to the horizon with no rebalancing, then sold. Interest and dividends are taxed every year and reinvested after tax; the market account's gain is taxed at the sale. Taxes use your residence state and the section 9 household facts.",
+      groups: [
+        { title: "What's invested and how it's split", fields: [
+          { path: "capital_markets.initial_investment", label: "Invested at closing", kind: "constant", type: "custom", render: investedAmount,
+            hint: "Your personal cash at closing (section 4), never the family loan: it wouldn't exist to invest if you rented." },
+          { path: "capital_markets.allocation", label: "Market / cash split", kind: "constant", type: "custom", render: allocationSplit,
+            hint: "Fractions of the amount above, adding up to 100%. Each account then grows on its own (no rebalancing)." }
+        ]},
+        { title: "Cash account", fields: [
+          { path: "capital_markets.cash_yield", label: "Cash interest rate", kind: "constant", type: "percent", step: 0.05, max: 20,
+            hint: "Annual rate, held constant. Taxed every year as ordinary income; the rest stays in cash." }
+        ]},
+        { title: "Market account · price growth from forecast_models.market, plus dividends", fields: [
+          { path: "capital_markets.dividends.paying_fraction", label: "Share that pays dividends", kind: "constant", type: "percent", step: 5, max: 100,
+            hint: "Of the market account. 100% = everything pays at the yield below." },
+          { path: "capital_markets.dividends.yield", label: "Dividend yield", kind: "constant", type: "percent", step: 0.05, max: 20,
+            hint: "Annual yield of the holdings that pay. The S&P 500's has been roughly 1.2–1.5% recently. Taxed every year as qualified dividends (capital-gain rates + 3.8% NIIT; ordinary rates in Colorado), then reinvested." }
+        ]}
+      ],
+      preview: previewCapitalMarkets
+    },
     { n: 12, id: "exit", title: "Exit", soon: true,
       desc: "Sell-side closing costs at the horizon.",
       keys: ["selling_costs"] },
@@ -1297,6 +1323,72 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   }
 
   // ---------------------------------------------------------------------------
+  // Section 11 editors and preview
+  // ---------------------------------------------------------------------------
+  // Read-only: the amount comes from acquisition.personal_cash_at_closing (repainted when section 4 changes).
+  function investedAmount(wrap) {
+    const box = el("div", "ids");
+    const paint = () => { box.textContent = ""; box.append(el("span", "pill neutral mono", usd.format(deck.acquisition.personal_cash_at_closing) + " · from section 4")); };
+    paint(); wrap._repaint = paint;
+    wrap.append(box);
+  }
+
+  // One input (market %), cash = 100% − market, so the two always add up to 1.
+  function allocationSplit(wrap, onChange, err) {
+    const a = deck.capital_markets.allocation;
+    const i = el("input"); i.type = "number"; i.min = 0; i.max = 100; i.step = 5; i.inputMode = "decimal";
+    i.value = +(a.market * 100).toFixed(4); i.setAttribute("aria-label", "Market share, percent");
+    const box = el("div", "affix"); box.append(el("span", null, "market"), i, el("span", null, "%"));
+    const cash = el("div", "ids");
+    const paint = () => { cash.textContent = ""; cash.append(el("span", "pill neutral", "cash " + ratePct(a.cash))); };
+    i.addEventListener("input", () => {
+      const v = parseFloat(i.value);
+      if (!Number.isFinite(v) || v < 0 || v > 100) { err.textContent = "Must be between 0 and 100."; return; }
+      err.textContent = "";
+      a.market = v / 100; a.cash = +(1 - v / 100).toFixed(10);
+      paint(); onChange();
+    });
+    paint();
+    wrap.append(box, cash);
+  }
+
+  // The household's federal taxable income WITHOUT the condo or the portfolio (section 9's household facts).
+  function householdTaxable() {
+    const t = deck.taxes, fed = TAX_FEDERAL;
+    const salt = Math.max(fed.salt_2026.floor, fed.salt_2026.cap - fed.salt_2026.rate * Math.max(0, t.household_agi - fed.salt_2026.threshold));
+    const itemized = t.other_itemized_deductions + Math.min(salt, t.other_salt_paid);
+    return { salt, itemized, ti: Math.max(0, t.household_agi - Math.max(fed.standard_deduction, itemized)) };
+  }
+
+  function previewCapitalMarkets(box) {
+    const cm = deck.capital_markets, s = deck.scenario, fed = TAX_FEDERAL, t = deck.taxes;
+    const invested = deck.acquisition.personal_cash_at_closing;
+    const market = invested * cm.allocation.market, cash = invested * cm.allocation.cash;
+    const divYield = cm.dividends.paying_fraction * cm.dividends.yield;
+    const interest = cash * (Math.pow(1 + cm.cash_yield / 12, 12) - 1), dividends = market * divYield;
+    const { ti } = householdTaxable();
+    const niit = t.household_agi > fed.niit.magi_threshold ? fed.niit.rate : 0;
+    const rows = s.residency_state.map((r) => {
+      const res = RESIDENCE_STATES[r];
+      const stateRate = res && res.income_tax ? marginalRate(ti, tableFor(res.income_tax, s.closing_year)) : 0;
+      const ordinary = marginalRate(ti, fed.ordinary) + niit + stateRate, qualified = marginalRate(ti, fed.ltcg) + niit + stateRate;
+      const tr = el("tr");
+      tr.append(td(res ? res.name : r), td(ratePct(ordinary), "num"), td(ratePct(qualified), "num"),
+        td(usd.format(interest * ordinary + dividends * qualified), "num"), td(ratePct(qualified) + "+", "num dim"));
+      return tr;
+    });
+    const stats = el("div", "stat-row");
+    [[usd.format(market) + " / " + usd.format(cash), "market / cash at closing"], [ratePct(divYield), "effective dividend yield"],
+     [usd.format(interest), "interest, year 1"], [usd.format(dividends), "dividends, year 1 (before growth)"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+    box.append(stats,
+      table([["Residence"], ["Interest rate", 1], ["Dividend rate", 1], ["Year-1 tax", 1], ["Sale-gain rate", 1]], rows),
+      el("p", "hint", "Approximate: marginal rates at your current income (federal + 3.8% NIIT if it applies + your residence state; investment income isn't Colorado-source for a nonresident). "
+        + "The run adds the market's price growth and its uncertainty (forecast_models.market), taxes each year's whole return with and without the portfolio, "
+        + "taxes the sale's gain on top of the final year (which can reach the 20% bracket), and saves results/rent_ref…/capital_markets/portfolio.png."));
+  }
+
+  // ---------------------------------------------------------------------------
   // Section 9: tax layers (mirror of data/tax_jurisdictions/) and preview
   // ---------------------------------------------------------------------------
   const marginalRate = (income, tbl) => tbl.reduce((r, [floor, rate]) => (income >= floor ? rate : r), tbl[0][1]);
@@ -1386,9 +1478,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       });
 
     // The household's own position (without the condo): what the condo's income and gains land on.
-    const salt = Math.max(fed.salt_2026.floor, fed.salt_2026.cap - fed.salt_2026.rate * Math.max(0, t.household_agi - fed.salt_2026.threshold));
-    const itemized = t.other_itemized_deductions + Math.min(salt, t.other_salt_paid);
-    const ti = Math.max(0, t.household_agi - Math.max(fed.standard_deduction, itemized));
+    const { salt, itemized, ti } = householdTaxable();
     const stRate = (year) => state.income_tax ? ratePct(marginalRate(ti, tableFor(state.income_tax, year))) : "none";
     const homeRows = s.residency_state.map((r) => {
       const res = RESIDENCE_STATES[r];
@@ -1497,8 +1587,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     s.append(head);
 
     if (sec.soon) {
-      const p = el("div", "placeholder" + (sec.n === 11 ? " next" : ""));
-      p.append(el("span", "eyebrow", sec.n === 11 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const p = el("div", "placeholder" + (sec.n === 12 ? " next" : ""));
+      p.append(el("span", "eyebrow", sec.n === 12 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
       const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
       s.append(p);
       host.append(s);

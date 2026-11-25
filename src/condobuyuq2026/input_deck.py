@@ -716,6 +716,54 @@ def get_exit_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
     }
 
 
+CAPITAL_MARKETS_ACCOUNTS = ("market", "cash")
+
+
+def get_capital_markets_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps and validates section 11 (`capital_markets`). Returns:
+      initial_investment: acquisition.personal_cash_at_closing (USD; the stub in capital_markets only
+        points there -- never family_loan or total_cash_outlay, see the deck comment);
+      allocation: {"market", "cash"} fractions >= 0 summing to 1;
+      cash_yield: annual interest rate on the cash account (>= 0);
+      dividend_paying_fraction (0-1) and dividend_yield (>= 0): effective dividend yield on the market
+        account = paying_fraction x yield."""
+    deck = deck if deck is not None else load_deck()
+    section = deck["capital_markets"]
+    if _constant(section["initial_investment"]) is not None:
+        raise ValueError(
+            "capital_markets.initial_investment must stay null: the amount is acquisition.personal_cash_at_closing"
+        )
+    investment = get_acquisition_inputs(deck)["personal_cash_at_closing"]
+    if not _is_number(investment) or investment < 0:
+        raise ValueError(f"acquisition.personal_cash_at_closing must be a number >= 0, got {investment!r}")
+
+    allocation = _constant(section["allocation"])
+    if not isinstance(allocation, dict) or set(allocation) != set(CAPITAL_MARKETS_ACCOUNTS):
+        raise ValueError(f"capital_markets.allocation must list exactly {CAPITAL_MARKETS_ACCOUNTS}")
+    for account in CAPITAL_MARKETS_ACCOUNTS:
+        if not _is_number(allocation[account]) or allocation[account] < 0:
+            raise ValueError(f"capital_markets.allocation.{account} must be a number >= 0, got {allocation[account]!r}")
+    if abs(sum(allocation.values()) - 1.0) > 1e-9:
+        raise ValueError(f"capital_markets.allocation must add up to 1, got {sum(allocation.values()):g}")
+
+    cash_yield = _constant(section["cash_yield"])
+    paying = _constant(section["dividends"]["paying_fraction"])
+    dividend_yield = _constant(section["dividends"]["yield"])
+    if not _is_number(cash_yield) or cash_yield < 0:
+        raise ValueError(f"capital_markets.cash_yield must be a number >= 0, got {cash_yield!r}")
+    if not _is_number(paying) or not 0 <= paying <= 1:
+        raise ValueError(f"capital_markets.dividends.paying_fraction must be 0..1, got {paying!r}")
+    if not _is_number(dividend_yield) or dividend_yield < 0:
+        raise ValueError(f"capital_markets.dividends.yield must be a number >= 0, got {dividend_yield!r}")
+    return {
+        "initial_investment": float(investment),
+        "allocation": {account: float(allocation[account]) for account in CAPITAL_MARKETS_ACCOUNTS},
+        "cash_yield": float(cash_yield),
+        "dividend_paying_fraction": float(paying),
+        "dividend_yield": float(dividend_yield),
+    }
+
+
 def get_report_quantiles(deck: dict[str, Any] | None = None) -> list[float]:
     """Returns run.report_quantiles (e.g. [0.1, 0.5, 0.9]) -- the probability quantiles the model
     should report in its outputs."""

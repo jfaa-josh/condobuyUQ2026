@@ -34,8 +34,13 @@ gross_rent: each year's EXPECTED (mean) gross rental revenue from scenario["rent
 before lodging tax (guest-paid) and fees. Taxes are POINT estimates on these means; propagating revenue
 uncertainty through the nonlinear tax rules is a later (ΔW-stage) concern.
 
-Tax year for scenario year n = closing_year + n - 1. The renter's case (compute_renter_taxes) is a
-real, confirmed $0: renting has no real-estate tax effect.
+Tax year for scenario year n = closing_year + n - 1.
+
+THE RENT BRANCH (compute_renter_taxes): renting itself has no tax effect (rent isn't deductible), but the
+invested portfolio (capital_markets, section 11) does. investment_income_tax / investment_sale_tax tax its
+interest (ordinary), qualified dividends and sale gain (long-term rates + NIIT) with the same
+with-minus-without engine. Investment income is NOT property-source income: a nonresident of the property
+state pays that state nothing on it; the residence state taxes it.
 """
 
 from __future__ import annotations
@@ -62,6 +67,10 @@ NO_PROPERTY: dict[str, float] = {
     "personal_property_tax": 0.0,
     "ltcg": 0.0,
     "unrecaptured_1250": 0.0,
+    # The rent branch's portfolio (section 11); never property-source income.
+    "interest_income": 0.0,
+    "qualified_dividends": 0.0,
+    "investment_ltcg": 0.0,
 }
 
 
@@ -112,18 +121,22 @@ def _household_tax(
     """The household's whole-return income tax for one year with the given property items (NO_PROPERTY
     for the baseline). items: rental_income (ordinary, in AGI; negative only for an allowed loss),
     itemized_interest (deductible mortgage interest), personal_property_tax (SALT-eligible),
-    ltcg (long-term gain), unrecaptured_1250 (recaptured depreciation). Returns {"federal",
-    "property_state", "residence_state", "total", "itemizes", "taxable_income", "agi"}."""
+    ltcg (long-term gain), unrecaptured_1250 (recaptured depreciation); and the portfolio's
+    interest_income (ordinary), qualified_dividends and investment_ltcg (both at long-term rates), which
+    are investment income for NIIT but NOT property-source income for the state apportionment. Returns
+    {"federal", "property_state", "residence_state", "total", "itemizes", "taxable_income", "agi"}."""
     federal = jurisdiction.federal
     property_income = items["rental_income"] + items["ltcg"] + items["unrecaptured_1250"]
-    agi = taxes_inputs["household_agi"] + property_income
+    dividends_and_gains = items.get("qualified_dividends", 0.0) + items.get("investment_ltcg", 0.0)
+    investment_income = items.get("interest_income", 0.0) + dividends_and_gains
+    agi = taxes_inputs["household_agi"] + property_income + investment_income
     salt = min(federal.salt_cap(tax_year, agi), taxes_inputs["other_salt_paid"] + items["personal_property_tax"])
     itemized = taxes_inputs["other_itemized_deductions"] + items["itemized_interest"] + salt
     deduction = max(federal.standard_deduction, itemized)
     taxable_income = max(0.0, agi - deduction)
-    federal_tax = federal.income_tax(taxable_income, items["ltcg"], items["unrecaptured_1250"]) + federal.niit(
-        max(0.0, property_income), agi
-    )
+    federal_tax = federal.income_tax(
+        taxable_income, items["ltcg"] + dividends_and_gains, items["unrecaptured_1250"]
+    ) + federal.niit(max(0.0, property_income) + max(0.0, investment_income), agi)
     state = jurisdiction.state_income_taxes(taxable_income, agi, property_income, tax_year)
     return {
         "federal": federal_tax,
@@ -407,9 +420,51 @@ def compute_owner_taxes(scenario: dict[str, Any], deck: dict[str, Any] | None = 
     }
 
 
-def compute_renter_taxes(reference_case: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Top-level entry point for a reference case (tenure=RENT) -- a REAL, confirmed result, not a
-    placeholder: renting has NO real-estate tax effect at all (rent isn't deductible, there's no
-    property to depreciate or sell). Ignores reference_case's contents entirely; it's accepted only
-    so callers can pass one through uniformly alongside compute_owner_taxes."""
-    return {"annual_schedule": None, "sale": {"tax": 0.0}, "total_tax": 0.0, "flags": [], "use_class": "TENANT"}
+def investment_income_tax(
+    jurisdiction: TaxJurisdiction, taxes_inputs: dict[str, Any], tax_year: int, interest: float, dividends: float
+) -> dict[str, float]:
+    """One year's tax on the portfolio's income (with minus without): interest_tax (the interest alone,
+    ordinary), dividend_tax (what the qualified dividends add on top), plus the federal / property_state /
+    residence_state / total split of the two together."""
+    interest_items = {**NO_PROPERTY, "interest_income": interest}
+    interest_only = _tax_effect(jurisdiction, taxes_inputs, tax_year, interest_items)
+    both = _tax_effect(jurisdiction, taxes_inputs, tax_year, {**interest_items, "qualified_dividends": dividends})
+    return {
+        "interest_tax": interest_only["total"],
+        "dividend_tax": both["total"] - interest_only["total"],
+        **{line: both[line] for line in ("federal", "property_state", "residence_state", "total")},
+    }
+
+
+def investment_sale_tax(
+    jurisdiction: TaxJurisdiction,
+    taxes_inputs: dict[str, Any],
+    tax_year: int,
+    gain: float,
+    final_interest: float,
+    final_dividends: float,
+) -> dict[str, float]:
+    """The portfolio sale's tax, as an increment on top of the final year's return (which already holds
+    that year's interest and dividends): a long-term gain. A loss (gain <= 0) is taxed $0 here; its
+    $3,000/yr deduction and carryforward aren't modeled."""
+    base = {**NO_PROPERTY, "interest_income": final_interest, "qualified_dividends": final_dividends}
+    effect = _tax_effect(jurisdiction, taxes_inputs, tax_year, {**base, "investment_ltcg": max(0.0, gain)}, base)
+    return {line: effect[line] for line in ("federal", "property_state", "residence_state", "total")}
+
+
+def compute_renter_taxes(capital_markets: dict[str, Any]) -> dict[str, Any]:
+    """Top-level entry point for a reference case (tenure=RENT). Renting itself has no tax effect (rent
+    isn't deductible); the taxes are the portfolio's, already computed by
+    capital_markets.compute_capital_markets with investment_income_tax / investment_sale_tax. This
+    repackages them in compute_owner_taxes' shape: annual_schedule (tax_year, interest_tax, dividend_tax,
+    federal, property_state, residence_state, tax), sale, total_tax."""
+    annual = capital_markets["annual"]
+    columns = ["tax_year", "interest_tax", "dividend_tax", "federal", "property_state", "residence_state", "tax"]
+    sale = capital_markets["sale"]
+    return {
+        "annual_schedule": annual[columns],
+        "sale": sale,
+        "total_tax": float(annual["tax"].sum()) + sale["tax"],
+        "flags": [],
+        "use_class": "TENANT",
+    }

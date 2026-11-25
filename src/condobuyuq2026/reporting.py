@@ -293,9 +293,29 @@ def print_tax_result_plots_report(result_plots: dict[str, Path]) -> None:
 
 
 def print_renter_taxes_report(taxes: dict[str, Any]) -> None:
-    """Prints a reference case's tax results (see taxes.compute_renter_taxes) -- always $0, a real
-    confirmed result, not a placeholder (renting has no real-estate tax effect)."""
-    print(f"total_tax=${taxes['total_tax']:,.0f} (renting has no real-estate tax effect)")
+    """Prints a reference case's tax results (taxes.compute_renter_taxes): the portfolio's taxes only
+    (renting itself has no tax effect). Developer/testing output."""
+    yearly = float(taxes["annual_schedule"]["tax"].sum())
+    print(f"  renter taxes: total=${taxes['total_tax']:,.0f} (portfolio: yearly interest/dividends "
+          f"${yearly:,.0f}, sale ${taxes['sale']['tax']:,.0f}; rent itself isn't deductible)")
+
+
+def print_capital_markets_report(capital_markets: dict[str, Any]) -> None:
+    """One developer/testing line for the rent branch's portfolio (capital_markets.compute_capital_markets)."""
+    horizon, sale, inputs = capital_markets["horizon"], capital_markets["sale"], capital_markets["inputs"]
+    ci = capital_markets["ci"]
+    allocation = inputs["allocation"]
+    print(
+        f"capital_markets: invested ${horizon['contributions']:,.0f} (market {allocation['market']:.0%} / cash "
+        f"{allocation['cash']:.0%}) -> after-tax ${horizon['after_tax_mean']:,.0f} mean at the horizon "
+        f"({ci[0]:.0%}-{ci[1]:.0%} ${horizon['after_tax_lo']:,.0f}-${horizon['after_tax_hi']:,.0f}); "
+        f"sale gain ${sale['gain']:,.0f} taxed at {sale['effective_rate']:.1%}"
+    )
+
+
+def print_capital_markets_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """One line: where this reference case's capital_markets plot went (results.save_capital_markets_result_plots)."""
+    print(f"  saved {len(result_plots)} capital_markets result plot to {result_plots['portfolio'].parent}")
 
 
 def print_reference_report(reference_id: int, reference_case: dict[str, Any]) -> None:
@@ -306,15 +326,14 @@ def print_reference_report(reference_id: int, reference_case: dict[str, Any]) ->
     in when the capital_markets stage is built) -- deliberately NOT the buy branch's
     total_cash_outlay (see scenarios.py's module docstring for why).
 
-    The lease cost is printed right after by print_rent_reference_report. PLACEHOLDER: the invested
-    amount arrives with capital_markets.
+    The lease cost and the portfolio are printed right after (print_rent_reference_report,
+    print_capital_markets_report).
     """
     print(
         f"reference_id={reference_id}: reference={reference_case['reference']}, "
         f"horizon_years={reference_case['horizon_years']}, "
         f"residency_state={reference_case['residency_state']} (reference case)"
     )
-    print("  [PLACEHOLDER] invested amount still to come (capital_markets)")
 
 
 def print_rent_reference_report(rent_reference: dict[str, Any]) -> None:

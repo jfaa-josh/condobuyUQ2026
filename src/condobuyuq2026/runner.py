@@ -14,9 +14,9 @@ which reuses "carrying_costs" for its own property_tax/shared_expenses -- see th
 docstring) -- so by the time run_scenarios returns, every scenario in its "scenarios" list carries
 everything computed for it, not just what got printed along the way. reference_results[
 reference_id] is, symmetrically, a dict each reference-side stage adds its own key to -- so far
-"rent_reference" (rent_reference.compute_rent_reference, the lease cost) and "taxes"
-(taxes.compute_renter_taxes, a real confirmed $0 result, not a placeholder -- renting has no
-real-estate tax effect at all).
+"rent_reference" (rent_reference.compute_rent_reference, the lease cost), "capital_markets"
+(capital_markets.compute_capital_markets, the invested portfolio) and "taxes"
+(taxes.compute_renter_taxes, the portfolio's taxes; renting itself has no tax effect).
 
 The eventual buy-vs-reference comparison (ΔW = W_buy - W_rent, see .claude/implementation-plan.md's
 Goal) is still a PLACEHOLDER (see reporting.print_scenario_comparison_placeholder) -- as later
@@ -30,11 +30,14 @@ from __future__ import annotations
 from typing import Any
 
 from condobuyuq2026.acquisition import compute_acquisition_costs
+from condobuyuq2026.capital_markets import compute_capital_markets
 from condobuyuq2026.carrying_costs import compute_carrying_costs
 from condobuyuq2026.classification import compute_occupancy_classification
 from condobuyuq2026.financing import compute_financing
 from condobuyuq2026.reporting import (
     print_acquisition_report,
+    print_capital_markets_report,
+    print_capital_markets_result_plots_report,
     print_carrying_cost_result_plots_report,
     print_carrying_costs_report,
     print_classification_report,
@@ -57,6 +60,7 @@ from condobuyuq2026.personal_use import compute_personal_use
 from condobuyuq2026.rent_reference import compute_rent_reference
 from condobuyuq2026.rental_operations import compute_rental_operations
 from condobuyuq2026.results import (
+    save_capital_markets_result_plots,
     save_carrying_cost_result_plots,
     save_personal_use_result_plots,
     save_rent_reference_result_plots,
@@ -81,8 +85,8 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
       full result dict for that scenario) -- see module docstring's STORAGE note. Later stages add
       their own key the same way.
     - "reference_cases" / "reference_results": as scenarios.get_scenario_set built them, plus
-      "rent_reference" (compute_rent_reference's lease cost) and "taxes" (compute_renter_taxes' real $0
-      result) stored into reference_results[reference_id] the first time each reference case is seen.
+      "rent_reference" (compute_rent_reference's lease cost), "capital_markets" (compute_capital_markets)
+      and "taxes" (compute_renter_taxes, the portfolio's taxes) stored into reference_results[reference_id] the first time each reference case is seen.
     """
     reference_cases, scenarios = get_scenario_set(deck)
     reference_results: dict[int, dict[str, Any]] = {}
@@ -99,8 +103,17 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
             print_rent_reference_result_plots_report(
                 save_rent_reference_result_plots(reference_id, reference_case, rent_reference)
             )
-            renter_taxes = compute_renter_taxes(reference_case)
-            reference_results[reference_id] = {"rent_reference": rent_reference, "taxes": renter_taxes}
+            capital_markets = compute_capital_markets(reference_case, deck)
+            print_capital_markets_report(capital_markets)
+            print_capital_markets_result_plots_report(
+                save_capital_markets_result_plots(reference_id, reference_case, capital_markets)
+            )
+            renter_taxes = compute_renter_taxes(capital_markets)
+            reference_results[reference_id] = {
+                "rent_reference": rent_reference,
+                "capital_markets": capital_markets,
+                "taxes": renter_taxes,
+            }
             print_renter_taxes_report(renter_taxes)
 
         # scenarios.get_scenario_set already computed this (to dedup reference cases) and stored it

@@ -1078,45 +1078,63 @@ rent_reference:
 # -----------------------------------------------------------------------------
 # 11. capital_markets
 # -----------------------------------------------------------------------------
+# WHAT THIS SECTION DOES: the RENT branch keeps your own cash instead of buying, and invests it.
+# At closing it's split between a market account and a cash account (allocation), held to the
+# horizon with no rebalancing, then sold. Along the way: cash earns interest, market holdings pay
+# dividends; both are reinvested after tax. At the horizon the market account is sold and the gain
+# is taxed. All taxes come from the same household tax engine and jurisdiction layers as section 9
+# (taxes.household_agi etc.), using your residence state (scenario.residency_state).
 capital_markets:
-  # market_return lives entirely in forecast_models.market now — not re-declared here.
+  # The market's price growth comes from forecast_models.market (not re-declared here).
   initial_investment:
-    # STUB — actual input lives in acquisition.personal_cash_at_closing (kept here only for
-    # discoverability, same "SEE X" pattern as acquisition.purchase_price -> scenario.purchase_
-    # price). The rent branch invests exactly YOUR OWN cash, not acquisition.family_loan (that loan
-    # only exists to fund a purchase -- it wouldn't be sitting around to invest if you rented
-    # instead). Split between cash and market per cash_allocation_fraction below.
+    # STUB — the amount is acquisition.personal_cash_at_closing (kept here only for discoverability,
+    # same "SEE X" pattern as acquisition.purchase_price -> scenario.purchase_price). The rent branch
+    # invests exactly YOUR OWN cash, not acquisition.family_loan (that loan only exists to fund a
+    # purchase; it wouldn't be there to invest if you rented instead).
     kind: constant
     value: null                     # see acquisition.personal_cash_at_closing
 
-  cash_allocation_fraction:
-    # Fraction of initial_investment held as CASH (earning cash_yield) rather than invested in
-    # the broader market (earning forecast_models.market). E.g. 0.1 = 10% cash reserve, 90%
-    # invested.
+  allocation:
+    # WHAT TO ENTER: how initial_investment is split at closing, as fractions that add up to 1.
+    #   market: invested in the broad market (forecast_models.market's price growth + dividends below);
+    #   cash:   held as cash, earning cash_yield.
+    # No rebalancing: each account grows on its own from closing to the horizon.
     kind: constant
-    value: 0.1                       # example
+    value:
+      market: 0.8                    # example
+      cash: 0.2                      # example
 
   cash_yield:
-    # Yield on the CASH portion only (fraction) — see cash_allocation_fraction.
+    # Annual interest rate on the cash account (fraction, e.g. 0.04 = 4%), held constant over the
+    # horizon. Interest is taxed every year as ordinary income; the rest stays in the cash account.
     kind: constant
-    value: 0.04
+    value: 0.04                      # example
 
-  portfolio_tax_drag:
-    # Annual tax drag on dividends/turnover — applies ONLY to the market-invested portion (see
-    # cash_allocation_fraction), not the cash portion. See implementation plan for this scoping
-    # note.
-    kind: constant
-    value: 0.15                      # example — blended effective annual drag
+  dividends:
+    # Dividends on the MARKET account (forecast_models.market is PRICE growth only, so dividends are
+    # added here). Each year's dividends = paying_fraction x yield x the market account's value. They
+    # are taxed every year as QUALIFIED dividends (long-term capital-gain rates + the 3.8% NIIT, and
+    # ordinary rates in Colorado), and the after-tax amount is reinvested (it adds to your cost basis,
+    # so it isn't taxed again at the sale).
+    paying_fraction:
+      # Fraction of the market account that pays dividends (0-1). 1 = everything pays at `yield`.
+      kind: constant
+      value: 1.0                     # example
+    yield:
+      # Annual dividend yield of the holdings that pay (fraction). The S&P 500's has been roughly
+      # 1.2-1.5% in recent years; check a current figure for your own holdings.
+      kind: constant
+      value: 0.013                   # example
 
 # -----------------------------------------------------------------------------
 # 12. exit
 # -----------------------------------------------------------------------------
-# BOTH branches realize a taxable event here, always, not just the buy branch: the condo sells
-# (selling_costs + recapture + capital gains) AND the rent branch's capital_markets.
-# initial_investment portfolio is liquidated (capital gains taxed by the same jurisdiction layers). Taxing the
-# portfolio's liquidation too — not just letting its gains sit unrealized — is what makes ΔW an
-# apples-to-apples comparison; otherwise the rent branch would look artificially better by never
-# paying tax on its gains.
+# BOTH branches realize a taxable event at the horizon, always, not just the buy branch: the condo
+# sells (selling_costs below; recapture and capital gains are taxed in section 9) AND the rent
+# branch's portfolio is sold (its capital-gain tax is computed in section 11, capital_markets, by
+# the same jurisdiction layers). Taxing the portfolio's sale too — not just letting its gains sit
+# unrealized — is what makes ΔW an apples-to-apples comparison; otherwise the rent branch would look
+# artificially better by never paying tax on its gains.
 exit:
   selling_costs:
     # total = fixed_fees + (percent_of_price * sale_price). Sale price is DERIVED: purchase_price

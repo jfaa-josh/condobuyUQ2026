@@ -30,9 +30,9 @@ carrying costs (property tax, HOA, insurance, maintenance, special assessment, u
 condobuyuq2026.carrying_costs, plus their own SCALED per-scenario result plots saved to results/,
 see condobuyuq2026.results), rental operations (fitted occupancy/ADR priors and the per-scenario revenue
 projection -- see condobuyuq2026.rental_operations), and taxes (mortgage/depreciation/rental-income/sale
-effects -- see condobuyuq2026.taxes), plus the rent branch's lease cost (condobuyuq2026.rent_reference), are
-actually computed today; the buy-vs-reference comparison itself is still a placeholder print, filled in as
-later deck sections (capital_markets, exit, ...) get built.
+effects -- see condobuyuq2026.taxes), plus the rent branch's lease cost (condobuyuq2026.rent_reference) and
+invested portfolio with its taxes (condobuyuq2026.capital_markets), are actually computed today; the
+buy-vs-reference comparison itself is still a placeholder print, filled in as the ΔW stage gets built.
 
 Run with: uv run python run/main.py            (offline; saved models only)
           uv run python run/main.py --refresh  (also refreshes stale forecast_models)

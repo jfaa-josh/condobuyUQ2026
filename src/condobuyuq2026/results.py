@@ -643,6 +643,72 @@ def save_rent_reference_result_plots(
     }
 
 
+def save_capital_markets_result_plots(
+    reference_id: int, reference_case: dict[str, Any], capital_markets: dict[str, Any]
+) -> dict[str, Path]:
+    """Saves this reference case's capital_markets plot (section 11):
+      results/rent_ref<id>_h<h>y_<residency>/capital_markets/portfolio.png
+        top: the portfolio at each year end (cash + market median, market bands as whiskers, cost basis), then
+             the after-sale-tax value at the horizon;
+        bottom: the portfolio's taxes each year (interest, dividends) and at the sale.
+    `capital_markets` is capital_markets.compute_capital_markets' result."""
+    annual, sale, horizon = capital_markets["annual"], capital_markets["sale"], capital_markets["horizon"]
+    ci, outer_ci = capital_markets["ci"], capital_markets["outer_ci"]
+    allocation = capital_markets["inputs"]["allocation"]
+    save_path = reference_results_dir(reference_id, reference_case) / "capital_markets" / "portfolio.png"
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    years = annual.index.to_numpy()
+    sale_x = years[-1] + 1.2
+    cash, market = annual["cash_end"].to_numpy(), annual["market_end_median"].to_numpy()
+    fig, (ax, ax_tax) = plt.subplots(2, 1, figsize=(12, 9), height_ratios=[3, 2], sharex=True)
+    width = 0.6
+    ax.bar(years, cash, width, color="C7", alpha=0.6, label=f"Cash account ({allocation['cash']:.0%} at closing)")
+    ax.bar(years, market, width, bottom=cash, color="C0", alpha=0.8,
+           label=f"Market account, median ({allocation['market']:.0%} at closing)")
+    total = cash + market
+    ax.errorbar(years, total, yerr=[market - annual["market_end_lo"], annual["market_end_hi"] - market],
+                fmt="none", ecolor="k", capsize=4, linewidth=1.2, label=f"{ci[0] * 100:.0f}-{ci[1] * 100:.0f}% band")
+    outer = ax.errorbar(years + 0.18, total,
+                        yerr=[market - annual["market_end_lo_outer"], annual["market_end_hi_outer"] - market],
+                        fmt="none", ecolor="k", alpha=0.5, capsize=3, linewidth=1,
+                        label=f"{outer_ci[0] * 100:.0f}-{outer_ci[1] * 100:.0f}% band")
+    outer[-1][0].set_linestyle("--")
+    basis_top = cash + annual["basis_end"].to_numpy()
+    ax.step(np.append(years - width / 2, years[-1] + width / 2), np.append(basis_top, basis_top[-1]),
+            where="post", color="C3", linewidth=1.2, linestyle=":",
+            label="Cash + market cost basis (what's above it in the market is taxable gain)")
+    after = horizon["after_tax_median"]
+    ax.bar([sale_x], [after], width, color="C2", alpha=0.8, label="After the sale tax, median (cash + market)")
+    ax.errorbar([sale_x], [after], yerr=[[after - horizon["after_tax_lo"]], [horizon["after_tax_hi"] - after]],
+                fmt="none", ecolor="k", capsize=4, linewidth=1.2)
+    ax.set_ylabel("USD")
+    ax.set_title(
+        f"Rent Branch Portfolio — ${horizon['contributions']:,.0f} invested at closing, buy and hold\n"
+        f"(market = forecast_models.market price growth + dividends reinvested after tax; "
+        f"sale gain ${sale['gain']:,.0f} taxed at {sale['effective_rate']:.1%})"
+    )
+    ax.grid(alpha=0.3, axis="y")
+    ax.legend(fontsize="small", loc="upper left")
+
+    ax_tax.bar(years, annual["interest_tax"], width, color="C7", alpha=0.7, label="Tax on interest (ordinary)")
+    ax_tax.bar(years, annual["dividend_tax"], width, bottom=annual["interest_tax"], color="C0", alpha=0.7,
+               label="Tax on dividends (qualified)")
+    ax_tax.bar([sale_x], [sale["tax"]], width, color="C2", alpha=0.8, label="Tax at the sale (long-term gain)")
+    ax_tax.set_xticks(np.append(years, sale_x), [*(str(y) for y in years), "Sale"])
+    ax_tax.set_xlabel("Scenario year (values at year end)")
+    ax_tax.set_ylabel("USD")
+    ax_tax.set_title(f"Portfolio taxes (residence state + federal): ${horizon['total_tax']:,.0f} in all", fontsize=10)
+    ax_tax.grid(alpha=0.3, axis="y")
+    ax_tax.legend(fontsize="small", loc="upper left")
+    for axis in (ax, ax_tax):
+        axis.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return {"portfolio": save_path}
+
+
 def save_tax_result_plots(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Path]:
     """Saves this scenario's taxes plot (section 9):
       results/<scenario>/taxes/tax_effects_by_year.png  the condo's tax effect each year + at the sale,
