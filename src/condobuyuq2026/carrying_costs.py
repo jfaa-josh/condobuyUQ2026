@@ -7,10 +7,9 @@ model (see utils.prior_utils.build_all_carrying_cost_prior_models, wired into ru
 stage, the same way derived_latents are). Special assessments get their own separate frequency x
 size model (compute_special_assessment) that is NEVER part of any carrying-cost total.
 
-Also owns project_condo_value_schedule -- the condo's own CONTINUOUSLY appreciating value over the
-horizon (via forecast_models.home_price) -- since it's fundamentally a "what does this property
-carry/hold cost" question; taxes.py imports it from here for its own sale-price calculation instead
-of duplicating it. NOT the same thing as project_market_value_schedule below (the ASSESSOR's own,
+Also owns project_sale_price -- the condo's sale price at the horizon as a lognormal (purchase_price
+grown via forecast_models.home_price) -- used by taxes.py (sale tax at the EXPECTED price) and exit.py
+(net equity at the sale). NOT the same thing as project_market_value_schedule below (the ASSESSOR's own,
 only-periodically-updated determination used for property tax specifically) -- see that function's
 own docstring for why they're different.
 
@@ -149,27 +148,34 @@ def resolve_period(periods: list[dict[str, Any]], h_months: int) -> dict[str, An
     )
 
 
-def project_condo_value_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.Series:
-    """REAL: projects the condo's own value at the end of each year of scenario["horizon_years"],
-    via forecast_models.home_price's fit applied to purchase_price as p0 (see
-    ou_fitting.project_term_structure -- exactly the use this deck's own home_price comment
-    anticipated: "Used directly (unweighted) to appreciate acquisition.purchase_price to its sale
-    value at exit"). Returns a Series indexed by year (0..horizon_years; year 0 is purchase_price
-    itself) of the projected MEDIAN value -- only the median path is propagated (this is the sale-
-    price estimate; property tax uses project_market_value_schedule instead, which DOES carry a
-    full band -- see that function's own docstring for why the two are different quantities)."""
+def project_sale_price(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """The condo's sale price at the horizon (month 12 x horizon_years) as a LOGNORMAL: purchase_price grown
+    by forecast_models.home_price's fit (ou_fitting.project_term_structure with p0 = purchase_price),
+    proportionally -- the user chose this (2026-11-25) over reusing the property-tax market_value line
+    calibration (fitted from only 2 points). Returns {"mu", "sigma"} (log scale), "median", "mean", "sd",
+    and the report bands "lo"/"hi" (report_quantiles) and "lo_outer"/"hi_outer" (1%/99%). Not the same
+    quantity as project_market_value_schedule (the assessor's periodic determination, for property tax)."""
     deck = deck if deck is not None else load_deck()
-    purchase_price = scenario["acquisition"]["purchase_price"]
-    horizon_years = scenario["horizon_years"]
-    home_price_fit = get_forecast_model_home_price(deck)
-    projection = project_term_structure(home_price_fit, p0=purchase_price, horizon_months=horizon_years * 12)
-    year_end_months = [year * 12 for year in range(horizon_years + 1)]
-    return projection.loc[year_end_months, "median"].set_axis(range(horizon_years + 1))
+    report_quantiles = get_report_quantiles(deck)
+    ci = (report_quantiles[0], report_quantiles[-1])
+    horizon_months = int(scenario["horizon_years"]) * 12
+    projection = project_term_structure(
+        get_forecast_model_home_price(deck), p0=scenario["acquisition"]["purchase_price"], horizon_months=horizon_months,
+        ci=ci,
+    )
+    median = float(projection.loc[horizon_months, "median"])
+    sigma = float(math.log(projection.loc[horizon_months, "hi"] / median) / norm.ppf(ci[1]))
+    mu = math.log(median)
+    mean = math.exp(mu + sigma**2 / 2)
+    bands = {name: math.exp(mu + norm.ppf(p) * sigma)
+             for name, p in (("lo", ci[0]), ("hi", ci[1]), ("lo_outer", 0.01), ("hi_outer", 0.99))}
+    return {"mu": mu, "sigma": sigma, "median": median, "mean": mean, "sd": mean * math.sqrt(math.expm1(sigma**2)),
+            **bands}
 
 
 def project_market_value_schedule(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> pd.DataFrame:
     """Projects the COUNTY ASSESSOR'S OWN market_value determination for each year of
-    scenario["horizon_years"] -- NOT the same thing as project_condo_value_schedule (this model's
+    scenario["horizon_years"] -- NOT the same thing as project_sale_price (this model's
     own continuous appreciation estimate). Anchored to scenario.closing_month/closing_year
     (TIMESTEP 0), not "today," and stair-stepped at REAL reassessment years (see
     input_deck.get_market_value_config), each new step an AVERAGE rather than a single point:
@@ -195,7 +201,7 @@ def project_market_value_schedule(scenario: dict[str, Any], deck: dict[str, Any]
     periods need no additional conversion.
 
     Returns a DataFrame indexed by year (1..horizon_years) with columns "median"/"lo"/"hi" -- the
-    FULL band, not just the median (unlike project_condo_value_schedule): this is exactly what's
+    FULL band per year (project_sale_price only covers the sale): this is exactly what's
     meant to flow through into property tax's own assessed_value/tax, per the user's explicit
     request that these come out as a real distribution, not a point estimate.
     """

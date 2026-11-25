@@ -28,7 +28,25 @@ over the federal period for the average stay (39 yr if transient, else 27.5).
 
 SALE (compute_owner_sale_tax): recapture (unrecaptured 1250 gain), section 121 exclusion (primary
 residence held >= the minimum years), long-term gain, and released passive losses, taxed as an increment
-on top of the final year's return.
+on top of the final year's return. At the EXPECTED sale price (carrying_costs.project_sale_price's mean,
+since 2026-11-25; it was the median) -- the same convention as every other tax here and as the
+portfolio's sale. exit.py evaluates it at other prices too (sale_price=...) for the net-equity band.
+
+KNOWN LIMITATION -- A SALE AT A LOSS IS TAXED $0 (nothing deducted). What the law would do instead
+(IRS Pub. 527: a unit used for both rental and personal purposes is treated as two separate properties;
+IRS Pub. 544: real property used in a business and held MORE than 1 year is section 1231 property, and a
+net section 1231 loss is an ORDINARY loss):
+  - the PERSONAL-use share of the loss is not deductible (a personal loss) -- the model agrees;
+  - the RENTAL share (e.g. by rental days) is a section 1231 loss: deductible against ordinary income
+    in the sale year with no $3,000 cap, and as a full disposition it isn't held back by the passive
+    rules -- the model does NOT deduct it.
+So when the expected sale is at a loss, the buy branch's tax is OVERSTATED by about (rental share of the
+loss) x (the household's marginal ordinary rate); the result leans against buying. The same $0 floor
+applies across the price band in exit.py (the secant marginal rate is 0 where every price in the band is
+a loss). compute_owner_taxes adds a NOTE to "flags" whenever the expected sale is at a loss.
+HOLDING PERIOD: the sale is at month 12 x horizon_years, so a 1-year horizon is held exactly 12 months --
+NOT more than 1 year. Any gain would then be short-term (ordinary rates, no 25% recapture cap) and a loss
+wouldn't be section 1231; the model still uses the long-term rules (also flagged).
 
 gross_rent: each year's EXPECTED (mean) gross rental revenue from scenario["rental_operations"],
 before lodging tax (guest-paid) and fees. Taxes are POINT estimates on these means; propagating revenue
@@ -49,7 +67,7 @@ from typing import Any
 
 import pandas as pd
 
-from condobuyuq2026.carrying_costs import compute_carrying_costs_schedule, project_condo_value_schedule
+from condobuyuq2026.carrying_costs import compute_carrying_costs_schedule, project_sale_price
 from condobuyuq2026.input_deck import (
     get_acquisition_inputs,
     get_closing_date,
@@ -88,15 +106,11 @@ def gross_rent_by_year(scenario: dict[str, Any], deck: dict[str, Any] | None = N
     return rental_operations["annual"]["gross_mean"]
 
 
-def estimate_sale_proceeds(
-    scenario: dict[str, Any], condo_value_schedule: pd.Series, deck: dict[str, Any] | None = None
-) -> dict[str, float]:
-    """REAL: sale_price = condo_value_schedule's last year; selling_costs_total = exit.
-    selling_costs.fixed_fees + percent_of_price * sale_price (the deck's own composite-cost
-    pattern); net_sale_proceeds = sale_price - selling_costs_total."""
+def estimate_sale_proceeds(sale_price: float, deck: dict[str, Any] | None = None) -> dict[str, float]:
+    """selling_costs_total = exit.selling_costs.fixed_fees + percent_of_price * sale_price (the deck's
+    own composite-cost pattern); net_sale_proceeds = sale_price - selling_costs_total."""
     deck = deck if deck is not None else load_deck()
     exit_inputs = get_exit_inputs(deck)
-    sale_price = condo_value_schedule.iloc[-1]
     selling_costs_total = (
         exit_inputs["selling_costs_fixed_fees"] + exit_inputs["selling_costs_percent_of_price"] * sale_price
     )
@@ -328,13 +342,21 @@ def compute_owner_tax_schedule(scenario: dict[str, Any], deck: dict[str, Any] | 
 
 
 def compute_owner_sale_tax(
-    scenario: dict[str, Any], annual_schedule: pd.DataFrame, deck: dict[str, Any] | None = None
+    scenario: dict[str, Any],
+    annual_schedule: pd.DataFrame,
+    deck: dict[str, Any] | None = None,
+    sale_price: float | None = None,
 ) -> dict[str, float]:
     """The sale's tax effect, as an increment on top of the final year's return: depreciation recapture
     (unrecaptured 1250 gain), the section 121 exclusion (only if loan_occupancy_class ==
     "primary_residence" AND held >= the federal minimum years), the remaining long-term gain, and the
     release of suspended passive losses (an ordinary loss); 280A carryforwards are lost. Reads the
-    ending state off annual_schedule's LAST row."""
+    ending state off annual_schedule's LAST row. sale_price defaults to the EXPECTED sale price
+    (carrying_costs.project_sale_price's mean).
+
+    A LOSS (gain < 0) is taxed $0: the rental share's section 1231 ordinary-loss deduction is NOT modeled,
+    so the tax is overstated in that case (see the module docstring's KNOWN LIMITATION). A 1-year horizon
+    is held exactly 12 months, yet is still taxed under the long-term rules (same note)."""
     deck = deck if deck is not None else load_deck()
     taxes_inputs = get_taxes_inputs(deck)
     jurisdiction = get_scenario_tax_jurisdiction(scenario, deck)
@@ -344,8 +366,9 @@ def compute_owner_sale_tax(
     ending = annual_schedule.iloc[-1]
     depr_taken = float(ending["cumulative_depr_taken"])
 
-    condo_value_schedule = project_condo_value_schedule(scenario, deck)
-    proceeds = estimate_sale_proceeds(scenario, condo_value_schedule, deck)
+    if sale_price is None:
+        sale_price = project_sale_price(scenario, deck)["mean"]
+    proceeds = estimate_sale_proceeds(sale_price, deck)
 
     adj_basis = cost_basis - depr_taken
     gain = proceeds["net_sale_proceeds"] - adj_basis
@@ -408,6 +431,18 @@ def compute_owner_taxes(scenario: dict[str, Any], deck: dict[str, Any] | None = 
         flags.append(
             f"WARNING: annual_personal_days={personal_days:g} >= {residency_days:g} -- "
             f"{scenario['residency_state']} residency claim at risk ({jurisdiction.property_state.name} statutory-resident test)."
+        )
+    if sale["gain"] < 0:
+        flags.append(
+            f"NOTE: the expected sale is at a LOSS (${sale['gain']:,.0f}). The model taxes it $0 and does NOT deduct "
+            "the rental share as a section 1231 ordinary loss, so the buy branch's tax is overstated here "
+            "(see taxes.py, KNOWN LIMITATION)."
+        )
+    if scenario["horizon_years"] <= 1:
+        flags.append(
+            "NOTE: a 1-year horizon sells after exactly 12 months, not MORE than 1 year: a gain would really be "
+            "short-term (ordinary rates) and a loss not section 1231. The model still uses the long-term rules "
+            "(see taxes.py, KNOWN LIMITATION)."
         )
 
     return {

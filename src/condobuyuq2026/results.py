@@ -35,11 +35,15 @@ from condobuyuq2026.plotting.forecast_plots import (
 
 
 def scenario_results_dir(scenario: dict[str, Any]) -> Path:
-    """results/buy_h<horizon_years>y_p<purchase_price>_<residency_state>/carrying_costs/ -- a
+    """results/buy_h<horizon_years>y_p<purchase_price>_<residency_state>[_loan_kept]/carrying_costs/ -- a
     readable folder name from the scenario's own SWEPT fields (the only ones that can distinguish
-    two scenarios -- everything else is a fixed deck constant). Not a stable id across deck edits
-    that change the sweep values themselves, but stable across repeated runs of the same deck."""
+    two scenarios -- everything else is a fixed deck constant). "_loan_kept" is added only when
+    family_loan_repaid_at_sale is false, so the default (repaid) keeps the existing folder names. Not a
+    stable id across deck edits that change the sweep values themselves, but stable across repeated
+    runs of the same deck."""
     label = f"buy_h{scenario['horizon_years']}y_p{scenario['purchase_price']}_{scenario['residency_state']}"
+    if not scenario.get("family_loan_repaid_at_sale", True):
+        label += "_loan_kept"
     path = RESULTS_DIR / label / "carrying_costs"
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -707,6 +711,55 @@ def save_capital_markets_result_plots(
     fig.savefig(save_path)
     plt.close(fig)
     return {"portfolio": save_path}
+
+
+def save_exit_result_plots(scenario: dict[str, Any]) -> dict[str, Path]:
+    """Saves this scenario's exit plot (section 12):
+      results/<scenario>/exit/sale_proceeds.png  a waterfall from the sale price through selling costs,
+        mortgage payoff, family loan (if repaid) and sale tax to net equity, at EXPECTED values, with the
+        sale price's and net equity's bands as whiskers. Reads scenario["exit"] (exit.compute_exit)."""
+    ex = scenario["exit"]
+    price, equity = ex["sale_price"], ex["net_equity"]
+    save_path = scenario_results_dir(scenario).parent / "exit" / "sale_proceeds.png"
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    loan_label = "Family loan\n(repaid)" if ex["family_loan_repaid_at_sale"] else "Family loan\n(not repaid)"
+    steps = [("Selling costs", ex["selling_costs"]), ("Mortgage\npayoff", ex["mortgage_payoff"]),
+             (loan_label, ex["family_loan_repaid"]), ("Sale tax", ex["sale_tax"])]
+
+    fig, ax = plt.subplots(figsize=(12, 6.5))
+    width = 0.6
+    ax.bar(0, price["mean"], width, color="C0", alpha=0.8, label="Sale price (expected)")
+    level = price["mean"]
+    for x, (_label, amount) in enumerate(steps, start=1):
+        ax.bar(x, -amount, width, bottom=level, color="C3", alpha=0.6, label="Deduction" if x == 1 else None)
+        ax.text(x, level + 0.01 * price["mean"], f"−${amount:,.0f}", ha="center", va="bottom", fontsize=9)
+        ax.hlines(level - amount, x - width / 2, x + 1 + width / 2 if x < len(steps) else x + 1 - width / 2,
+                  color="k", linewidth=0.6, alpha=0.5)
+        level -= amount
+    net_x = len(steps) + 1
+    ax.bar(net_x, equity["mean"], width, color="C2", alpha=0.8, label="Net equity (expected)")
+    for x, d in ((0, price), (net_x, equity)):
+        ax.errorbar(x, d["mean"], yerr=[[d["mean"] - d["lo"]], [d["hi"] - d["mean"]]], fmt="none", ecolor="k",
+                    capsize=5, linewidth=1.2)
+        outer = ax.errorbar(x + 0.2, d["mean"], yerr=[[d["mean"] - d["lo_outer"]], [d["hi_outer"] - d["mean"]]],
+                            fmt="none", ecolor="k", alpha=0.5, capsize=3, linewidth=1)
+        outer[-1][0].set_linestyle("--")
+        ax.text(x, d["hi_outer"], f"${d['mean']:,.0f}", ha="center", va="bottom", fontsize=9)
+    ax.set_xticks(range(net_x + 1), ["Sale price", *(label for label, _ in steps), "Net equity"])
+    ax.axhline(0, color="k", linewidth=0.8)
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    ax.set_ylabel("USD")
+    ax.set_title(
+        f"Buy Branch at the Sale (year {scenario['horizon_years']}) — expected values; whiskers: 10-90% (solid), "
+        f"1-99% (dashed)\nSale price = purchase price grown by forecast_models.home_price; sale tax at the expected "
+        f"price,\nmarginal {ex['marginal_sale_tax_rate']:.1%} across the price band"
+    )
+    ax.grid(alpha=0.3, axis="y")
+    ax.legend(fontsize="small", loc="upper right")
+    fig.tight_layout()
+    fig.savefig(save_path)
+    plt.close(fig)
+    return {"sale_proceeds": save_path}
 
 
 def save_tax_result_plots(scenario: dict[str, Any], deck: dict[str, Any] | None = None) -> dict[str, Path]:

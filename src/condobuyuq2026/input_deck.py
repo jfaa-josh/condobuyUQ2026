@@ -80,14 +80,15 @@ def _expect_kind(entry: dict[str, Any], expected: str, where: str) -> None:
 
 def get_scenarios(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Expands `scenario`'s sweeps -- alternatives x horizon_years x residency_state x
-    purchase_price, see the deck's "SWEEPS ARE DELIBERATELY MINIMAL" note -- into the full
+    purchase_price x family_loan_repaid_at_sale (bool), see the deck's "SWEEPS ARE DELIBERATELY
+    MINIMAL" note -- into the full
     cartesian product of scenarios to run. Each returned dict also carries scenario's fixed
     (`kind: constant`) fields (reference, property_state, closing_month, closing_year) alongside
     that combination's swept values, e.g.:
 
         {"reference": "rent", "alternative": "buy", "horizon_years": 1, "residency_state": "FL",
-         "property_state": "CO", "purchase_price": 375000, "closing_month": 10,
-         "closing_year": 2026}
+         "property_state": "CO", "purchase_price": 375000, "family_loan_repaid_at_sale": True,
+         "closing_month": 10, "closing_year": 2026}
 
     closing_month/closing_year are TIMESTEP 0 for month-indexed models (see
     carrying_costs.project_market_value_schedule) -- not swept, a single fixed reference point for
@@ -104,24 +105,29 @@ def get_scenarios(deck: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     property_state = _constant(scenario["property_state"])
     closing_month = _constant(scenario["closing_month"])
     closing_year = _constant(scenario["closing_year"])
+    loan_repaid_values = _sweep(scenario["family_loan_repaid_at_sale"])
+    if not loan_repaid_values or any(not isinstance(v, bool) for v in loan_repaid_values):
+        raise ValueError(f"scenario.family_loan_repaid_at_sale must list true and/or false, got {loan_repaid_values!r}")
 
     scenarios = []
     for alternative in _sweep(scenario["alternatives"]):
         for horizon_years in _sweep(scenario["horizon_years"]):
             for residency_state in _sweep(scenario["residency_state"]):
                 for purchase_price in _sweep(scenario["purchase_price"]):
-                    scenarios.append(
-                        {
-                            "reference": reference,
-                            "alternative": alternative,
-                            "horizon_years": horizon_years,
-                            "residency_state": residency_state,
-                            "property_state": property_state,
-                            "purchase_price": purchase_price,
-                            "closing_month": closing_month,
-                            "closing_year": closing_year,
-                        }
-                    )
+                    for family_loan_repaid_at_sale in loan_repaid_values:
+                        scenarios.append(
+                            {
+                                "reference": reference,
+                                "alternative": alternative,
+                                "horizon_years": horizon_years,
+                                "residency_state": residency_state,
+                                "property_state": property_state,
+                                "purchase_price": purchase_price,
+                                "family_loan_repaid_at_sale": family_loan_repaid_at_sale,
+                                "closing_month": closing_month,
+                                "closing_year": closing_year,
+                            }
+                        )
     return scenarios
 
 
@@ -707,7 +713,7 @@ def get_taxes_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any]:
 def get_exit_inputs(deck: dict[str, Any] | None = None) -> dict[str, float]:
     """Unwraps `exit.selling_costs`' own `kind: constant` fields. Returns
     {"selling_costs_fixed_fees", "selling_costs_percent_of_price"}. exit_year/sale_price are
-    DERIVED, not read here -- see taxes.project_condo_value_schedule."""
+    DERIVED, not read here -- see carrying_costs.project_sale_price."""
     deck = deck if deck is not None else load_deck()
     selling_costs = deck["exit"]["selling_costs"]
     return {

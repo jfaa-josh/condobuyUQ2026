@@ -287,6 +287,24 @@ def print_taxes_report(taxes: dict[str, Any]) -> None:
         print(f"  {flag}")
 
 
+def print_exit_report(exit_result: dict[str, Any]) -> None:
+    """One developer/testing line for the buy branch's money at the sale (exit.compute_exit)."""
+    price, equity = exit_result["sale_price"], exit_result["net_equity"]
+    loan = (f"family loan ${exit_result['family_loan_repaid']:,.0f}" if exit_result["family_loan_repaid_at_sale"]
+            else "family loan not repaid")
+    print(
+        f"exit: sale ${price['mean']:,.0f} mean (median ${price['median']:,.0f}) - selling ${exit_result['selling_costs']:,.0f}"
+        f" - payoff ${exit_result['mortgage_payoff']:,.0f} - {loan} - tax ${exit_result['sale_tax']:,.0f} "
+        f"(marginal {exit_result['marginal_sale_tax_rate']:.1%}) = net equity ${equity['mean']:,.0f} mean "
+        f"(${equity['lo']:,.0f}-${equity['hi']:,.0f})"
+    )
+
+
+def print_exit_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """One line: where this scenario's exit plot went (results.save_exit_result_plots)."""
+    print(f"  saved {len(result_plots)} exit result plot to {result_plots['sale_proceeds'].parent}")
+
+
 def print_tax_result_plots_report(result_plots: dict[str, Path]) -> None:
     """One line: where this scenario's taxes plot went (results.save_tax_result_plots)."""
     print(f"  saved {len(result_plots)} taxes result plot to {result_plots['tax_effects_by_year'].parent}")

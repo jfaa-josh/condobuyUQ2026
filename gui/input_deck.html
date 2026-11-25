@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
-   One narrow column: sticky section nav, then one panel per deck section (1-11 built, 12-13 placeholders).
+   One narrow column: sticky section nav, then one panel per deck section (1-12 built, 13 placeholder).
    Every section is rendered from the SECTIONS schema in the script below, and all values live in one
    `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
 :root {
@@ -212,7 +212,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   <header>
     <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
     <h1>Buy vs. Rent Input Deck</h1>
-    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–11 are editable here. Sections 12–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–12 are editable here. Section 13 is a placeholder. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
   </header>
 
   <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
@@ -242,6 +242,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       residency_state: ["FL"],
       property_state: "CO",
       purchase_price: [375000, 400000],
+      family_loan_repaid_at_sale: [true],
       closing_month: 10,
       closing_year: 2026
     },
@@ -362,6 +363,9 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       cash_yield: 0.04,
       dividends: { paying_fraction: 1.0, yield: 0.013 }
     },
+    exit: {
+      selling_costs: { fixed_fees: 1500, percent_of_price: 0.06 }
+    },
     taxes: {
       jurisdiction: { state: "CO", county: "summit", municipality: "keystone" },
       filing_status: "mfj",
@@ -441,13 +445,15 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   const SECTIONS = [
     {
       n: 1, id: "scenario", title: "Scenario",
-      intro: "Every sweep in the deck lives here. The full run is alternatives × horizon_years × residency_state × purchase_price, so the count grows quickly as you add values.",
+      intro: "Every sweep in the deck lives here. The full run is alternatives × horizon_years × residency_state × purchase_price × family_loan_repaid_at_sale, so the count grows quickly as you add values.",
       groups: [
         { title: "Sweeps", fields: [
           { path: "scenario.alternatives", label: "Alternatives", kind: "sweep", type: "sweep-cat", options: ["buy"], hint: "Compared against the reference below." },
           { path: "scenario.residency_state", label: "Residency state", kind: "sweep", type: "sweep-cat", options: ["FL", "CO"], hint: "Tax domicile. Applies to both branches symmetrically." },
           { path: "scenario.horizon_years", label: "Horizon", kind: "sweep", type: "sweep-num", unit: "yr", min: 1, max: 30, step: 1, hint: "Years held. Both branches always sell or liquidate at the horizon, and both are taxed." },
-          { path: "scenario.purchase_price", label: "Purchase price", kind: "sweep", type: "sweep-num", money: true, min: 1, step: 5000, wide: true, hint: "This is the real input. acquisition.purchase_price is only a stub that points here." }
+          { path: "scenario.purchase_price", label: "Purchase price", kind: "sweep", type: "sweep-num", money: true, min: 1, step: 5000, wide: true, hint: "This is the real input. acquisition.purchase_price is only a stub that points here." },
+          { path: "scenario.family_loan_repaid_at_sale", label: "Family loan repaid at the sale", kind: "sweep", type: "sweep-cat", options: [true, false], labels: { true: "repaid", false: "not repaid" },
+            hint: "Whether acquisition.family_loan comes out of the sale proceeds (section 12). Buy branch only: checking both doubles the buy scenarios, not the rent cases." }
         ]},
         { title: "Fixed", fields: [
           { path: "scenario.reference", label: "Reference", kind: "constant", type: "fixed", hint: "The baseline being compared against. Fixed to rent." },
@@ -481,7 +487,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
         ]},
         { title: "Cash at closing", fields: [
           { path: "acquisition.personal_cash_at_closing", label: "Personal cash at closing", kind: "constant", type: "money", step: 1000, hint: "Your own money. This is also the rent branch's invested capital." },
-          { path: "acquisition.family_loan", label: "Family loan", kind: "constant", type: "money", step: 1000, hint: "Not invested in the rent branch, because it wouldn't exist there." },
+          { path: "acquisition.family_loan", label: "Family loan", kind: "constant", type: "money", step: 1000, hint: "0% interest. Not invested in the rent branch, because it wouldn't exist there. Whether it's repaid from the sale is a section 1 sweep." },
           { path: "acquisition.initial_furnishing", label: "Initial furnishing", kind: "constant", type: "money", step: 500, hint: "One-time STR setup cost. Kept separate from total cash outlay and not depreciated." }
         ]},
         { title: "Tax basis", fields: [
@@ -657,9 +663,18 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       ],
       preview: previewCapitalMarkets
     },
-    { n: 12, id: "exit", title: "Exit", soon: true,
-      desc: "Sell-side closing costs at the horizon.",
-      keys: ["selling_costs"] },
+    {
+      n: 12, id: "exit", title: "Exit",
+      intro: "The buy branch's money at the sale: sale price − selling costs − mortgage payoff − family loan (if repaid, section 1) − sale tax. The sale price is your purchase price grown by forecast_models.home_price, with its full uncertainty band; the sale tax (recapture, capital gain, NIIT, state) comes from the section 9 engine at the expected price. Known limitation: a sale at a LOSS is taxed $0. The personal-use share of a loss isn't deductible (correct), but the rental share is a deductible section 1231 loss (IRS Pub. 527/544) that the model leaves out, so a loss-making sale looks slightly worse for buying than it is. A 1-year horizon (held exactly 12 months, not long-term) is also still taxed under the long-term rules. The run flags both.",
+      groups: [
+        { title: "Selling costs · total = fixed fees + percent × sale price", fields: [
+          { path: "exit.selling_costs.fixed_fees", label: "Fixed fees", kind: "constant", type: "money", step: 100, hint: "Seller-side title, escrow and similar costs that don't scale with price." },
+          { path: "exit.selling_costs.percent_of_price", label: "Percent of price", kind: "constant", type: "percent", step: 0.25, max: 20,
+            hint: "Commission plus other costs that scale with price. Colorado allows no new transfer taxes (TABOR), so Keystone and Summit County have none; the state documentary fee is 0.01%. A private covenant transfer fee can apply to a specific property: check its title documents and add it here." }
+        ]}
+      ],
+      preview: previewExit
+    },
     { n: 13, id: "run", title: "Run", soon: true,
       desc: "Run settings and reporting.",
       keys: ["report_quantiles"] }
@@ -745,7 +760,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
           err.textContent = "";
           commit(cur);
         });
-        c.append(i, el("span", null, o));
+        c.append(i, el("span", null, f.labels ? f.labels[o] : String(o)));
         box.append(c);
       });
       wrap.append(box);
@@ -896,14 +911,14 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
 
   function previewScenario(box) {
     const s = deck.scenario;
-    const n = s.alternatives.length * s.horizon_years.length * s.residency_state.length * s.purchase_price.length;
+    const n = s.alternatives.length * s.horizon_years.length * s.residency_state.length * s.purchase_price.length * s.family_loan_repaid_at_sale.length;
     const stats = el("div", "stat-row");
     [[n, "scenarios in the run"], [s.horizon_years.length + " × " + s.purchase_price.length + " × " + s.residency_state.length, "horizons × prices × states"], [MONTHS[s.closing_month - 1] + " " + s.closing_year, "timestep 0"]]
       .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, String(v)), el("small", null, l)); stats.append(d); });
     const ids = el("div", "ids");
-    s.alternatives.forEach((a) => s.horizon_years.forEach((h) => s.purchase_price.forEach((p) => s.residency_state.forEach((r) => {
-      ids.append(el("span", "pill neutral mono", a + "_h" + h + "y_p" + p + "_" + r));
-    }))));
+    s.alternatives.forEach((a) => s.horizon_years.forEach((h) => s.purchase_price.forEach((p) => s.residency_state.forEach((r) => s.family_loan_repaid_at_sale.forEach((lr) => {
+      ids.append(el("span", "pill neutral mono", a + "_h" + h + "y_p" + p + "_" + r + (lr ? "" : "_loan_kept")));
+    })))));
     box.append(stats, el("p", "hint", "Scenario IDs (same naming as the results/ folders):"), ids);
   }
 
@@ -1323,6 +1338,42 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   }
 
   // ---------------------------------------------------------------------------
+  // Section 12 preview
+  // ---------------------------------------------------------------------------
+  // Loan balance after `months` payments (same amortization as financing.amortize_loan).
+  function loanBalance(loan, rate, years, months) {
+    const r = rate / 12, pm = payment(loan, rate, years);
+    if (r === 0) return Math.max(0, loan - pm * months);
+    return Math.max(0, loan * Math.pow(1 + r, months) - pm * (Math.pow(1 + r, months) - 1) / r);
+  }
+
+  function previewExit(box) {
+    const s = deck.scenario, sc = deck.exit.selling_costs, f = deck.financing, fam = deck.acquisition.family_loan;
+    const rows = [];
+    s.residency_state.forEach((res) => {
+      const cls = res === s.property_state ? "primary_residence" : deck.rental_operations.managed_by === "company" ? "investment" : "second_home";
+      const rate = f.mortgage_rate[cls] + f.non_warrantable_premium;
+      s.purchase_price.forEach((p) => s.horizon_years.forEach((h) => s.family_loan_repaid_at_sale.forEach((lr) => {
+        const loan = acqFor(p).loan, selling = sc.fixed_fees + sc.percent_of_price * p;
+        const bal = loan > 0 ? loanBalance(loan, rate, f.loan_term_years, h * 12) : 0, famOut = lr ? fam : 0;
+        const tr = el("tr");
+        tr.append(td(res + " · " + cls.replace("_", " ")), td(usd.format(p), "num"), td(h + " yr", "num"), td(usd.format(selling), "num"),
+          td(usd.format(bal), "num"), td(lr ? usd.format(famOut) : "not repaid", "num" + (lr ? "" : " dim")),
+          td(usd.format(p - selling - bal - famOut), "num"));
+        rows.push(tr);
+      })));
+    });
+    const stats = el("div", "stat-row");
+    [[usd.format(sc.fixed_fees) + " + " + ratePct(sc.percent_of_price), "selling costs"], [usd.format(fam), "family loan"],
+     [s.family_loan_repaid_at_sale.map((v) => v ? "repaid" : "not repaid").join(" & "), "family loan at the sale (section 1)"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+    box.append(stats,
+      table([["Residence · loan class"], ["Price", 1], ["Horizon", 1], ["Selling costs", 1], ["Loan balance", 1], ["Family loan", 1], ["Equity before tax", 1]], rows),
+      el("p", "hint", "At TODAY's price (no appreciation) and before the sale tax, to show the known deductions. The run grows the price by forecast_models.home_price, "
+        + "adds its uncertainty band, takes the sale tax at the expected price, and saves results/<scenario>/exit/sale_proceeds.png."));
+  }
+
+  // ---------------------------------------------------------------------------
   // Section 11 editors and preview
   // ---------------------------------------------------------------------------
   // Read-only: the amount comes from acquisition.personal_cash_at_closing (repainted when section 4 changes).
@@ -1587,8 +1638,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     s.append(head);
 
     if (sec.soon) {
-      const p = el("div", "placeholder" + (sec.n === 12 ? " next" : ""));
-      p.append(el("span", "eyebrow", sec.n === 12 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const p = el("div", "placeholder" + (sec.n === 13 ? " next" : ""));
+      p.append(el("span", "eyebrow", sec.n === 13 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
       const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
       s.append(p);
       host.append(s);

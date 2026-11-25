@@ -9,9 +9,10 @@ A buy scenario dict gets a new key per stage as it's computed -- so far "acquisi
 (classification.compute_occupancy_classification), "financing" (financing.compute_financing),
 "carrying_costs" (carrying_costs.compute_carrying_costs), "rental_operations"
 (rental_operations.compute_rental_operations), "personal_use" (personal_use.compute_personal_use),
-and "taxes" (taxes.compute_owner_taxes,
+"taxes" (taxes.compute_owner_taxes,
 which reuses "carrying_costs" for its own property_tax/shared_expenses -- see that module's own
-docstring) -- so by the time run_scenarios returns, every scenario in its "scenarios" list carries
+docstring) and "exit" (exit.compute_exit, the buy branch's net equity at the sale) -- so by the time
+run_scenarios returns, every scenario in its "scenarios" list carries
 everything computed for it, not just what got printed along the way. reference_results[
 reference_id] is, symmetrically, a dict each reference-side stage adds its own key to -- so far
 "rent_reference" (rent_reference.compute_rent_reference, the lease cost), "capital_markets"
@@ -33,6 +34,7 @@ from condobuyuq2026.acquisition import compute_acquisition_costs
 from condobuyuq2026.capital_markets import compute_capital_markets
 from condobuyuq2026.carrying_costs import compute_carrying_costs
 from condobuyuq2026.classification import compute_occupancy_classification
+from condobuyuq2026.exit import compute_exit
 from condobuyuq2026.financing import compute_financing
 from condobuyuq2026.reporting import (
     print_acquisition_report,
@@ -40,6 +42,8 @@ from condobuyuq2026.reporting import (
     print_capital_markets_result_plots_report,
     print_carrying_cost_result_plots_report,
     print_carrying_costs_report,
+    print_exit_report,
+    print_exit_result_plots_report,
     print_classification_report,
     print_financing_report,
     print_personal_use_report,
@@ -62,6 +66,7 @@ from condobuyuq2026.rental_operations import compute_rental_operations
 from condobuyuq2026.results import (
     save_capital_markets_result_plots,
     save_carrying_cost_result_plots,
+    save_exit_result_plots,
     save_personal_use_result_plots,
     save_rent_reference_result_plots,
     save_tax_result_plots,
@@ -152,6 +157,11 @@ def run_scenarios(deck: dict[str, Any] | None = None) -> dict[str, Any]:
         scenario["taxes"] = owner_taxes
         print_taxes_report(owner_taxes)
         print_tax_result_plots_report(save_tax_result_plots(scenario, deck))
+
+        exit_result = compute_exit(scenario, deck)
+        scenario["exit"] = exit_result
+        print_exit_report(exit_result)
+        print_exit_result_plots_report(save_exit_result_plots(scenario))
 
         print_scenario_comparison_placeholder(scenario, reference_id)
         print()  # blank line -- groups this scenario's reference/alternative/result together

@@ -32,8 +32,8 @@
 # dist family -- see carrying_costs.special_assessment's own frequency_severity shape.)
 #
 # SWEEPS ARE DELIBERATELY MINIMAL: only `scenario.alternatives`, `scenario.horizon_years`,
-# `scenario.residency_state`, and `scenario.purchase_price` are swept. Everything else is a
-# single manually-set value per run.
+# `scenario.residency_state`, `scenario.purchase_price` and `scenario.family_loan_repaid_at_sale`
+# are swept. Everything else is a single manually-set value per run.
 #
 # "SEE scenario.X" STUB PATTERN: `purchase_price` is actually swept in `scenario` (kept
 # together with the other sweeps for visibility), but conceptually belongs to `acquisition`.
@@ -122,6 +122,15 @@ scenario:
     # above. acquisition.purchase_price is a discoverability stub only.
     kind: sweep
     values: [375000, 400000]
+
+  family_loan_repaid_at_sale:
+    # Is acquisition.family_loan paid back out of the sale proceeds at the horizon? (true/false)
+    # true: the buy branch's money at the sale is reduced by the full loan (0% interest, so just the
+    # amount borrowed). false: it's never repaid within the model (e.g. forgiven, or repaid later
+    # from other money). Only the buy branch is affected (the rent branch never takes the loan), so
+    # listing both values doubles the buy scenarios but not the rent cases.
+    kind: sweep
+    values: [true]                   # example; [true, false] runs both
 
   closing_month:
     # Month (1-12) the purchase closes. Together with closing_year below, this is TIMESTEP 0 for
@@ -298,6 +307,9 @@ acquisition:
     value: 200000
 
   family_loan:
+    # Money lent by family toward closing, at 0% interest (USD). Part of total_cash_outlay, so it
+    # lowers the mortgage. Whether it's paid back at the sale is scenario.family_loan_repaid_at_sale
+    # (a sweep). Never invested in the rent branch (see capital_markets.initial_investment).
     kind: constant
     value: 100000
 
@@ -1135,11 +1147,31 @@ capital_markets:
 # the same jurisdiction layers). Taxing the portfolio's sale too — not just letting its gains sit
 # unrealized — is what makes ΔW an apples-to-apples comparison; otherwise the rent branch would look
 # artificially better by never paying tax on its gains.
+#
+# WHAT THIS SECTION DOES: the buy branch's money at the sale (the mirror of capital_markets' after-
+# tax portfolio), as a distribution:
+#   net equity = sale price - selling costs - mortgage payoff - family loan (if
+#                scenario.family_loan_repaid_at_sale) - sale tax
+# Sale price: purchase_price grown by forecast_models.home_price to the horizon, with its full
+# uncertainty band (lognormal). The mortgage payoff is the loan balance left at the horizon; the sale
+# tax (recapture, capital gain, NIIT, state) comes from section 9's engine at the EXPECTED price.
+# Shown in results/<scenario>/exit/sale_proceeds.png.
+# KNOWN LIMITATION, SALE AT A LOSS: a loss is taxed $0. In reality the PERSONAL-use share of the loss
+# isn't deductible (the model agrees), but the RENTAL share is a section 1231 loss (IRS Pub. 527 / 544),
+# deductible against ordinary income in the sale year. The model doesn't deduct it, so a loss-making
+# sale is shown slightly WORSE for buying than it really is (by about the rental share of the loss x
+# your marginal rate). Likely only at short horizons. Also: a 1-year horizon is held exactly 12 months,
+# which is NOT long-term (that needs more than 1 year), yet it's still taxed under the long-term rules.
+# Both cases are flagged in the run's tax notes.
 exit:
   selling_costs:
-    # total = fixed_fees + (percent_of_price * sale_price). Sale price is DERIVED: purchase_price
-    # appreciated via forecast_models.home_price to exit_year. Same composite pattern as
+    # total = fixed_fees + (percent_of_price * sale_price). Same composite pattern as
     # acquisition.purchase_closing_costs.
+    # TRANSFER FEES (checked 2026-11-25): Colorado's constitution (TABOR, Art. X sec. 20(8)(a))
+    # prohibits new or higher real-estate transfer taxes, so the Town of Keystone (2024) and Summit
+    # County have none. The state documentary fee is 1 cent per $100 (about $40 on $400k). A PRIVATE
+    # transfer fee can still be set by recorded covenants on a particular property (e.g. Silverthorne's
+    # 1%); check this unit's title commitment/covenants and add any such fee to percent_of_price.
     fixed_fees:
       kind: constant
       value: 1500                    # example — title/escrow on the sell side

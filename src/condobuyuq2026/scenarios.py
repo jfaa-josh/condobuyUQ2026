@@ -83,6 +83,7 @@ def get_scenario_set(
                 "residency_state": scenario["residency_state"],
                 "property_state": scenario["property_state"],
                 "purchase_price": scenario["purchase_price"],
+                "family_loan_repaid_at_sale": scenario["family_loan_repaid_at_sale"],
                 "closing_month": scenario["closing_month"],
                 "closing_year": scenario["closing_year"],
                 "reference_id": ids_by_key[key],
