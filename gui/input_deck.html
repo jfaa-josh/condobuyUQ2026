@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Layout-only prototype of a GUI replacement for input_deck.yaml. Not wired to src/.
-   One narrow column: sticky section nav, then one panel per deck section (1-9 built, 10-13 placeholders).
+   One narrow column: sticky section nav, then one panel per deck section (1-10 built, 11-13 placeholders).
    Every section is rendered from the SECTIONS schema in the script below, and all values live in one
    `deck` object shaped like input_deck.yaml, so a later export/import step can map 1:1. */
 :root {
@@ -212,7 +212,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   <header>
     <div class="eyebrow">condobuyUQ2026 · input deck · layout prototype</div>
     <h1>Buy vs. Rent Input Deck</h1>
-    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–9 are editable here. Sections 10–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
+    <p class="lede">The same inputs as <code>input_deck.yaml</code>, one deck section per panel. Sections 1–10 are editable here. Sections 11–13 are placeholders. Nothing on this page reads or writes the deck yet, and the derived previews are approximate.</p>
   </header>
 
   <nav class="nav" aria-label="Deck sections"><ol id="nav"></ol></nav>
@@ -351,6 +351,10 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       personal_use_days_by_month: { jan: 7, feb: 0, mar: 0, apr: 0, may: 0, jun: 3, jul: 7, aug: 0, sep: 0, oct: 0, nov: 0, dec: 7 },
       alternate_lodging_cost_by_month: { jan: 3200, feb: 3200, mar: 2800, apr: 1600, may: 1300, jun: 1800, jul: 2100, aug: 2000, sep: 1600, oct: 1300, nov: 1700, dec: 3200 },
       alternate_lodging_growth_latent: "adr"
+    },
+    rent_reference: {
+      lease_cost_by_month: { jan: 2200, feb: 2200, mar: 2000, apr: 1200, may: 1000, jun: 1400, jul: 1600, aug: 1500, sep: 1200, oct: 1000, nov: 1300, dec: 2200 },
+      lease_growth_latent: "adr"
     },
     taxes: {
       jurisdiction: { state: "CO", county: "summit", municipality: "keystone" },
@@ -610,9 +614,20 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       ],
       preview: previewTaxes
     },
-    { n: 10, id: "rent_reference", title: "Rent reference", soon: true,
-      desc: "What renting a comparable place costs in the reference branch.",
-      keys: ["seasonal_lease_cost"] },
+    {
+      n: 10, id: "rent_reference", title: "Rent reference",
+      intro: "What the RENT branch (you don't buy) pays for mountain lodging instead: the direct alternative to owning. Any arrangement works, because you enter each month yourself. Your own estimate, used exactly as entered; nothing here is fitted, and rent isn't tax-deductible.",
+      groups: [
+        { title: "Lease cost · all-in, charged in full every month, exactly as entered", fields: [
+          { path: "rent_reference.lease_cost_by_month", label: "What you'd pay to rent, per month", kind: "constant", type: "custom", wide: true,
+            render: personalMonthMap("lease_cost_by_month", { section: "rent_reference", max: 100000, step: 50, what: "Lease cost", total: (t) => usd.format(t) + " in year 1" }),
+            hint: "Today's dollars for a comparable Keystone-area place. 12-month lease → its rent every month; month to month → each month's price; a winter seasonal lease only → its rent in those months, 0 the rest. All-in: add utilities, parking, fees, renter's insurance the lease doesn't cover. A refundable deposit isn't a cost. Not prorated by anything." },
+          { path: "rent_reference.lease_growth_latent", label: "Growth driver", kind: "constant", type: "select", options: LATENT_OPTIONS,
+            hint: "Rent goes up once a year, like a lease renewal: year 1 (the 12 months from closing) is exactly the amounts above; at each closing anniversary every month steps up by the driver's growth so far, then holds for 12 months. Default adr: the same rental market as your own nightly rate." }
+        ]}
+      ],
+      preview: previewRentReference
+    },
     { n: 11, id: "capital_markets", title: "Capital markets", soon: true,
       desc: "How the rent branch invests personal_cash_at_closing.",
       keys: ["initial_investment", "cash_allocation_fraction", "cash_yield", "portfolio_tax_drag"] },
@@ -780,7 +795,7 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     construction_cost: "Growth for hoa_dues_annual and special_assessment severity.",
     insurance: "Growth for insurance_annual.",
     maintenance: "Growth for maintenance_annual.",
-    adr: "Growth for adr, rent_reference.seasonal_lease_cost, and alternate lodging cost.",
+    adr: "Growth for adr, the rent branch's lease cost, and alternate lodging cost.",
     utilities: "Growth for utilities."
   };
   const DRIVERS = [["market", "Market", "--s-market"], ["home_price", "Home price", "--s-home"], ["general", "General", "--s-general"]];
@@ -1172,10 +1187,11 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
   // ---------------------------------------------------------------------------
   // Section 8 editors
   // ---------------------------------------------------------------------------
-  // A 12-month grid editing deck.personal_use[key] in place, with a running yearly total underneath.
+  // A 12-month grid editing deck[opts.section || "personal_use"][key] in place, with a running yearly total
+  // underneath. Also used by section 10's lease cost.
   function personalMonthMap(key, opts) {
     return (wrap, onChange, err) => {
-      const obj = deck.personal_use[key];
+      const obj = deck[opts.section || "personal_use"][key];
       const total = el("div", "ids");
       const paintTotal = () => {
         total.textContent = "";
@@ -1253,6 +1269,31 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
       el("p", "hint", "Alternate lodging is charged exactly as entered, every month, whatever your own nights or bookings, then grown by "
         + pu.alternate_lodging_growth_latent + " in the run. Rented nights use section 7's approximate fit. Tax class: rented ≤ 14 nights → personal_use; "
         + "else personal nights > 14 or > 10% of rented → mixed_use; else rental. The run classifies on median rented nights, so a borderline case can differ."));
+  }
+
+  // Section 10: the rent branch's lease next to the buy branch's alternate lodging, year 1 (both as entered).
+  function previewRentReference(box) {
+    const rr = deck.rent_reference, lease = rr.lease_cost_by_month, alt = deck.personal_use.alternate_lodging_cost_by_month;
+    const start = deck.scenario.closing_month - 1;
+    let leaseTot = 0, altTot = 0;
+    const rows = MONTH_KEYS.map((m, i) => {
+      leaseTot += lease[m]; altTot += alt[m];
+      const tr = el("tr");
+      tr.append(td(MONTHS[i]), td(usd.format(lease[m]), "num"), td(usd.format(alt[m]), "num dim"), td(usd.format(lease[m] - alt[m]), "num"));
+      return tr;
+    });
+    const tot = el("tr");
+    tot.append(td("Year 1"), td(usd.format(leaseTot), "num"), td(usd.format(altTot), "num dim"), td(usd.format(leaseTot - altTot), "num"));
+    rows.push(tot);
+    const stats = el("div", "stat-row");
+    [[usd.format(leaseTot), "lease, year 1 (as entered)"], [usd.format(altTot), "buy branch's alternate lodging, year 1"],
+     [MONTHS[start] + " " + (deck.scenario.closing_year + 1), "first rent increase (closing anniversary)"]]
+      .forEach(([v, l]) => { const d = el("div", "stat"); d.append(el("b", null, v), el("small", null, l)); stats.append(d); });
+    box.append(stats,
+      table([["Month"], ["Lease (rent branch)", 1], ["Alt. lodging (buy branch)", 1], ["Lease − alt. lodging", 1]], rows),
+      el("p", "hint", "Year 1 is exactly as entered. In the run every month steps up once a year, at each closing anniversary, by "
+        + rr.lease_growth_latent + "'s growth so far (alternate lodging grows every month instead). The buy branch also has its condo's own nights "
+        + "(section 8); this comparison is lodging only, not the full buy-vs-rent result."));
   }
 
   // ---------------------------------------------------------------------------
@@ -1456,8 +1497,8 @@ details.debug pre { margin: 10px 0 0; padding: 12px; background: var(--surface);
     s.append(head);
 
     if (sec.soon) {
-      const p = el("div", "placeholder" + (sec.n === 10 ? " next" : ""));
-      p.append(el("span", "eyebrow", sec.n === 10 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
+      const p = el("div", "placeholder" + (sec.n === 11 ? " next" : ""));
+      p.append(el("span", "eyebrow", sec.n === 11 ? "Not built yet · next up" : "Not built yet"), el("p", null, sec.desc));
       const keys = el("div", "keys"); sec.keys.forEach((k) => keys.append(el("span", null, k))); p.append(keys);
       s.append(p);
       host.append(s);

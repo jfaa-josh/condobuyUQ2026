@@ -306,17 +306,35 @@ def print_reference_report(reference_id: int, reference_case: dict[str, Any]) ->
     in when the capital_markets stage is built) -- deliberately NOT the buy branch's
     total_cash_outlay (see scenarios.py's module docstring for why).
 
-    PLACEHOLDER: reference_case only carries reference/horizon_years/residency_state/property_state
-    today (enough for scenarios.get_scenario_set's dedup) -- once rent_reference/capital_markets
-    get built, a reference case will need more variables of its own (rent cost, invested amount,
-    ...) added here before it can actually be run.
+    The lease cost is printed right after by print_rent_reference_report. PLACEHOLDER: the invested
+    amount arrives with capital_markets.
     """
     print(
         f"reference_id={reference_id}: reference={reference_case['reference']}, "
         f"horizon_years={reference_case['horizon_years']}, "
         f"residency_state={reference_case['residency_state']} (reference case)"
     )
-    print("  [PLACEHOLDER] more variables needed here for renting (rent_reference/capital_markets inputs)")
+    print("  [PLACEHOLDER] invested amount still to come (capital_markets)")
+
+
+def print_rent_reference_report(rent_reference: dict[str, Any]) -> None:
+    """Prints one reference case's lease cost (rent_reference.compute_rent_reference): horizon total
+    (mean, median and band), then year 1's total (exactly as entered: rent steps up once a year)."""
+    horizon, year_1 = rent_reference["horizon"], rent_reference["annual"].loc[1]
+    ci = rent_reference["ci"]
+    band = f"{ci[0]:.0%}-{ci[1]:.0%}"
+    latent = rent_reference["inputs"]["lease_growth_latent"]
+    print(
+        f"rent_reference: lease=${horizon['lease_mean']:,.0f} mean over the horizon (median "
+        f"${horizon['lease_median']:,.0f}, {band} ${horizon['lease_lo']:,.0f}-${horizon['lease_hi']:,.0f}), "
+        f"charged as entered, stepped up once a year by {latent}; not deductible"
+    )
+    print(f"  year 1: lease=${year_1['lease_mean']:,.0f} (as entered; first increase at the 1st anniversary of closing)")
+
+
+def print_rent_reference_result_plots_report(result_plots: dict[str, Path]) -> None:
+    """One line: where this reference case's rent_reference plot went (results.save_rent_reference_result_plots)."""
+    print(f"  saved {len(result_plots)} rent_reference result plot to {result_plots['alt_lease_cost'].parent}")
 
 
 def print_reference_cache_hit(reference_id: int) -> None:

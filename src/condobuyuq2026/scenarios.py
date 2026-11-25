@@ -46,9 +46,9 @@ def get_scenario_set(
       residency_state, total_cash_outlay) combination among the buy scenarios (see module
       docstring), keyed by a plain generated id in first-seen order. Each value has no
       purchase_price and no dollar figure -- just reference/horizon_years/residency_state/
-      property_state. TODO: only these four fields exist today (enough for acquisition-stage
-      dedup) -- once rent_reference/capital_markets get built, a reference case will need more
-      variables of its own (rent cost, invested amount, ...) to actually be run.
+      property_state/closing_month/closing_year. The lease cost (rent_reference) needs nothing
+      more: it's read from the deck by rent_reference.compute_rent_reference. TODO: capital_markets
+      will need the invested amount.
     - scenarios: input_deck.get_scenarios' buy-side sweep, each dict carrying "reference_id" (one
       of reference_cases' own keys) in place of a bare, always-"rent" "reference" field -- look its
       matching reference case up via reference_cases[scenario["reference_id"]] (see

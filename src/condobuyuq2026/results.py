@@ -45,6 +45,16 @@ def scenario_results_dir(scenario: dict[str, Any]) -> Path:
     return path
 
 
+def reference_results_dir(reference_id: int, reference_case: dict[str, Any]) -> Path:
+    """results/rent_ref<reference_id>_h<horizon_years>y_<residency_state>/ -- one folder per reference
+    case (scenarios.get_scenario_set), the rent-branch counterpart of scenario_results_dir. The id is
+    first-seen order, so it's stable across repeated runs of the same deck only."""
+    label = f"rent_ref{reference_id}_h{reference_case['horizon_years']}y_{reference_case['residency_state']}"
+    path = RESULTS_DIR / label
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _year_band(periods: list[dict[str, Any]], year: int, z_lo: float, z_hi: float) -> tuple[float, float, float]:
     """(median, lo, hi) for one calendar YEAR, summed over however many saved periods actually fall
     in it -- works identically whether an entry has ONE period per year (insurance_annual/
@@ -603,6 +613,32 @@ def save_personal_use_result_plots(scenario: dict[str, Any], deck: dict[str, Any
             title="Alternate Lodging Cost per Month — Scenario Projection (buy branch, personal cost)\n"
             f"(your entered amount, charged in full every month — no proration — grown by the {latent} latent)",
             ylabel="USD/month", save_path=out_dir / "alternate_lodging_cost.png", final_year=final_year,
+        ),
+    }
+
+
+def save_rent_reference_result_plots(
+    reference_id: int, reference_case: dict[str, Any], rent_reference: dict[str, Any]
+) -> dict[str, Path]:
+    """Saves this reference case's rent_reference plot (section 10):
+      results/rent_ref<id>_h<h>y_<residency>/rent_reference/alt_lease_cost.png  the rent branch's lease per
+          month (charged as entered, stepped up once a year at each closing anniversary) + final-year total
+    `rent_reference` is rent_reference.compute_rent_reference's result."""
+    monthly, annual = rent_reference["monthly"], rent_reference["annual"]
+    final = annual.iloc[-1]
+    latent = rent_reference["inputs"]["lease_growth_latent"]
+    out_dir = reference_results_dir(reference_id, reference_case) / "rent_reference"
+    final_year = None
+    if final["lease_median"] > 0 and final["lease_hi_outer"] > final["lease_median"]:
+        final_year = {"median": float(final["lease_median"]), "hi_outer": float(final["lease_hi_outer"]),
+                      "year": int(annual.index[-1]), "what": "Total Lease Cost"}
+    return {
+        "alt_lease_cost": _plot_rental_monthly(
+            monthly, "lease", rent_reference["ci"], rent_reference["outer_ci"],
+            title="Lease Cost per Month — Rent Branch (you don't buy)\n"
+            f"(your entered all-in amount, charged in full every month; steps up once a year at each closing "
+            f"anniversary, by the {latent} latent)",
+            ylabel="USD/month", save_path=out_dir / "alt_lease_cost.png", final_year=final_year,
         ),
     }
 

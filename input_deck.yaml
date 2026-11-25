@@ -68,18 +68,15 @@
 #     `special_assessment`/`utilities`): `growth:` names ONLY a `latent:` — no separate `dist`/
 #     `median`/`cv` of its own. The named latent's own already-fitted process supplies both the mean
 #     growth and how its uncertainty widens/mean-reverts (see that section's header comment).
-#   - `rental_operations.adr_growth_latent` and `personal_use.alternate_lodging_growth_latent`: same
-#     idea, just the latent's name (no dist/median/cv).
-#   - `rent_reference.seasonal_lease_cost.growth` (`latent: adr`): still carries its own hand-set
-#     `dist`/`median`/`cv` ALONGSIDE the latent. EARMARKED: this is the older, redundant shape (the
-#     hand-set rate can silently disagree with the latent's own fitted rate) — fix with section 10.
+#   - `rental_operations.adr_growth_latent`, `personal_use.alternate_lodging_growth_latent` and
+#     `rent_reference.lease_growth_latent`: same idea, just the latent's name (no dist/median/cv).
 #
 # COMPOSITE COST FORMULAS (`acquisition.purchase_closing_costs`, `exit.selling_costs`): both follow
 # `total = fixed_fees + (percent_of_price * price)` — a scalar dollar amount that doesn't scale
 # with price, plus a fraction that does. Written out explicitly in each section's comment.
 #
 # `derived` variables (loan_amount, loan_occupancy_class, tax_use_class, exit_year,
-# lease_days_equivalent, monthly rentable-nights) are computed by the script and deliberately do
+# monthly rentable-nights) are computed by the script and deliberately do
 # NOT appear in this deck.
 # =============================================================================
 
@@ -239,8 +236,9 @@ derived_latents:
   adr:
     # Drives adr's GROWTH (secular pricing power) — adr's LEVEL/seasonal shape is fitted from
     # rental_operations.sources (see rental_operations.adr_growth_latent). ALSO reused for rent_reference.
-    # seasonal_lease_cost's growth and personal_use.alternate_lodging_cost_by_month's growth
-    # (personal_use.alternate_lodging_growth_latent) — same rental market, so the same
+    # lease_cost_by_month's growth (rent_reference.lease_growth_latent) and personal_use.
+    # alternate_lodging_cost_by_month's growth (personal_use.alternate_lodging_growth_latent) — same
+    # rental market, so the same
     # pricing-power process applies to all three.
     weights:
       market: 0.2
@@ -906,9 +904,9 @@ personal_use:
 
   alternate_lodging_cost_by_month:
     # WHAT TO ENTER: the dollars per calendar month YOU WILL PAY for lodging somewhere else (buy
-    # branch only), in today's (closing-date) dollars. The rent branch has mountain access all year
-    # (rent_reference.seasonal_lease_cost is a full-year lease); this is what the buy branch spends to
-    # get whatever access you want while your own unit is rented out.
+    # branch only), in today's (closing-date) dollars. The rent branch pays for its own lodging instead
+    # (rent_reference.lease_cost_by_month); this is what the buy branch spends to get whatever access
+    # you want while your own unit is rented out.
     # IMPORTANT: EACH MONTH'S NUMBER IS CHARGED IN FULL, EVERY MONTH, as entered. The model does NOT
     # prorate it by your personal-use days above or by bookings. Work out the real cost yourself and
     # enter that. For example:
@@ -917,7 +915,8 @@ personal_use:
     #   - lodging for about half the month -> about half the monthly price;
     #   - nights booked a few at a time -> nights you'd book x the nightly rate;
     #   - you wouldn't stay anywhere else that month -> 0.
-    # Short-term/flexible lodging usually costs more per night than seasonal_lease_cost's annual lease.
+    # Short-term/flexible lodging usually costs more per night than rent_reference.lease_cost_by_month's
+    # lease.
     # HOW IT'S USED: each month's amount, grown by alternate_lodging_growth_latent from closing, is a
     # buy-branch cost in the final buy-vs-rent comparison. It is a PERSONAL cost: NOT tax-deductible
     # and NOT part of the carrying-cost totals. Shown in
@@ -1029,14 +1028,29 @@ taxes:
 # -----------------------------------------------------------------------------
 # 10. rent_reference
 # -----------------------------------------------------------------------------
+# WHAT THIS SECTION DOES: what the RENT branch (you don't buy) pays for mountain lodging instead.
+# It's the direct, ongoing alternative to owning: the buy branch has its condo (plus
+# personal_use.alternate_lodging_cost_by_month), the rent branch has this.
 rent_reference:
-  seasonal_lease_cost:
-    # The rent branch means renting a comparable Keystone-area place FULL YEAR (not just for
-    # personal_use_days_by_month) — the direct, ongoing alternative to buying. Monthly IC values
-    # below; not swept (just a year-1 anchor — no need for multiple market scenarios). Growth
-    # uses the `adr` derived latent, NOT a fresh latent of its own: you're a landlord in this
-    # same market either way (buy branch's STR pricing), so reusing `adr` is both simpler and
-    # more correct than inventing a separate process for the same market.
+  lease_cost_by_month:
+    # WHAT TO ENTER: the dollars per calendar month YOU WILL PAY to rent a comparable Keystone-area
+    # place, in today's (closing-date) dollars. Any arrangement works, because you enter each month
+    # yourself:
+    #   - a 12-month lease -> its monthly rent every month;
+    #   - month to month -> each month's month-to-month price (often higher in ski season);
+    #   - a winter seasonal lease only -> the season's monthly rent in those months, 0 the rest.
+    # ENTER IT ALL-IN: rent plus anything the lease doesn't include that you'd pay because you rent
+    # (utilities, parking, fees, renter's insurance, ...). There are no separate fields for those.
+    # A refundable security deposit is NOT a cost: leave it out.
+    # IMPORTANT: EACH MONTH'S NUMBER IS CHARGED IN FULL, EVERY MONTH, as entered. The model does NOT
+    # prorate it by personal_use_days_by_month or anything else (same rule as alternate lodging).
+    # HOW IT'S USED: a rent-branch cost in the final buy-vs-rent comparison, grown by
+    # lease_growth_latent. Rent goes up ONCE A YEAR, like a lease renewal, not every month: during
+    # year 1 (the 12 months starting at closing) you pay exactly the amounts below. At each
+    # anniversary of closing every month's amount steps up by the latent's growth so far, then holds
+    # for the next 12 months. Your month-to-month pattern is kept; only its level rises. Rent is NOT
+    # tax-deductible (federal or Colorado). Shown in results/<reference case>/rent_reference/
+    # alt_lease_cost.png.
     kind: constant
     value:
       jan: 2200                      # example
@@ -1051,15 +1065,15 @@ rent_reference:
       oct: 1000
       nov: 1300
       dec: 2200
-    growth:
-      kind: prior
-      dist: lognormal
-      latent: adr
-      median: 0.04
-      cv: 0.3
 
-  # lease_days_equivalent is DERIVED (matches personal_use.personal_use_days_by_month) —
-  # intentionally not entered here.
+  lease_growth_latent:
+    # Which derived latent grows lease_cost_by_month over the horizon (applied once a year; see
+    # above). Default `adr`: the same Keystone rental market as your unit's nightly rate
+    # (derived_latents.adr), so your rent and your ADR rise and fall together. Uses that latent's
+    # own fitted growth path and uncertainty; no separate growth rate is entered here. The starting
+    # amounts above are your own estimates, so they carry no uncertainty of their own.
+    kind: constant
+    value: adr
 
 # -----------------------------------------------------------------------------
 # 11. capital_markets

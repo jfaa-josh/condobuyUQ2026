@@ -334,18 +334,39 @@ def get_personal_use_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any
         get_growth_fit)."""
     deck = deck if deck is not None else load_deck()
     personal_use = deck["personal_use"]
-    where = "personal_use.alternate_lodging_cost_by_month"
-    costs = _constant(personal_use["alternate_lodging_cost_by_month"])
+    return {
+        "personal_use_days_by_month": get_personal_use_days_by_month(deck),
+        "alternate_lodging_cost_by_month": _monthly_costs(
+            personal_use["alternate_lodging_cost_by_month"], "personal_use.alternate_lodging_cost_by_month"
+        ),
+        "alternate_lodging_growth_latent": str(_constant(personal_use["alternate_lodging_growth_latent"])),
+    }
+
+
+def get_rent_reference_inputs(deck: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Unwraps and validates section 10 (`rent_reference`). Returns:
+      lease_cost_by_month: {month: USD >= 0}, today's (closing-date) dollars, all-in, charged IN FULL every
+        month as entered (any lease arrangement -- 12-month, month to month, seasonal -- is expressed by the
+        user's own month values);
+      lease_growth_latent: name of the latent that grows it, ONCE A YEAR at each closing anniversary
+        (resolved later by get_growth_fit)."""
+    deck = deck if deck is not None else load_deck()
+    rent_reference = deck["rent_reference"]
+    return {
+        "lease_cost_by_month": _monthly_costs(rent_reference["lease_cost_by_month"], "rent_reference.lease_cost_by_month"),
+        "lease_growth_latent": str(_constant(rent_reference["lease_growth_latent"])),
+    }
+
+
+def _monthly_costs(entry: Any, where: str) -> dict[str, float]:
+    """A `kind: constant` {month: USD/month} map: all 12 months, each a number >= 0."""
+    costs = _constant(entry)
     if not isinstance(costs, dict) or set(costs) != set(MONTH_KEYS):
         raise ValueError(f"{where}: must list all 12 months ({', '.join(MONTH_KEYS)})")
     for month in MONTH_KEYS:
         if not _is_number(costs[month]) or costs[month] < 0:
             raise ValueError(f"{where}.{month}: must be a number >= 0 (USD/month), got {costs[month]!r}")
-    return {
-        "personal_use_days_by_month": get_personal_use_days_by_month(deck),
-        "alternate_lodging_cost_by_month": {month: float(costs[month]) for month in MONTH_KEYS},
-        "alternate_lodging_growth_latent": str(_constant(personal_use["alternate_lodging_growth_latent"])),
-    }
+    return {month: float(costs[month]) for month in MONTH_KEYS}
 
 
 def get_property_tax_inputs(deck: dict[str, Any] | None = None) -> dict[str, dict[str, float]]:
